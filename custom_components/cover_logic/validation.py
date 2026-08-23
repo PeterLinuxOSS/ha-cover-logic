@@ -8,6 +8,7 @@ anything. Runs in the test suite and again on import in the UI.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Iterator
 
 from .const import COND_REF
 from .model import Config
@@ -30,6 +31,7 @@ def validate(config: Config) -> list[Problem]:
     problems += _check_rule_keys(config)
     problems += _check_rule_lists(config)
     problems += _check_circular_condition_refs(config)
+    problems += _check_unknown_condition_refs(config)
     return problems
 
 
@@ -131,82 +133,126 @@ def _check_circular_condition_refs(config: Config) -> list[Problem]:
         cycle = _find_cycle_from(cond_name, config.conditions)
         if cycle is not None:
             # Normalize cycle to avoid reporting the same cycle multiple times
+            # (a cycle found starting from different members is the same set
+            # of names, just rotated to a different starting point).
             cycle_set = frozenset(cycle)
             if cycle_set not in cycles_reported:
                 cycles_reported.add(cycle_set)
-                sorted_names = sorted(cycle)
+                # `cycle` is already in real traversal order (the order the
+                # DFS actually followed the references) -- report it as-is,
+                # not re-sorted, so the message names an edge that exists.
                 out.append(Problem(ERROR, "circular_condition_ref",
-                                   f"circular condition reference: {' -> '.join(sorted_names)} -> {sorted_names[0]}"))
+                                   f"circular condition reference: {' -> '.join(cycle)} -> {cycle[0]}"))
 
     return out
 
 
 def _find_cycle_from(start_name: str, registry: dict[str, dict]) -> list[str] | None:
-    """Find a cycle starting from start_name using DFS.
+    """Find a cycle starting from start_name using an iterative DFS.
 
-    Returns a list of condition names forming a cycle, or None if no cycle exists.
+    Returns a list of condition names forming a cycle in the actual order the
+    references were followed, or None if no cycle exists. Iterative (an
+    explicit stack) rather than recursive so that a long-but-legal reference
+    chain is bounded by heap, not by the interpreter's frame limit -- a config
+    with a few thousand chained conditions must still validate, not crash.
+
+    `visited` marks every node whose references have been (or are being)
+    explored; `on_path` is the subset of `visited` currently on the DFS path
+    from `start_name`. A reference into a visited-but-not-on-path node is a
+    legal cross-edge (e.g. the shared bottom of a diamond); a reference into
+    a node that is on the current path is a back-edge, i.e. a cycle.
     """
     visited: set[str] = set()
-    rec_stack: set[str] = set()
+    on_path: set[str] = set()
     path: list[str] = []
-    found_cycle: list[str] | None = None
+    # Each stack frame pairs a node with an iterator over its outgoing
+    # references, so resuming a frame after a child is fully explored is a
+    # plain next() on that same iterator rather than a recursive call.
+    stack: list[tuple[str, Iterator[str]]] = []
 
-    def dfs(node: str) -> None:
-        nonlocal found_cycle
-        if found_cycle is not None:
-            return
-
+    def enter(node: str) -> None:
         visited.add(node)
-        rec_stack.add(node)
+        on_path.add(node)
         path.append(node)
+        stack.append((node, iter(_get_referenced_conditions(node, registry))))
 
-        # Get all conditions referenced by this node
-        referenced = _get_referenced_conditions(node, registry)
-        for ref_name in referenced:
-            if ref_name not in visited:
-                dfs(ref_name)
-                if found_cycle is not None:
-                    path.pop()
-                    rec_stack.remove(node)
-                    return
-            elif ref_name in rec_stack:
-                # Found a cycle: extract it from path
-                cycle_start_idx = path.index(ref_name)
-                found_cycle = path[cycle_start_idx:] + [ref_name]
-                path.pop()
-                rec_stack.remove(node)
-                return
+    enter(start_name)
+    while stack:
+        node, refs = stack[-1]
+        ref_name = next(refs, None)
+        if ref_name is None:
+            # No more outgoing references from this node -- backtrack.
+            stack.pop()
+            path.pop()
+            on_path.discard(node)
+            continue
+        if ref_name not in visited:
+            enter(ref_name)
+        elif ref_name in on_path:
+            cycle_start_idx = path.index(ref_name)
+            return path[cycle_start_idx:]
+        # else: already fully explored via another branch -- a legal
+        # cross-edge, not a cycle.
 
-        path.pop()
-        rec_stack.remove(node)
-
-    dfs(start_name)
-    # Remove the duplicate last element (found_cycle includes it for easier detection)
-    # to return just the cycle without repeating the start node at the end
-    if found_cycle is not None:
-        return found_cycle[:-1]  # Remove the repeated element
     return None
+
+
+def _referenced_condition_names(node) -> set[str]:
+    """Return every condition name a `{condition: ref, name: ...}` refers to,
+    anywhere within `node` (a condition body, a bare list of conditions, or
+    None). The single walker behind both the circular-ref and the
+    unknown-ref checks -- one traversal, two callers.
+    """
+    referenced: set[str] = set()
+
+    def walk(n):
+        if isinstance(n, dict):
+            if n.get("condition") == COND_REF:
+                referenced.add(n.get("name", ""))
+            elif "conditions" in n:
+                for sub_cond in n["conditions"]:
+                    walk(sub_cond)
+        elif isinstance(n, list):
+            for item in n:
+                walk(item)
+
+    walk(node)
+    return referenced
 
 
 def _get_referenced_conditions(cond_name: str, registry: dict[str, dict]) -> set[str]:
     """Return the set of condition names directly referenced by cond_name."""
     if cond_name not in registry:
         return set()
+    return _referenced_condition_names(registry[cond_name])
 
-    cond = registry[cond_name]
-    referenced: set[str] = set()
 
-    def walk(node):
-        """Recursively walk the condition structure to find all refs."""
-        if isinstance(node, dict):
-            if node.get("condition") == COND_REF:
-                referenced.add(node.get("name", ""))
-            elif "conditions" in node:
-                for sub_cond in node["conditions"]:
-                    walk(sub_cond)
-        elif isinstance(node, list):
-            for item in node:
-                walk(item)
+def _check_unknown_condition_refs(config: Config) -> list[Problem]:
+    """Every `{condition: ref, name: N}` must name a condition that exists.
 
-    walk(cond)
-    return referenced
+    The YAML parser only catches this for refs written with the `!ref` tag.
+    A hand-written literal `{condition: ref, name: ...}` dict passes
+    `load_config` unchecked -- condition bodies are deliberately exempt from
+    strict key checking -- and would otherwise surface as a bare unhandled
+    `KeyError` deep inside conditions.py at evaluation time instead of a
+    validation report.
+    """
+    out: list[Problem] = []
+
+    def check(node, where: str) -> None:
+        if node is None:
+            return
+        for name in sorted(_referenced_condition_names(node)):
+            if name not in config.conditions:
+                out.append(Problem(ERROR, "unknown_condition_ref",
+                                   f"{where} refers to unknown condition {name!r}"))
+
+    for cond_name, body in config.conditions.items():
+        check(body, f"condition {cond_name!r}")
+    for mode in config.modes:
+        check(mode.when, f"mode {mode.id!r}")
+    for key, rules in config.rules.items():
+        for index, rule in enumerate(rules):
+            check(rule.when, f"rule {key}#{index}")
+
+    return out
