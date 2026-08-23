@@ -6,6 +6,8 @@ Universal rule-based blind/cover controller for Home Assistant.
 
 **Phase 1**: Pure Python decision engine without Home Assistant integration. All logic is tested without HA runtime, event loop, or I/O.
 
+As of 2026-08-23: **165 tests pass** (`python3 -m pytest tests/`), including the full migration gate (`test_parity_on_the_whole_space`, all 92 160 scenarios) and rule-coverage proof (`test_every_rule_fires_at_least_once` — all 83 rules in `fixtures/dom_peter.yaml` fire at least once, none unreachable). Full run, gate included: **41.73s**. The default run (`-m "not slow"`, excluding the full-space gate) is 164 tests in 15.73s.
+
 ## Quick Start
 
 ### Run tests

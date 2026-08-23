@@ -1,0 +1,332 @@
+"""Derive the scenario space from the configuration itself.
+
+This is what makes the suite universal: add a condition in the new house and
+the scenarios that exercise it appear without anyone writing them.
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+import itertools
+from typing import Any, Iterator
+
+from cover_logic.conditions import evaluate_condition
+from cover_logic.model import Config
+from cover_logic.world import Event, Target, World
+
+NOW = dt.datetime(2026, 8, 19, 13, 0)
+
+# Azimuths that sit exactly on and just below every 45-degree sector boundary.
+AZIMUTH_PROBES = ["-1", "44", "45", "134", "135", "224", "225", "314", "315"]
+
+
+def _walk(node: Any) -> Iterator[dict]:
+    if isinstance(node, list):
+        for child in node:
+            yield from _walk(child)
+    elif isinstance(node, dict):
+        yield node
+        for child in node.get("conditions", []):
+            yield from _walk(child)
+
+
+def derive_axes(config: Config) -> dict[str, list[str]]:
+    """One axis per entity the configuration reads, with the values that matter."""
+    axes: dict[str, set[str]] = {}
+
+    def add(entity: str, values) -> None:
+        axes.setdefault(entity, set()).update(values)
+
+    for cond in config.conditions.values():
+        for node in _walk(cond):
+            kind = node.get("condition")
+            entity = node.get("entity_id")
+            if kind == "state" and entity:
+                wanted = node["state"]
+                values = list(wanted) if isinstance(wanted, (list, tuple)) else [wanted]
+                add(entity, values + ["__other__"])
+            elif kind == "numeric_state" and entity:
+                bounds = [float(node[k]) for k in ("above", "below") if k in node]
+                probes = {"unavailable"}
+                for bound in bounds:
+                    probes.update({str(bound - 1), str(bound), str(bound + 1)})
+                add(entity, probes)
+
+    add("sun.sun", ["above_horizon", "below_horizon"])
+    add("sensor.sun_solar_azimuth", AZIMUTH_PROBES)
+    for ref in config.values.values():
+        add(ref.entity, [str(ref.default), "unavailable"])
+
+    return {entity: sorted(values) for entity, values in axes.items()}
+
+
+def pairwise(axes: dict[str, list[str]]) -> list[dict[str, str]]:
+    """Greedy covering array: every pair of values appears in at least one row.
+
+    Not minimal, but small — and pair coverage is where the real bugs live.
+    """
+    keys = sorted(axes)
+    needed: set[tuple[str, str, str, str]] = set()
+    for a, b in itertools.combinations(keys, 2):
+        for va in axes[a]:
+            for vb in axes[b]:
+                needed.add((a, va, b, vb))
+
+    rows: list[dict[str, str]] = []
+    while needed:
+        row = {k: axes[k][0] for k in keys}
+        for key in keys:
+            best, best_gain = row[key], -1
+            for value in axes[key]:
+                candidate = {**row, key: value}
+                gain = sum(
+                    1
+                    for (a, va, b, vb) in needed
+                    if candidate.get(a) == va and candidate.get(b) == vb
+                )
+                if gain > best_gain:
+                    best, best_gain = value, gain
+            row[key] = best
+        covered = {
+            (a, va, b, vb)
+            for (a, va, b, vb) in needed
+            if row.get(a) == va and row.get(b) == vb
+        }
+        if not covered:
+            break
+        needed -= covered
+        rows.append(row)
+    return rows
+
+
+# --- Rule witnesses ---------------------------------------------------------
+#
+# Pairwise coverage guarantees every PAIR of axis values appears together in
+# some row. It does not guarantee that a rule reached only by a conjunction
+# of three or more simultaneous facts -- a deep first-match-wins chain, or a
+# guard that ANDs several independent conditions -- ever gets its exact
+# combination generated. On the real fixture, 25 of 83 rules needed such a
+# combination and pairwise() alone (53 rows) never produced it, even though
+# every individual axis VALUE those rules need was already present in
+# derive_axes()'s output (verified by hand-built witnesses before writing
+# this). That is the "derived scenario space is too narrow" branch the task
+# brief calls out -- but the fix isn't a missing axis, it's coverage depth.
+#
+# Rather than widen axis VALUES (which would do nothing here -- nothing is
+# missing) or blindly raise pairwise() to high-order N-wise combinatorics
+# (computationally infeasible for the axis counts involved, and still no
+# guarantee for a chain deeper than N), this solves each rule's own `when`
+# directly from its parsed condition tree, negating every rule that precedes
+# it in the same first-match-wins list. It is structural, not enumerated: a
+# rule added to a future house gets its own witness the same way a new pair
+# gets covered today, without anyone hand-writing a scenario for it. It only
+# ever ADDS worlds to the pairwise-derived set -- pairwise's own guarantee is
+# untouched.
+#
+# A rule whose guard cannot be solved from the axis vocabulary is silently
+# skipped: `test_every_rule_fires_at_least_once` still reports it as dead,
+# with the same message. This function can only add coverage, never hide a
+# genuine finding.
+
+
+class _Infeasible(Exception):
+    """This rule's guard cannot be solved from the current axis vocabulary."""
+
+
+def _probe_world(entity: str, value: str) -> World:
+    return World(states={entity: value}, attributes={}, now=NOW, event=Event())
+
+
+def _leaf_true(entity: str, node: dict, values: dict[str, str], axes: dict[str, list[str]]) -> None:
+    for value in axes.get(entity, []):
+        if entity in values and values[entity] != value:
+            continue
+        if evaluate_condition(node, _probe_world(entity, value), None, {}):
+            values[entity] = value
+            return
+    raise _Infeasible(f"no candidate value makes {entity} satisfy {node}")
+
+
+def _leaf_false(entity: str, node: dict, values: dict[str, str], axes: dict[str, list[str]]) -> None:
+    if entity in values:
+        if not evaluate_condition(node, _probe_world(entity, values[entity]), None, {}):
+            return
+        raise _Infeasible(f"pinned {entity}={values[entity]!r} does not falsify {node}")
+    for value in axes.get(entity, []):
+        if not evaluate_condition(node, _probe_world(entity, value), None, {}):
+            values[entity] = value
+            return
+    raise _Infeasible(f"no candidate value makes {entity} falsify {node}")
+
+
+def _require(
+    cond: Any,
+    want_true: bool,
+    values: dict[str, str],
+    axes: dict[str, list[str]],
+    registry: dict[str, dict],
+    target: Target,
+) -> None:
+    """Resolve `cond` to `want_true` in place, backtracking at choice points.
+
+    AND-false and OR-true each involve a choice (which child carries the
+    requirement); a child picked without knowledge of the rest of the tree
+    can conflict with a pin made elsewhere (e.g. `pocasie_otvorene`'s first
+    AND-child also reads `sun.sun`, which `sun_hits_target` may already have
+    pinned for the rule itself). Each choice is tried against a snapshot of
+    `values` and rolled back on failure, so the search finds a combination
+    consistent with everything already required, not just the first option.
+    """
+    if cond is None:
+        if not want_true:
+            raise _Infeasible("cannot falsify 'no condition'")
+        return
+    if isinstance(cond, list):
+        cond = {"condition": "and", "conditions": cond}
+
+    kind = cond.get("condition")
+
+    if kind == "ref":
+        _require(registry[cond["name"]], want_true, values, axes, registry, target)
+        return
+
+    if kind in ("and", "or", "not"):
+        children = cond["conditions"]
+        # AND is true iff all children true; OR is true iff any child true;
+        # NOT (this dialect's list-NOR) is true iff all children false.
+        all_required = (kind == "and" and want_true) or (kind == "or" and not want_true) or (
+            kind == "not" and want_true
+        )
+        child_truth = want_true if kind != "not" else not want_true
+        if all_required:
+            for child in children:
+                _require(child, child_truth, values, axes, registry, target)
+            return
+        errors = []
+        for child in children:
+            snapshot = dict(values)
+            try:
+                _require(child, child_truth, values, axes, registry, target)
+                return
+            except _Infeasible as err:
+                values.clear()
+                values.update(snapshot)
+                errors.append(str(err))
+        raise _Infeasible(f"no child of {kind!r} could be resolved: {errors}")
+
+    if kind == "time":
+        actual = evaluate_condition(cond, World(states={}, attributes={}, now=NOW, event=Event()), None, registry)
+        if actual != want_true:
+            raise _Infeasible(f"time condition is fixed by NOW, cannot be made {want_true}")
+        return
+
+    if kind == "sun_hits_target":
+        sun_node = {"condition": "state", "entity_id": "sun.sun", "state": "above_horizon"}
+        if not want_true:
+            _leaf_false("sun.sun", sun_node, values, axes)
+            return
+        errors = []
+        for azimuth in AZIMUTH_PROBES:
+            snapshot = dict(values)
+            try:
+                probe = World(
+                    states={"sun.sun": "above_horizon", "sensor.sun_solar_azimuth": azimuth},
+                    attributes={}, now=NOW, event=Event(),
+                )
+                if not evaluate_condition(cond, probe, target, registry):
+                    raise _Infeasible("azimuth probe does not hit the target's facade")
+                _leaf_true("sun.sun", sun_node, values, axes)
+                _leaf_true(
+                    "sensor.sun_solar_azimuth",
+                    {"condition": "state", "entity_id": "sensor.sun_solar_azimuth", "state": azimuth},
+                    values, axes,
+                )
+                return
+            except _Infeasible as err:
+                values.clear()
+                values.update(snapshot)
+                errors.append(str(err))
+        raise _Infeasible(f"no azimuth probe hits the target's facade: {errors}")
+
+    if kind == "event_targets_zone":
+        # Depends on the chosen event's person, not on entity state; the
+        # caller picks the event separately, so there is nothing to pin here.
+        return
+
+    entity = cond.get("entity_id")
+    if entity is None:
+        raise _Infeasible(f"leaf condition without entity_id: {cond}")
+    if want_true:
+        _leaf_true(entity, cond, values, axes)
+    else:
+        _leaf_false(entity, cond, values, axes)
+
+
+def _solve_rule_witness(config: Config, axes: dict[str, list[str]], key: str, index: int) -> World:
+    mode_id, zone_id = key.split(".", 1)
+    zone = config.zones[zone_id]
+    blind = config.blinds[zone.members[0]]
+    rule = config.rules[key][index]
+    target = Target(blind=blind, zone=zone)
+
+    event_kind = sorted(rule.events)[0] if rule.events is not None else "state_change"
+    person = (zone.occupants[0] if zone.occupants else "peter") if event_kind == "arrival" else None
+    event = Event(kind=event_kind, person=person)
+
+    values: dict[str, str] = {}
+    modes = list(config.modes)
+    mode_pos = next(i for i, m in enumerate(modes) if m.id == mode_id)
+
+    # The target rule's own guard first: it is usually the most specific
+    # constraint (e.g. it pins sun.sun via sun_hits_target), and the
+    # AND-false backtracking for everything negated below routes around it.
+    _require(rule.when, True, values, axes, config.conditions, target)
+    _require(modes[mode_pos].when, True, values, axes, config.conditions, target)
+
+    for earlier_mode in modes[:mode_pos]:
+        _require(earlier_mode.when, False, values, axes, config.conditions, target)
+
+    for prior in config.rules[key][:index]:
+        if prior.events is not None and event_kind not in prior.events:
+            continue  # already skipped by event-kind filter, nothing to negate
+        _require(prior.when, False, values, axes, config.conditions, target)
+
+    full = {entity: candidates[0] for entity, candidates in axes.items()}
+    full.update(values)
+    return World(states=full, attributes={}, now=NOW, event=event)
+
+
+def rule_witnesses(config: Config, axes: dict[str, list[str]]) -> list[World]:
+    """One structurally-derived world per rule, supplementing pairwise()."""
+    out: list[World] = []
+    for key, rules in config.rules.items():
+        zone = config.zones.get(key.split(".", 1)[1])
+        if zone is None or not zone.members or zone.members[0] not in config.blinds:
+            continue
+        for index in range(len(rules)):
+            try:
+                out.append(_solve_rule_witness(config, axes, key, index))
+            except _Infeasible:
+                continue  # left for test_every_rule_fires_at_least_once to report
+    return out
+
+
+def worlds(config: Config) -> list[World]:
+    axes = derive_axes(config)
+    rows = pairwise(axes)
+    out: list[World] = []
+    for row in rows:
+        for event in (Event(), Event(kind="arrival", person="peter")):
+            out.append(World(states=dict(row), attributes={}, now=NOW, event=event))
+    out.extend(rule_witnesses(config, axes))
+    return out
+
+
+def fired_rules(config: Config, all_worlds) -> set[str]:
+    from cover_logic.engine import evaluate
+
+    fired: set[str] = set()
+    for world in all_worlds:
+        for label in evaluate(config, world).trace.values():
+            fired.add(label.split(" ")[0])
+    return fired
