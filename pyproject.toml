@@ -8,6 +8,18 @@ dependencies = ["PyYAML>=6.0", "Jinja2>=3.1"]
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "hypothesis>=6.100"]
 
+# Without this, setuptools auto-discovery sees `custom_components`, `fixtures`
+# and `tests` as competing top-level packages and `pip install -e .` fails with
+# "Multiple top-level packages discovered in a flat-layout". Nothing here is a
+# distributable package — the integration is loaded by Home Assistant from
+# `custom_components/`, not installed from a wheel.
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = []
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["custom_components"]
