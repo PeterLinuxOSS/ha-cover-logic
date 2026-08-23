@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from cover_logic.config_schema import ConfigError, load_config
+from cover_logic.conditions import evaluate_condition
+from cover_logic.config_schema import ConfigError, load_config, load_config_file
 from cover_logic.model import KEEP, Action, Ref
+from cover_logic.world import World
 
 MINIMAL = """
 blinds:
@@ -101,3 +103,219 @@ def test_rule_events_become_a_frozenset():
         )
     )
     assert cfg.rules["bezny_den.terasa"][1].events == frozenset({"arrival"})
+
+
+# --- Fix 1: !ref inside a named condition's own body -----------------------
+
+COMPOSED_CONDITIONS = """
+conditions:
+  vietor_ok:
+    condition: state
+    entity_id: binary_sensor.wind
+    state: "off"
+  pocasie_otvorene:
+    condition: and
+    conditions:
+      - {condition: state, entity_id: sun.sun, state: above_horizon}
+      - !ref vietor_ok
+"""
+
+
+def test_ref_inside_a_condition_body_resolves_to_a_ref_condition():
+    cfg = load_config(COMPOSED_CONDITIONS)
+    assert cfg.conditions["pocasie_otvorene"] == {
+        "condition": "and",
+        "conditions": [
+            {"condition": "state", "entity_id": "sun.sun", "state": "above_horizon"},
+            {"condition": "ref", "name": "vietor_ok"},
+        ],
+    }
+
+
+def test_ref_inside_a_condition_body_evaluates_end_to_end():
+    cfg = load_config(COMPOSED_CONDITIONS)
+    cond = cfg.conditions["pocasie_otvorene"]
+    world_true = World(states={"sun.sun": "above_horizon", "binary_sensor.wind": "off"})
+    world_false = World(states={"sun.sun": "above_horizon", "binary_sensor.wind": "on"})
+    assert evaluate_condition(cond, world_true, registry=cfg.conditions) is True
+    assert evaluate_condition(cond, world_false, registry=cfg.conditions) is False
+
+
+def test_ref_inside_a_condition_body_to_unknown_name_raises_config_error():
+    bad = COMPOSED_CONDITIONS.replace("!ref vietor_ok", "!ref neexistuje")
+    with pytest.raises(ConfigError, match="neexistuje"):
+        load_config(bad)
+
+
+def test_mutually_recursive_condition_refs_parse_without_hanging():
+    text = """
+conditions:
+  a:
+    condition: and
+    conditions:
+      - !ref b
+  b:
+    condition: and
+    conditions:
+      - !ref a
+"""
+    cfg = load_config(text)
+    assert cfg.conditions["a"] == {
+        "condition": "and",
+        "conditions": [{"condition": "ref", "name": "b"}],
+    }
+    assert cfg.conditions["b"] == {
+        "condition": "and",
+        "conditions": [{"condition": "ref", "name": "a"}],
+    }
+
+
+# --- Fix 3: unknown keys must raise, but not inside condition bodies/guards -
+
+def test_unknown_top_level_key_raises_config_error():
+    bad = MINIMAL.replace("blinds:", "blindz:")
+    with pytest.raises(ConfigError, match="blindz"):
+        load_config(bad)
+
+
+def test_unknown_key_inside_blind_entry_raises_config_error():
+    bad = MINIMAL.replace(
+        "  - entity: cover.a\n    facade_azimuth: 270",
+        "  - entity: cover.a\n    facade_azimuth: 270\n    tolerence: 5",
+    )
+    with pytest.raises(ConfigError, match="tolerence"):
+        load_config(bad)
+
+
+def test_condition_body_with_arbitrary_ha_keys_still_parses():
+    text = MINIMAL.replace(
+        '    entity_id: input_boolean.cover_down\n    state: "on"',
+        '    entity_id: input_boolean.cover_down\n    state: "on"\n'
+        "    for: {seconds: 5}\n    attribute: some_attr",
+    )
+    cfg = load_config(text)
+    assert cfg.conditions["cover_down"]["for"] == {"seconds": 5}
+    assert cfg.conditions["cover_down"]["attribute"] == "some_attr"
+
+
+# --- Fix 2: _parse_axis must reject bools and non-integral floats ----------
+
+def test_position_true_raises_config_error_instead_of_becoming_one():
+    bad = MINIMAL.replace("position: 100, tilt: keep", "position: true, tilt: keep")
+    with pytest.raises(ConfigError):
+        load_config(bad)
+
+
+def test_position_false_raises_config_error():
+    bad = MINIMAL.replace("position: 100, tilt: keep", "position: false, tilt: keep")
+    with pytest.raises(ConfigError):
+        load_config(bad)
+
+
+def test_position_non_integral_float_raises_config_error():
+    bad = MINIMAL.replace("position: 100, tilt: keep", "position: 50.5, tilt: keep")
+    with pytest.raises(ConfigError):
+        load_config(bad)
+
+
+def test_position_integral_float_is_accepted():
+    cfg = load_config(
+        MINIMAL.replace("position: 100, tilt: keep", "position: 50.0, tilt: keep")
+    )
+    assert cfg.rules["bezny_den.terasa"][0].then.position == 50
+
+
+# --- Fix 3 (continued): shape checks around the strict key checking --------
+
+def test_unknown_key_inside_zone_entry_raises_config_error():
+    bad = MINIMAL.replace("members: [cover.a]", "members: [cover.a]\n    extra: 1")
+    with pytest.raises(ConfigError, match="extra"):
+        load_config(bad)
+
+
+def test_unknown_key_inside_rule_entry_raises_config_error():
+    bad = MINIMAL.replace(
+        "{then: {position: keep, tilt: keep}}",
+        "{then: {position: keep, tilt: keep}, wrongkey: 1}",
+    )
+    with pytest.raises(ConfigError, match="wrongkey"):
+        load_config(bad)
+
+
+def test_unknown_key_inside_action_raises_config_error():
+    bad = MINIMAL.replace(
+        "{then: {position: keep, tilt: keep}}",
+        "{then: {position: keep, tilt: keep, angle: 5}}",
+    )
+    with pytest.raises(ConfigError, match="angle"):
+        load_config(bad)
+
+
+# --- Fix 4: malformed entries raise ConfigError, not raw exceptions --------
+
+def test_zone_entry_as_a_list_raises_config_error_not_attribute_error():
+    bad = MINIMAL.replace(
+        "zones:\n  terasa:\n    members: [cover.a]",
+        "zones:\n  terasa: [cover.a]",
+    )
+    with pytest.raises(ConfigError):
+        load_config(bad)
+
+
+def test_mode_entry_as_a_bare_string_raises_config_error_not_type_error():
+    bad = MINIMAL.replace(
+        "modes:\n  - {id: noc, when: !ref cover_down}\n  - {id: bezny_den}",
+        "modes:\n  - noc\n  - {id: bezny_den}",
+    )
+    with pytest.raises(ConfigError):
+        load_config(bad)
+
+
+def test_blind_entry_as_a_bare_string_raises_config_error():
+    bad = MINIMAL.replace(
+        "blinds:\n  - entity: cover.a\n    facade_azimuth: 270",
+        "blinds:\n  - cover.a",
+    )
+    with pytest.raises(ConfigError):
+        load_config(bad)
+
+
+# --- Minor coverage gaps -----------------------------------------------
+
+def test_load_config_file_reads_and_parses_a_file(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text(MINIMAL, encoding="utf-8")
+    cfg = load_config_file(path)
+    assert set(cfg.blinds) == {"cover.a"}
+
+
+def test_value_only_name_referenced_from_a_condition_slot_raises_config_error():
+    bad = MINIMAL.replace("when: !ref cover_down", "when: !ref kvety_poz")
+    with pytest.raises(ConfigError, match="kvety_poz"):
+        load_config(bad)
+
+
+def test_condition_only_name_referenced_from_an_action_axis_raises_config_error():
+    bad = MINIMAL.replace(
+        "position: !ref kvety_poz", "position: !ref cover_down"
+    )
+    with pytest.raises(ConfigError, match="cover_down"):
+        load_config(bad)
+
+
+def test_same_short_name_in_both_namespaces_resolves_independently():
+    text = MINIMAL.replace(
+        "conditions:\n  cover_down:",
+        "conditions:\n  shared:\n    condition: state\n    entity_id: input_boolean.cover_down\n    state: \"on\"\n  cover_down:",
+    ).replace(
+        "values:\n  kvety_poz:",
+        "values:\n  shared:\n    entity: input_number.shared_helper\n    default: 7\n  kvety_poz:",
+    ).replace(
+        "when: !ref cover_down", "when: !ref shared"
+    ).replace(
+        "position: !ref kvety_poz", "position: !ref shared"
+    )
+    cfg = load_config(text)
+    assert cfg.modes[0].when == {"condition": "ref", "name": "shared"}
+    rule = cfg.rules["bezny_den.terasa"][1]
+    assert rule.then.position == Ref(entity="input_number.shared_helper", default=7)

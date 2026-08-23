@@ -19,6 +19,50 @@ class ConfigError(Exception):
     """Raised when the configuration cannot be turned into a valid Config."""
 
 
+# Key sets for the structures this file owns. Condition bodies (native HA
+# condition dicts) and `guards` (schema not settled yet) are deliberately
+# excluded from strict checking -- see the scoping note on `_check_keys`.
+_TOP_LEVEL_KEYS = {"blinds", "zones", "modes", "conditions", "values", "rules", "guards"}
+_BLIND_KEYS = {
+    "entity",
+    "facade_azimuth",
+    "tolerance",
+    "travel_time",
+    "tilt_after_arrival",
+    "has_tilt",
+}
+_ZONE_KEYS = {"members", "occupants"}
+_MODE_KEYS = {"id", "when"}
+_RULE_KEYS = {"if", "then", "events", "name"}
+_VALUE_KEYS = {"entity", "default"}
+_ACTION_KEYS = {"position", "tilt"}
+
+
+def _check_keys(mapping: dict, allowed: set[str], where: str) -> None:
+    """Raise if `mapping` has keys outside `allowed`.
+
+    Only ever called on structures this module owns the schema of: blind,
+    zone, mode, rule, value and action entries, plus the top level. Never
+    call this on a condition body (native HA condition schema, not ours) or
+    on `guards` (unparsed until a later phase).
+    """
+    unknown = set(mapping) - allowed
+    if unknown:
+        raise ConfigError(f"unknown key(s) {sorted(unknown)} in {where}")
+
+
+def _expect_mapping(node: Any, where: str) -> dict:
+    if not isinstance(node, dict):
+        raise ConfigError(f"{where} must be a mapping, got {node!r}")
+    return node
+
+
+def _expect_list(node: Any, where: str) -> list:
+    if not isinstance(node, list):
+        raise ConfigError(f"{where} must be a list, got {node!r}")
+    return node
+
+
 class RefTag:
     """Placeholder produced by the `!ref` YAML tag.
 
@@ -46,31 +90,51 @@ _Loader.add_constructor(
 
 def load_config(text: str) -> Config:
     raw = yaml.load(text, Loader=_Loader) or {}
-    conditions = raw.get("conditions") or {}
-    values = _parse_values(raw.get("values") or {})
+    raw = _expect_mapping(raw, "top level config")
+    _check_keys(raw, _TOP_LEVEL_KEYS, "top level")
+
+    # `raw_conditions` is the lookup namespace for every `!ref` in a
+    # condition slot -- built once, up front, so a condition may reference
+    # another regardless of which one is declared first in the file.
+    raw_conditions = _expect_mapping(raw.get("conditions") or {}, "'conditions'")
+    conditions = {
+        name: _parse_condition(body, raw_conditions) for name, body in raw_conditions.items()
+    }
+
+    values = _parse_values(_expect_mapping(raw.get("values") or {}, "'values'"))
 
     blinds = {}
-    for item in raw.get("blinds") or []:
+    for item in _expect_list(raw.get("blinds") or [], "'blinds'"):
         blind = _parse_blind(item)
         blinds[blind.entity] = blind
 
-    zones = {
-        zone_id: Zone(
+    raw_zones = _expect_mapping(raw.get("zones") or {}, "'zones'")
+    zones = {}
+    for zone_id, body in raw_zones.items():
+        body = _expect_mapping(body, f"zone {zone_id!r}")
+        _check_keys(body, _ZONE_KEYS, f"zone {zone_id!r}")
+        zones[zone_id] = Zone(
             id=zone_id,
             members=tuple(body.get("members") or ()),
             occupants=tuple(body.get("occupants") or ()),
         )
-        for zone_id, body in (raw.get("zones") or {}).items()
-    }
 
-    modes = tuple(
-        Mode(id=item["id"], when=_parse_condition(item.get("when"), conditions))
-        for item in raw.get("modes") or []
-    )
+    modes = []
+    for item in _expect_list(raw.get("modes") or [], "'modes'"):
+        item = _expect_mapping(item, "mode entry")
+        _check_keys(item, _MODE_KEYS, "mode")
+        if "id" not in item:
+            raise ConfigError(f"mode without 'id': {item!r}")
+        modes.append(Mode(id=item["id"], when=_parse_condition(item.get("when"), raw_conditions)))
+    modes = tuple(modes)
 
+    raw_rules = _expect_mapping(raw.get("rules") or {}, "'rules'")
     rules = {
-        key: tuple(_parse_rule(item, conditions, values) for item in items)
-        for key, items in (raw.get("rules") or {}).items()
+        key: tuple(
+            _parse_rule(item, raw_conditions, values)
+            for item in _expect_list(items, f"rules {key!r}")
+        )
+        for key, items in raw_rules.items()
     }
 
     return Config(
@@ -91,6 +155,8 @@ def load_config_file(path: str | Path) -> Config:
 def _parse_values(raw: dict[str, Any]) -> dict[str, Ref]:
     out: dict[str, Ref] = {}
     for name, body in raw.items():
+        body = _expect_mapping(body, f"value {name!r}")
+        _check_keys(body, _VALUE_KEYS, f"value {name!r}")
         try:
             out[name] = Ref(entity=body["entity"], default=int(body["default"]))
         except (KeyError, TypeError, ValueError) as err:
@@ -98,7 +164,9 @@ def _parse_values(raw: dict[str, Any]) -> dict[str, Ref]:
     return out
 
 
-def _parse_blind(item: dict[str, Any]) -> Blind:
+def _parse_blind(item: Any) -> Blind:
+    item = _expect_mapping(item, "blind entry")
+    _check_keys(item, _BLIND_KEYS, "blind entry")
     if "entity" not in item:
         raise ConfigError(f"blind without 'entity': {item!r}")
     azimuth = item.get("facade_azimuth")
@@ -138,6 +206,18 @@ def _parse_axis(node: Any, values: dict[str, Ref]) -> Value:
         if node.name not in values:
             raise ConfigError(f"unknown value ref: {node.name!r}")
         return values[node.name]
+    # `bool` is a subclass of `int` in Python, so this must be rejected
+    # explicitly before `int(node)` -- otherwise `position: true` silently
+    # becomes `1`, driving a blind to 1% instead of failing loudly.
+    if isinstance(node, bool):
+        raise ConfigError(f"action axis must be an integer 0..100, got {node!r}")
+    if isinstance(node, float):
+        # An integral float (`50.0`) is what a human writes by hand in YAML
+        # and is accepted; a non-integral one (`50.5`) has no meaning for a
+        # cover position/tilt and must not be silently truncated.
+        if not node.is_integer():
+            raise ConfigError(f"action axis must be an integer 0..100, got {node!r}")
+        node = int(node)
     try:
         number = int(node)
     except (TypeError, ValueError) as err:
@@ -148,8 +228,8 @@ def _parse_axis(node: Any, values: dict[str, Ref]) -> Value:
 
 
 def _parse_action(node: Any, values: dict[str, Ref]) -> Action:
-    if not isinstance(node, dict):
-        raise ConfigError(f"action must be a mapping, got {node!r}")
+    node = _expect_mapping(node, "action")
+    _check_keys(node, _ACTION_KEYS, "action")
     return Action(
         position=_parse_axis(node.get("position"), values),
         tilt=_parse_axis(node.get("tilt"), values),
@@ -157,8 +237,10 @@ def _parse_action(node: Any, values: dict[str, Ref]) -> Action:
 
 
 def _parse_rule(
-    item: dict[str, Any], conditions: dict[str, Any], values: dict[str, Ref]
+    item: Any, conditions: dict[str, Any], values: dict[str, Ref]
 ) -> Rule:
+    item = _expect_mapping(item, "rule entry")
+    _check_keys(item, _RULE_KEYS, "rule entry")
     if "then" not in item:
         raise ConfigError(f"rule without 'then': {item!r}")
     events = item.get("events")
