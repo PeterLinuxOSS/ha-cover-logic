@@ -16,8 +16,27 @@ from cover_logic.world import Event, Target, World
 
 NOW = dt.datetime(2026, 8, 19, 13, 0)
 
-# Azimuths that sit exactly on and just below every 45-degree sector boundary.
-AZIMUTH_PROBES = ["-1", "44", "45", "134", "135", "224", "225", "314", "315"]
+# Fallback probes for a 45-degree sector, used only when a configuration
+# declares no facade at all. Real probes are derived per-config below.
+DEFAULT_AZIMUTH_PROBES = ["-1", "44", "45", "134", "135", "224", "225", "314", "315"]
+
+SUN_ENTITY = "sun.sun"
+DEFAULT_AZIMUTH_ENTITY = "sensor.sun_solar_azimuth"
+
+# Separator encoding an attribute into an axis key. `pairwise()` treats keys as
+# opaque, so this lets attribute conditions be varied like any other input
+# without the covering array needing to know attributes exist. Entity ids are
+# `domain.object_id` and never contain it.
+AXIS_SEP = "|"
+
+
+def _axis_key(entity: str, attribute: str | None = None) -> str:
+    return entity if attribute is None else f"{entity}{AXIS_SEP}{attribute}"
+
+
+def _split_axis_key(key: str) -> tuple[str, str | None]:
+    entity, sep, attribute = key.partition(AXIS_SEP)
+    return entity, (attribute if sep else None)
 
 
 def _walk(node: Any) -> Iterator[dict]:
@@ -30,34 +49,100 @@ def _walk(node: Any) -> Iterator[dict]:
             yield from _walk(child)
 
 
+def _all_condition_nodes(config: Config) -> Iterator[dict]:
+    """Every condition node the configuration can evaluate.
+
+    Not only the `conditions:` section: a condition written inline in a mode's
+    `when` or a rule's `if` is just as real, and the entities it reads need
+    axes too. Reading only named conditions works by accident in a config that
+    routes everything through `!ref`, and silently under-covers one that does
+    not.
+    """
+    for cond in config.conditions.values():
+        yield from _walk(cond)
+    for mode in config.modes:
+        if mode.when is not None:
+            yield from _walk(mode.when)
+    for rules in config.rules.values():
+        for rule in rules:
+            if rule.when is not None:
+                yield from _walk(rule.when)
+
+
+def _sun_entities(config: Config) -> tuple[str, str]:
+    """Which entities `sun_hits_target` reads in THIS configuration.
+
+    The condition accepts `sun_entity` and `azimuth_entity` overrides. A house
+    using its own azimuth sensor would otherwise get an axis for the default
+    name only, every generated world would leave its real sensor unset,
+    `world.number` would fall back to -1, and every sun rule would look dead.
+    """
+    sun, azimuth = SUN_ENTITY, DEFAULT_AZIMUTH_ENTITY
+    for node in _all_condition_nodes(config):
+        if node.get("condition") == "sun_hits_target":
+            sun = node.get("sun_entity", sun)
+            azimuth = node.get("azimuth_entity", azimuth)
+    return sun, azimuth
+
+
+def _azimuth_probes(config: Config) -> list[str]:
+    """Probe each facade's real sector boundaries, not a fixed 45-degree grid.
+
+    The boundary is where an off-by-one in the half-open interval shows up, and
+    it moves with `facade_azimuth` and `tolerance`. A hardcoded grid only probes
+    the boundaries of the house it was written for.
+    """
+    probes: set[float] = {-1.0}
+    for blind in config.blinds.values():
+        if blind.facade_azimuth is None:
+            continue
+        probes.add(blind.facade_azimuth % 360.0)
+        for edge in (
+            blind.facade_azimuth - blind.tolerance,
+            blind.facade_azimuth + blind.tolerance,
+        ):
+            base = edge % 360.0
+            probes.update({(base - 1.0) % 360.0, base, (base + 1.0) % 360.0})
+    if probes == {-1.0}:
+        return list(DEFAULT_AZIMUTH_PROBES)
+    return [f"{value:g}" for value in sorted(probes)]
+
+
 def derive_axes(config: Config) -> dict[str, list[str]]:
-    """One axis per entity the configuration reads, with the values that matter."""
+    """One axis per input the configuration reads, with the values that matter.
+
+    An axis key is an entity id, or `entity|attribute` for a condition that
+    reads an attribute rather than a state.
+    """
     axes: dict[str, set[str]] = {}
 
-    def add(entity: str, values) -> None:
-        axes.setdefault(entity, set()).update(values)
+    def add(key: str, values) -> None:
+        axes.setdefault(key, set()).update(values)
 
-    for cond in config.conditions.values():
-        for node in _walk(cond):
-            kind = node.get("condition")
-            entity = node.get("entity_id")
-            if kind == "state" and entity:
-                wanted = node["state"]
-                values = list(wanted) if isinstance(wanted, (list, tuple)) else [wanted]
-                add(entity, values + ["__other__"])
-            elif kind == "numeric_state" and entity:
-                bounds = [float(node[k]) for k in ("above", "below") if k in node]
-                probes = {"unavailable"}
-                for bound in bounds:
-                    probes.update({str(bound - 1), str(bound), str(bound + 1)})
-                add(entity, probes)
+    for node in _all_condition_nodes(config):
+        kind = node.get("condition")
+        entity = node.get("entity_id")
+        if not entity:
+            continue
+        key = _axis_key(entity, node.get("attribute"))
+        if kind == "state":
+            wanted = node["state"]
+            values = list(wanted) if isinstance(wanted, (list, tuple)) else [wanted]
+            add(key, [str(value) for value in values] + ["__other__"])
+        elif kind == "numeric_state":
+            bounds = [float(node[k]) for k in ("above", "below") if k in node]
+            probes = {"unavailable"}
+            for bound in bounds:
+                probes.update({str(bound - 1), str(bound), str(bound + 1)})
+            add(key, probes)
 
-    add("sun.sun", ["above_horizon", "below_horizon"])
-    add("sensor.sun_solar_azimuth", AZIMUTH_PROBES)
+    sun_entity, azimuth_entity = _sun_entities(config)
+    add(sun_entity, ["above_horizon", "below_horizon"])
+    add(azimuth_entity, _azimuth_probes(config))
     for ref in config.values.values():
         add(ref.entity, [str(ref.default), "unavailable"])
 
-    return {entity: sorted(values) for entity, values in axes.items()}
+    return {key: sorted(values) for key, values in axes.items()}
 
 
 def pairwise(axes: dict[str, list[str]]) -> list[dict[str, str]]:
@@ -133,30 +218,35 @@ class _Infeasible(Exception):
     """This rule's guard cannot be solved from the current axis vocabulary."""
 
 
-def _probe_world(entity: str, value: str) -> World:
-    return World(states={entity: value}, attributes={}, now=NOW, event=Event())
+def _probe_world(key: str, value: str) -> World:
+    entity, attribute = _split_axis_key(key)
+    if attribute is None:
+        return World(states={entity: value}, attributes={}, now=NOW, event=Event())
+    return World(
+        states={}, attributes={(entity, attribute): value}, now=NOW, event=Event()
+    )
 
 
-def _leaf_true(entity: str, node: dict, values: dict[str, str], axes: dict[str, list[str]]) -> None:
-    for value in axes.get(entity, []):
-        if entity in values and values[entity] != value:
+def _leaf_true(key: str, node: dict, values: dict[str, str], axes: dict[str, list[str]]) -> None:
+    for value in axes.get(key, []):
+        if key in values and values[key] != value:
             continue
-        if evaluate_condition(node, _probe_world(entity, value), None, {}):
-            values[entity] = value
+        if evaluate_condition(node, _probe_world(key, value), None, {}):
+            values[key] = value
             return
-    raise _Infeasible(f"no candidate value makes {entity} satisfy {node}")
+    raise _Infeasible(f"no candidate value makes {key} satisfy {node}")
 
 
-def _leaf_false(entity: str, node: dict, values: dict[str, str], axes: dict[str, list[str]]) -> None:
-    if entity in values:
-        if not evaluate_condition(node, _probe_world(entity, values[entity]), None, {}):
+def _leaf_false(key: str, node: dict, values: dict[str, str], axes: dict[str, list[str]]) -> None:
+    if key in values:
+        if not evaluate_condition(node, _probe_world(key, values[key]), None, {}):
             return
-        raise _Infeasible(f"pinned {entity}={values[entity]!r} does not falsify {node}")
-    for value in axes.get(entity, []):
-        if not evaluate_condition(node, _probe_world(entity, value), None, {}):
-            values[entity] = value
+        raise _Infeasible(f"pinned {key}={values[key]!r} does not falsify {node}")
+    for value in axes.get(key, []):
+        if not evaluate_condition(node, _probe_world(key, value), None, {}):
+            values[key] = value
             return
-    raise _Infeasible(f"no candidate value makes {entity} falsify {node}")
+    raise _Infeasible(f"no candidate value makes {key} falsify {node}")
 
 
 def _require(
@@ -221,24 +311,28 @@ def _require(
         return
 
     if kind == "sun_hits_target":
-        sun_node = {"condition": "state", "entity_id": "sun.sun", "state": "above_horizon"}
+        # Read the entities from the condition itself, not from module
+        # constants: a house may point this at its own sun/azimuth sensors.
+        sun_entity = cond.get("sun_entity", SUN_ENTITY)
+        azimuth_entity = cond.get("azimuth_entity", DEFAULT_AZIMUTH_ENTITY)
+        sun_node = {"condition": "state", "entity_id": sun_entity, "state": "above_horizon"}
         if not want_true:
-            _leaf_false("sun.sun", sun_node, values, axes)
+            _leaf_false(sun_entity, sun_node, values, axes)
             return
         errors = []
-        for azimuth in AZIMUTH_PROBES:
+        for azimuth in axes.get(azimuth_entity, DEFAULT_AZIMUTH_PROBES):
             snapshot = dict(values)
             try:
                 probe = World(
-                    states={"sun.sun": "above_horizon", "sensor.sun_solar_azimuth": azimuth},
+                    states={sun_entity: "above_horizon", azimuth_entity: azimuth},
                     attributes={}, now=NOW, event=Event(),
                 )
                 if not evaluate_condition(cond, probe, target, registry):
                     raise _Infeasible("azimuth probe does not hit the target's facade")
-                _leaf_true("sun.sun", sun_node, values, axes)
+                _leaf_true(sun_entity, sun_node, values, axes)
                 _leaf_true(
-                    "sensor.sun_solar_azimuth",
-                    {"condition": "state", "entity_id": "sensor.sun_solar_azimuth", "state": azimuth},
+                    azimuth_entity,
+                    {"condition": "state", "entity_id": azimuth_entity, "state": azimuth},
                     values, axes,
                 )
                 return
@@ -256,10 +350,11 @@ def _require(
     entity = cond.get("entity_id")
     if entity is None:
         raise _Infeasible(f"leaf condition without entity_id: {cond}")
+    key = _axis_key(entity, cond.get("attribute"))
     if want_true:
-        _leaf_true(entity, cond, values, axes)
+        _leaf_true(key, cond, values, axes)
     else:
-        _leaf_false(entity, cond, values, axes)
+        _leaf_false(key, cond, values, axes)
 
 
 def _solve_rule_witness(config: Config, axes: dict[str, list[str]], key: str, index: int) -> World:
@@ -291,9 +386,9 @@ def _solve_rule_witness(config: Config, axes: dict[str, list[str]], key: str, in
             continue  # already skipped by event-kind filter, nothing to negate
         _require(prior.when, False, values, axes, config.conditions, target)
 
-    full = {entity: candidates[0] for entity, candidates in axes.items()}
+    full = {key: candidates[0] for key, candidates in axes.items()}
     full.update(values)
-    return World(states=full, attributes={}, now=NOW, event=event)
+    return _world_from_row(full, event)
 
 
 def rule_witnesses(config: Config, axes: dict[str, list[str]]) -> list[World]:
@@ -311,13 +406,26 @@ def rule_witnesses(config: Config, axes: dict[str, list[str]]) -> list[World]:
     return out
 
 
+def _world_from_row(row: dict[str, str], event: Event) -> World:
+    """Split a covering-array row back into states and attributes."""
+    states: dict[str, str] = {}
+    attributes: dict[tuple[str, str], str] = {}
+    for key, value in row.items():
+        entity, attribute = _split_axis_key(key)
+        if attribute is None:
+            states[entity] = value
+        else:
+            attributes[(entity, attribute)] = value
+    return World(states=states, attributes=attributes, now=NOW, event=event)
+
+
 def worlds(config: Config) -> list[World]:
     axes = derive_axes(config)
     rows = pairwise(axes)
     out: list[World] = []
     for row in rows:
         for event in (Event(), Event(kind="arrival", person="peter")):
-            out.append(World(states=dict(row), attributes={}, now=NOW, event=event))
+            out.append(_world_from_row(row, event))
     out.extend(rule_witnesses(config, axes))
     return out
 
