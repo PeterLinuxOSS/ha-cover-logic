@@ -97,7 +97,11 @@ def evaluate_condition(
 
 
 def _state(cond: dict, world: World) -> bool:
-    actual = world.state(cond["entity_id"])
+    attribute = cond.get("attribute")
+    if attribute is not None:
+        actual = world.attribute(cond["entity_id"], attribute)
+    else:
+        actual = world.state(cond["entity_id"])
     wanted = cond["state"]
     if isinstance(wanted, (list, tuple)):
         return actual in wanted

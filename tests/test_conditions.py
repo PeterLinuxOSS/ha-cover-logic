@@ -223,3 +223,18 @@ def test_template_with_undefined_variable_propagates_instead_of_swallowing():
     cond = {"condition": "template", "value_template": "{{ this_is_undefined }}"}
     with pytest.raises(Exception):
         evaluate_condition(cond, world())
+
+
+def test_state_can_compare_an_attribute():
+    w = World(
+        states={"alarm_control_panel.alarmo": "triggered"},
+        attributes={("alarm_control_panel.alarmo", "arm_mode"): "armed_vacation"},
+        now=NOW,
+        event=Event(),
+    )
+    cond = {"condition": "state", "entity_id": "alarm_control_panel.alarmo",
+            "attribute": "arm_mode", "state": "armed_vacation"}
+    assert evaluate_condition(cond, w) is True
+
+    cond_no = {**cond, "state": "armed_away"}
+    assert evaluate_condition(cond_no, w) is False

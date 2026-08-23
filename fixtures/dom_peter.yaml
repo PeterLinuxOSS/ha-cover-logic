@@ -1,0 +1,258 @@
+# Prepis `sensor.zaluzie_cielovy_stav` z /config/configuration.yaml.
+# FÁZA 1: žiadna zmena správania. Každý riadok má zodpovedať jednej vetve
+# dnešnej šablóny. Overuje to migračná brána v tests/parity/.
+
+blinds:
+  - {entity: cover.kuchyna_zaluzia_3_6,        facade_azimuth: 180}
+  - {entity: cover.obyvacka_zaluzia_3,         facade_azimuth: 180}
+  - {entity: cover.kuchyna_zaluzia_1_4,        facade_azimuth: 90}
+  - {entity: cover.kuchyna_zaluzia_2_5,        facade_azimuth: 90}
+  - {entity: cover.obyvacka_zaluzia_dvere_1_3, facade_azimuth: 270}
+  - {entity: cover.obyvacka_zaluzia_dvere_2,   facade_azimuth: 270}
+  - {entity: cover.peter_zal,                  facade_azimuth: 270}
+  - {entity: cover.mimka_zal,                  facade_azimuth: 270}
+  - {entity: cover.spalna_zaluzia_2,           facade_azimuth: 270}
+  - {entity: cover.spalna_zaluzia_dvere_1,     facade_azimuth: 270}
+
+# Zóny sedia na svetové strany 1:1, preto stačí facade_azimuth na žalúzii.
+# tolerance 45 dáva presne dnešné pásma: [45,135) [135,225) [225,315).
+zones:
+  spolocne: {members: [cover.kuchyna_zaluzia_3_6, cover.obyvacka_zaluzia_3]}
+  kvety:    {members: [cover.kuchyna_zaluzia_1_4, cover.kuchyna_zaluzia_2_5]}
+  terasa:   {members: [cover.obyvacka_zaluzia_dvere_1_3]}
+  terasa2:  {members: [cover.obyvacka_zaluzia_dvere_2]}
+  peter:    {members: [cover.peter_zal],  occupants: [peter]}
+  mimka:    {members: [cover.mimka_zal],  occupants: [mimka]}
+  spalna:   {members: [cover.spalna_zaluzia_2, cover.spalna_zaluzia_dvere_1],
+             occupants: [pavel, majka]}
+
+values:
+  kvety_poz: {entity: input_number.kvety_pozicia_zaluzie, default: 34}
+
+conditions:
+  cover_down:
+    condition: state
+    entity_id: input_boolean.cover_down
+    state: "on"
+
+  # POZOR: nesmie sa viazať len na stav panela. Pri spustenom alarme je stav
+  # `triggered`, nie `armed_vacation` — matica by spadla na `bezny_den`
+  # a prázdny dom by sa otvoril (falošný tamper 2026-08-13).
+  alarmo_vacation:
+    condition: or
+    conditions:
+      - {condition: state, entity_id: alarm_control_panel.alarmo, state: armed_vacation}
+      - condition: and
+        conditions:
+          - {condition: state, entity_id: alarm_control_panel.alarmo, state: triggered}
+          - {condition: state, entity_id: alarm_control_panel.alarmo,
+             attribute: arm_mode, state: armed_vacation}
+
+  teplotna_ochrana:
+    condition: state
+    entity_id: input_boolean.teplotna_ochrana_dom
+    state: "on"
+
+  # `default: 999` = mŕtvy senzor sa tvári ako víchor. Zodpovedá `| float(999)`.
+  vietor_ok:
+    condition: or
+    conditions:
+      - condition: and
+        conditions:
+          - {condition: numeric_state, default: 999, below: 40,
+             entity_id: sensor.netatmo_veterny_senzor_rychlost_vetra}
+          - {condition: numeric_state, default: 999, below: 55,
+             entity_id: sensor.netatmo_veterny_senzor_sila_narazov}
+      - {condition: numeric_state, default: 999, below: 30,
+         entity_id: weather.forecast_home, attribute: wind_speed}
+
+  # Zamračené počas horúčavy => otvoriť naplno. Podmienka `rezim == horucava`
+  # je zabezpečená tým, že sa používa výhradne v pravidlách režimu `horucava`.
+  pocasie_otvorene:
+    condition: and
+    conditions:
+      - {condition: state, entity_id: sun.sun, state: above_horizon}
+      - {condition: state, entity_id: weather.openweathermap,
+         state: [cloudy, rainy, pouring, lightning-rainy, snowy-rainy]}
+      - !ref vietor_ok
+
+  # Lighting SUN vetva `light-on` už stiahla terasu a kvety, ale `cover_down`
+  # (a s ním režim `noc`) príde až o 20–40 min. V tom okne matica nesmie
+  # vracať nič hore. Prah 12:30 je ten istý, aký má vetva `light-on`.
+  vecer:
+    condition: and
+    conditions:
+      - {condition: state, entity_id: input_boolean.lighting_on, state: "on"}
+      - {condition: state, entity_id: input_boolean.cover_down, state: "off"}
+      - {condition: time, after: "12:30"}
+
+  kvety_on:     {condition: state, entity_id: input_boolean.kvety_on, state: "on"}
+  nie_kvety_on: {condition: state, entity_id: input_boolean.kvety_on, state: "off"}
+
+  rucne_kuchyna:
+    condition: state
+    entity_id: input_boolean.zaluzie_kuchyna_rucne
+    state: "on"
+
+  hocikto_doma:     {condition: state, entity_id: binary_sensor.is_home, state: "on"}
+  nikto_doma:       {condition: state, entity_id: binary_sensor.is_home, state: "off"}
+
+  # "Všetci už vstali" — riadi automation.sleeping z postele.
+  vstali: {condition: state, entity_id: input_boolean.some_sleeping, state: "off"}
+
+  doma_peter: {condition: state, entity_id: binary_sensor.peter_home, state: "on"}
+  nie_peter:  {condition: state, entity_id: binary_sensor.peter_home, state: "off"}
+  doma_mimka: {condition: state, entity_id: binary_sensor.mimka_home, state: "on"}
+  nie_mimka:  {condition: state, entity_id: binary_sensor.mimka_home, state: "off"}
+  doma_spalna:
+    condition: or
+    conditions:
+      - {condition: state, entity_id: binary_sensor.pavel_home, state: "on"}
+      - {condition: state, entity_id: binary_sensor.majka_home, state: "on"}
+  nie_spalna:
+    condition: and
+    conditions:
+      - {condition: state, entity_id: binary_sensor.pavel_home, state: "off"}
+      - {condition: state, entity_id: binary_sensor.majka_home, state: "off"}
+
+  akt_peter:     {condition: state, entity_id: input_boolean.zaluzie_aktivna_peter,  state: "on"}
+  nie_akt_peter: {condition: state, entity_id: input_boolean.zaluzie_aktivna_peter,  state: "off"}
+  akt_mimka:     {condition: state, entity_id: input_boolean.zaluzie_aktivna_mimka,  state: "on"}
+  nie_akt_mimka: {condition: state, entity_id: input_boolean.zaluzie_aktivna_mimka,  state: "off"}
+  akt_spalna:    {condition: state, entity_id: input_boolean.zaluzie_aktivna_spalna, state: "on"}
+  nie_akt_spalna: {condition: state, entity_id: input_boolean.zaluzie_aktivna_spalna, state: "off"}
+
+modes:
+  - {id: noc,       when: !ref cover_down}
+  - {id: dovolenka, when: !ref alarmo_vacation}
+  - {id: horucava,  when: !ref teplotna_ochrana}
+  - {id: bezny_den}
+
+rules:
+  # ---- NOC: nič sa nehýbe, ani po príchode ------------------------------
+  noc.spolocne: [{then: {position: keep, tilt: keep}}]
+  noc.kvety:    [{then: {position: keep, tilt: keep}}]
+  noc.terasa:   [{then: {position: keep, tilt: keep}}]
+  noc.terasa2:  [{then: {position: keep, tilt: keep}}]
+  noc.peter:    [{then: {position: keep, tilt: keep}}]
+  noc.mimka:    [{then: {position: keep, tilt: keep}}]
+  noc.spalna:   [{then: {position: keep, tilt: keep}}]
+
+  # ---- DOVOLENKA: spálne úplne zavreté, spoločné lamely 50 -------------
+  # Príchodová varianta je zhodná so stavovou (zp = z), preto žiadne
+  # `events:` pravidlá.
+  dovolenka.spolocne: [{then: {position: keep, tilt: 50}}]
+  dovolenka.kvety:
+    - {if: !ref nie_kvety_on, then: {position: keep, tilt: keep}}
+    - {then: {position: !ref kvety_poz, tilt: 50}}
+  dovolenka.terasa:  [{then: {position: keep, tilt: 50}}]
+  dovolenka.terasa2: [{then: {position: keep, tilt: 50}}]
+  dovolenka.peter:   [{then: {position: 0, tilt: 0}}]
+  dovolenka.mimka:   [{then: {position: 0, tilt: 0}}]
+  dovolenka.spalna:  [{then: {position: 0, tilt: 0}}]
+
+  # ---- HORÚČAVA --------------------------------------------------------
+  # `pocasie_otvorene` MUSÍ predchádzať každému `sun_hits_target`: šablóna
+  # pri zamračení nastaví `strana = 'ziadna'`, takže slnečná vetva vtedy
+  # neplatí. Opačné poradie zhodí paritu.
+  horucava.spolocne:
+    - {events: [arrival], if: !ref pocasie_otvorene, then: {position: keep, tilt: 100}}
+    - {events: [arrival], then: {position: keep, tilt: 50}}
+    - {if: !ref nikto_doma, then: {position: 0, tilt: 0}}
+    - {if: !ref pocasie_otvorene, then: {position: keep, tilt: 100}}
+    - {if: {condition: sun_hits_target}, then: {position: keep, tilt: 50}}
+    - {then: {position: keep, tilt: 100}}
+
+  # Príchodové pravidlá kopírujú lamely zo stavovej vetvy zámerne: stará
+  # šablóna posiela kľúč `tilt` z `z` aj pre príchodovú variantu.
+  horucava.kvety:
+    - {events: [arrival], if: !ref rucne_kuchyna,    then: {position: keep, tilt: keep}}
+    - {events: [arrival], if: !ref nie_kvety_on,     then: {position: keep, tilt: keep}}
+    - {events: [arrival], if: !ref vecer,            then: {position: !ref kvety_poz, tilt: 0}}
+    - {events: [arrival], if: !ref pocasie_otvorene, then: {position: keep, tilt: 100}}
+    - {events: [arrival], if: {condition: sun_hits_target},
+       then: {position: !ref kvety_poz, tilt: 0}}
+    - {events: [arrival], then: {position: !ref kvety_poz, tilt: 100}}
+    - {if: !ref rucne_kuchyna,    then: {position: keep, tilt: keep}}
+    - {if: !ref nie_kvety_on,     then: {position: keep, tilt: keep}}
+    - {if: !ref vecer,            then: {position: !ref kvety_poz, tilt: 0}}
+    - {if: !ref pocasie_otvorene, then: {position: !ref kvety_poz, tilt: 100}}
+    - {if: {condition: sun_hits_target}, then: {position: !ref kvety_poz, tilt: 0}}
+    - {then: {position: !ref kvety_poz, tilt: 100}}
+
+  # Terasa (dverová _1_3) sa ráno nevytiahne sama — až keď domácnosť vstala.
+  horucava.terasa:
+    - {events: [arrival], if: !ref vecer,            then: {position: keep, tilt: keep}}
+    - {events: [arrival], if: !ref pocasie_otvorene, then: {position: keep, tilt: 100}}
+    - {events: [arrival], then: {position: 100, tilt: keep}}
+    - {if: !ref vecer,            then: {position: keep, tilt: keep}}
+    - {if: !ref pocasie_otvorene, then: {position: keep, tilt: 100}}
+    - {if: {condition: sun_hits_target}, then: {position: 0, tilt: 50}}
+    - {if: [!ref hocikto_doma, !ref vstali], then: {position: 100, tilt: keep}}
+    - {if: !ref hocikto_doma,     then: {position: keep, tilt: keep}}
+    - {then: {position: keep, tilt: 50}}
+
+  # Terasa2 (_2_) zostáva počas horúčavy dole celý deň.
+  horucava.terasa2:
+    - {if: !ref pocasie_otvorene, then: {position: 0, tilt: 100}}
+    - {if: {condition: sun_hits_target}, then: {position: 0, tilt: 50}}
+    - {then: {position: 0, tilt: 100}}
+
+  horucava.peter:
+    - {events: [arrival], then: {position: keep, tilt: 100}}
+    - {if: !ref nie_peter,     then: {position: 0, tilt: 0}}
+    - {if: !ref nie_akt_peter, then: {position: keep, tilt: keep}}
+    - {if: !ref pocasie_otvorene, then: {position: keep, tilt: 100}}
+    - {if: {condition: sun_hits_target}, then: {position: keep, tilt: 50}}
+    - {then: {position: keep, tilt: 100}}
+
+  horucava.mimka:
+    - {events: [arrival], then: {position: keep, tilt: 100}}
+    - {if: !ref nie_mimka,     then: {position: 0, tilt: 0}}
+    - {if: !ref nie_akt_mimka, then: {position: keep, tilt: keep}}
+    - {if: !ref pocasie_otvorene, then: {position: keep, tilt: 100}}
+    - {if: {condition: sun_hits_target}, then: {position: keep, tilt: 50}}
+    - {then: {position: keep, tilt: 100}}
+
+  horucava.spalna:
+    - {events: [arrival], if: !ref pocasie_otvorene, then: {position: keep, tilt: 100}}
+    - {events: [arrival], then: {position: keep, tilt: 50}}
+    - {if: !ref nie_spalna,     then: {position: 0, tilt: 0}}
+    - {if: !ref nie_akt_spalna, then: {position: keep, tilt: keep}}
+    - {if: !ref pocasie_otvorene, then: {position: keep, tilt: 100}}
+    - {if: {condition: sun_hits_target}, then: {position: keep, tilt: 50}}
+    - {then: {position: keep, tilt: 100}}
+
+  # ---- BEŽNÝ DEŇ -------------------------------------------------------
+  # `teplotna_ochrana` je tu z definície režimu OFF, takže starý fallback
+  # `pozicia_tilt_ciel` (= 100 keď je ochrana off) je konštanta 100.
+  bezny_den.spolocne: [{then: {position: keep, tilt: 100}}]
+
+  bezny_den.kvety:
+    - {if: !ref rucne_kuchyna, then: {position: keep, tilt: keep}}
+    - {if: !ref nie_kvety_on,  then: {position: keep, tilt: keep}}
+    - {if: !ref vecer,         then: {position: !ref kvety_poz, tilt: 0}}
+    - {then: {position: !ref kvety_poz, tilt: 100}}
+
+  bezny_den.terasa:
+    - {if: !ref vecer, then: {position: keep, tilt: keep}}
+    - {then: {position: 100, tilt: keep}}
+
+  bezny_den.terasa2:
+    - {if: !ref vecer, then: {position: keep, tilt: keep}}
+    - {then: {position: 100, tilt: keep}}
+
+  bezny_den.peter:
+    - {events: [arrival], then: {position: keep, tilt: 100}}
+    - {if: [!ref doma_peter, !ref nie_akt_peter], then: {position: keep, tilt: keep}}
+    - {then: {position: keep, tilt: 100}}
+
+  bezny_den.mimka:
+    - {events: [arrival], then: {position: keep, tilt: 100}}
+    - {if: [!ref doma_mimka, !ref nie_akt_mimka], then: {position: keep, tilt: keep}}
+    - {then: {position: keep, tilt: 100}}
+
+  bezny_den.spalna:
+    - {events: [arrival], then: {position: keep, tilt: 100}}
+    - {if: [!ref doma_spalna, !ref nie_akt_spalna], then: {position: keep, tilt: keep}}
+    - {then: {position: keep, tilt: 100}}
