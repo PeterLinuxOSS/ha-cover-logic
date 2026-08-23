@@ -26,31 +26,58 @@ def evaluate_condition(
     world: World,
     target: Target | None = None,
     registry: dict[str, dict] | None = None,
+    *,
+    _ref_chain: frozenset[str] = frozenset(),
 ) -> bool:
-    """Evaluate `cond`. `None` means 'no condition', which is True."""
+    """Evaluate `cond`. `None` means 'no condition', which is True.
+
+    `_ref_chain` is private: it tracks the names of `ref` conditions currently
+    being resolved, so a `ref` cycle raises a clear error instead of
+    recursing until Python's stack limit. Every recursive call below must
+    thread it through, or the cycle guard silently stops working for that
+    branch.
+    """
     if cond is None:
         return True
     if isinstance(cond, list):
-        return all(evaluate_condition(c, world, target, registry) for c in cond)
+        return all(
+            evaluate_condition(c, world, target, registry, _ref_chain=_ref_chain)
+            for c in cond
+        )
 
     kind = cond.get("condition")
 
     if kind == COND_REF:
         if registry is None:
             raise KeyError(cond["name"])
-        return evaluate_condition(registry[cond["name"]], world, target, registry)
+        name = cond["name"]
+        if name in _ref_chain:
+            raise ValueError(
+                f"circular condition reference: {name!r} refers back to itself "
+                f"via {sorted(_ref_chain)!r}"
+            )
+        return evaluate_condition(
+            registry[name],
+            world,
+            target,
+            registry,
+            _ref_chain=_ref_chain | {name},
+        )
 
     if kind == "and":
         return all(
-            evaluate_condition(c, world, target, registry) for c in cond["conditions"]
+            evaluate_condition(c, world, target, registry, _ref_chain=_ref_chain)
+            for c in cond["conditions"]
         )
     if kind == "or":
         return any(
-            evaluate_condition(c, world, target, registry) for c in cond["conditions"]
+            evaluate_condition(c, world, target, registry, _ref_chain=_ref_chain)
+            for c in cond["conditions"]
         )
     if kind == "not":
         return not any(
-            evaluate_condition(c, world, target, registry) for c in cond["conditions"]
+            evaluate_condition(c, world, target, registry, _ref_chain=_ref_chain)
+            for c in cond["conditions"]
         )
 
     if kind == "state":
@@ -102,10 +129,25 @@ def _parse_hhmm(text: str) -> dt.time:
 
 def _time(cond: dict, world: World) -> bool:
     now = world.now.time()
-    if "after" in cond and not now >= _parse_hhmm(cond["after"]):
-        return False
-    if "before" in cond and not now < _parse_hhmm(cond["before"]):
-        return False
+    after = _parse_hhmm(cond["after"]) if "after" in cond else None
+    before = _parse_hhmm(cond["before"]) if "before" in cond else None
+
+    if after is not None and before is not None:
+        if after <= before:
+            # Same-day window, e.g. 08:00-18:00.
+            return after <= now < before
+        # Wrap-around window, e.g. 22:00-06:00: `after` is later in the
+        # clock than `before`, so the intended window crosses midnight.
+        # ANDing the two one-sided checks (as a naive port of the native HA
+        # schema would) is wrong here -- it always yields an empty set,
+        # since no time is both >= 22:00 and < 06:00 on the same clock face.
+        # The window is everything from `after` to midnight PLUS everything
+        # from midnight to `before`, i.e. an OR of the two checks.
+        return now >= after or now < before
+    if after is not None:
+        return now >= after
+    if before is not None:
+        return now < before
     return True
 
 

@@ -73,10 +73,41 @@ def test_numeric_state_reads_an_attribute():
     assert evaluate_condition(cond, w) is True
 
 
+def test_numeric_state_without_default_raises():
+    # `default` is parity-critical (mirrors `| float(999)`): a config that
+    # omits it must fail loudly rather than silently pick a side.
+    w = world({"sensor.wind": "unavailable"})
+    cond = {"condition": "numeric_state", "entity_id": "sensor.wind", "below": 40}
+    with pytest.raises(KeyError):
+        evaluate_condition(cond, w)
+
+
 def test_time_after_is_inclusive():
     cond = {"condition": "time", "after": "13:00"}
     assert evaluate_condition(cond, world(now=dt.datetime(2026, 8, 19, 13, 0))) is True
     assert evaluate_condition(cond, world(now=dt.datetime(2026, 8, 19, 12, 59))) is False
+
+
+def test_time_before_alone_is_exclusive():
+    cond = {"condition": "time", "before": "06:00"}
+    assert evaluate_condition(cond, world(now=dt.datetime(2026, 8, 19, 5, 59))) is True
+    assert evaluate_condition(cond, world(now=dt.datetime(2026, 8, 19, 6, 0))) is False
+
+
+def test_time_after_and_before_same_day_window():
+    cond = {"condition": "time", "after": "08:00", "before": "18:00"}
+    assert evaluate_condition(cond, world(now=dt.datetime(2026, 8, 19, 12, 0))) is True
+    assert evaluate_condition(cond, world(now=dt.datetime(2026, 8, 19, 7, 59))) is False
+    assert evaluate_condition(cond, world(now=dt.datetime(2026, 8, 19, 18, 0))) is False
+
+
+def test_time_window_crossing_midnight():
+    # after > before means the window wraps past midnight, e.g. 22:00-06:00
+    # covers the overnight hours rather than nothing at all.
+    cond = {"condition": "time", "after": "22:00", "before": "06:00"}
+    assert evaluate_condition(cond, world(now=dt.datetime(2026, 8, 19, 21, 59))) is False
+    assert evaluate_condition(cond, world(now=dt.datetime(2026, 8, 19, 23, 0))) is True
+    assert evaluate_condition(cond, world(now=dt.datetime(2026, 8, 19, 3, 0))) is True
 
 
 def test_and_or_not():
@@ -88,6 +119,25 @@ def test_and_or_not():
     assert evaluate_condition({"condition": "not", "conditions": [off]}, w) is True
 
 
+def test_not_with_several_subconditions_is_de_morgan_not_first_match():
+    # `not` over a list is NOT(A or B or C): true only when NONE of the
+    # sub-conditions hold. This matches Home Assistant's own `not` semantics
+    # and is deliberate, not a bug — pin it so it can't regress silently.
+    w = world({"a": "on", "b": "off", "c": "off"})
+    a_on = {"condition": "state", "entity_id": "a", "state": "on"}
+    b_on = {"condition": "state", "entity_id": "b", "state": "on"}
+    c_on = {"condition": "state", "entity_id": "c", "state": "on"}
+    # Only "a" is on -> at least one sub-condition holds -> not is False.
+    assert evaluate_condition(
+        {"condition": "not", "conditions": [a_on, b_on, c_on]}, w
+    ) is False
+    # None of them are on -> not is True.
+    w_none = world({"a": "off", "b": "off", "c": "off"})
+    assert evaluate_condition(
+        {"condition": "not", "conditions": [a_on, b_on, c_on]}, w_none
+    ) is True
+
+
 def test_ref_resolves_through_the_registry():
     reg = {"vecer": {"condition": "state", "entity_id": "a", "state": "on"}}
     w = world({"a": "on"})
@@ -97,6 +147,19 @@ def test_ref_resolves_through_the_registry():
 def test_ref_to_a_missing_name_raises():
     with pytest.raises(KeyError):
         evaluate_condition({"condition": "ref", "name": "nope"}, world(), registry={})
+
+
+def test_ref_with_registry_none_raises():
+    # registry=None is distinct from registry={}: there's nowhere at all to
+    # look the name up, so this must raise rather than silently fail closed.
+    with pytest.raises(KeyError):
+        evaluate_condition({"condition": "ref", "name": "vecer"}, world(), registry=None)
+
+
+def test_circular_ref_raises_a_clear_error():
+    reg = {"a": {"condition": "ref", "name": "a"}}
+    with pytest.raises(ValueError, match="circular condition reference"):
+        evaluate_condition({"condition": "ref", "name": "a"}, world(), registry=reg)
 
 
 @pytest.mark.parametrize(
@@ -150,3 +213,13 @@ def test_template_condition_sees_the_same_globals_as_home_assistant():
 def test_unknown_condition_type_raises():
     with pytest.raises(ValueError, match="unknown condition"):
         evaluate_condition({"condition": "wibble"}, world())
+
+
+def test_template_with_undefined_variable_propagates_instead_of_swallowing():
+    # A broken user template must not silently evaluate to False -- "false"
+    # can mean "leave the house open during a heatwave". Do not wrap this in
+    # try/except: a future change that swallows the error should make this
+    # test fail.
+    cond = {"condition": "template", "value_template": "{{ this_is_undefined }}"}
+    with pytest.raises(Exception):
+        evaluate_condition(cond, world())
