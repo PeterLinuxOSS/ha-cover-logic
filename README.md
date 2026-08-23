@@ -39,4 +39,5 @@ None of these modules import Home Assistant. This is enforced by `tests/test_pur
 
 ## Documentation
 
-See the specification and design rationale in the docs directory (coming in phase 2).
+The specification and design rationale are available in the Home Assistant config directory at:
+`/config/docs/superpowers/specs/2026-08-23-cover-logic-design.md`
