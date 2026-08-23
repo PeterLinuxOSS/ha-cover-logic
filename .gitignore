@@ -3,3 +3,6 @@ __pycache__/
 .pytest_cache/
 .hypothesis/
 .venv/
+
+# SDD scratch: progress ledger, task briefs, review packages
+.superpowers/
