@@ -45,6 +45,17 @@ class World:
     now: dt.datetime = dt.datetime(1970, 1, 1)
     event: Event = Event()
 
+    def __post_init__(self) -> None:
+        """Copy the mappings so the snapshot cannot be changed from outside.
+
+        `frozen=True` stops the fields being re-assigned; it does nothing about a
+        caller mutating the dict it passed in. This module exists to guarantee that
+        one evaluation sees one consistent state, so that guarantee is enforced here
+        rather than left to callers.
+        """
+        object.__setattr__(self, "states", dict(self.states))
+        object.__setattr__(self, "attributes", dict(self.attributes))
+
     def state(self, entity_id: str) -> str | None:
         return self.states.get(entity_id)
 
