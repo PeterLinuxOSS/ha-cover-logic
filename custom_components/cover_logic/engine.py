@@ -38,8 +38,6 @@ def evaluate(config: Config, world: World) -> Decision:
             blind = config.blinds.get(entity)
             if blind is None:
                 raise EngineError(f"zone {zone_id!r} refers to unknown blind {entity!r}")
-            if owner[entity] != zone_id:
-                continue
             target = Target(blind=blind, zone=zone)
             action, label = _apply_rules(config, rules, world, target, mode, zone_id)
             targets[entity] = action
@@ -56,7 +54,11 @@ def _resolve_mode(config: Config, world: World) -> str:
 
 
 def _resolve_ownership(config: Config) -> dict[str, str]:
-    """Exactly one zone owns each blind. Two owners is the bug class this kills."""
+    """Exactly one zone owns each blind.
+
+    Two owners and no owners are both the bug class this kills: a blind
+    nobody decides is a blind nobody moves, silently, far from this check.
+    """
     owner: dict[str, str] = {}
     for zone_id, zone in config.zones.items():
         for entity in zone.members:
@@ -65,6 +67,12 @@ def _resolve_ownership(config: Config) -> dict[str, str]:
                     f"blind {entity!r} is in two zones: {owner[entity]!r} and {zone_id!r}"
                 )
             owner[entity] = zone_id
+
+    orphans = set(config.blinds) - set(owner)
+    if orphans:
+        raise EngineError(
+            f"blind {sorted(orphans)[0]!r} is configured but owned by no zone"
+        )
     return owner
 
 
@@ -76,6 +84,15 @@ def _apply_rules(
     mode: str,
     zone_id: str,
 ) -> tuple[Action, str]:
+    """Run the first-match-wins rule list for one (mode, zone), one blind at a time.
+
+    The trace label `#none` is deliberately ambiguous between two causes: no
+    rules were configured at all for this (mode, zone) key, and rules were
+    configured but none of them matched this blind. Both end in "keep, keep"
+    and both are represented the same way. Debugging a `#none` means checking
+    for either cause — first whether `mode.zone` exists in `config.rules` at
+    all, then, if it does, why every rule in it fell through.
+    """
     if not rules:
         return Action(), f"{mode}.{zone_id}#none"
 

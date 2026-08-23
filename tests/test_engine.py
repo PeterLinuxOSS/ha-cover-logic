@@ -81,6 +81,36 @@ def test_ref_falls_back_to_its_default_when_the_helper_is_missing():
     assert d.targets["cover.b"] == Action(position=34, tilt=0)
 
 
+def test_ref_truncates_toward_zero_like_jinjas_int_filter():
+    # Parity-critical: the Jinja template this engine replaces uses `| int(34)`,
+    # which truncates toward zero, not `round()`. 50.7 must resolve to 50. This
+    # must NOT be "improved" to rounding — that would silently break parity
+    # against the live system across a whole scenario class.
+    states = {**DEN, "input_number.kvety_pozicia_zaluzie": "50.7"}
+    d = evaluate(CFG, world(states))
+    assert d.targets["cover.b"] == Action(position=50, tilt=0)
+
+
+def test_ref_value_above_100_passes_through_unclamped():
+    # Deliberate: the engine does not clamp out-of-range helper values, because
+    # the template being replaced does not clamp either — clamping here would
+    # itself break parity. Clamping belongs in the execution layer that issues
+    # the hardware call, where it is a safety concern, not a decision-fidelity
+    # one. Helpers really do drift outside their intended range (see CLAUDE.md
+    # on `float(8)` defaults vs. actual helper state after a restart), so this
+    # is pinning real behaviour, not a hypothetical.
+    states = {**DEN, "input_number.kvety_pozicia_zaluzie": "150"}
+    d = evaluate(CFG, world(states))
+    assert d.targets["cover.b"] == Action(position=150, tilt=0)
+
+
+def test_ref_negative_value_passes_through_unclamped():
+    # Same reasoning as above, for the other side of the range.
+    states = {**DEN, "input_number.kvety_pozicia_zaluzie": "-5"}
+    d = evaluate(CFG, world(states))
+    assert d.targets["cover.b"] == Action(position=-5, tilt=0)
+
+
 def test_event_scoped_rule_is_skipped_on_a_plain_state_change():
     d = evaluate(CFG, world(DEN))
     assert d.targets["cover.b"].tilt == 0
@@ -132,6 +162,23 @@ rules:
         evaluate(cfg, world({}))
 
 
+def test_a_blind_owned_by_no_zone_is_an_error():
+    cfg = load_config("""
+blinds:
+  - {entity: cover.a}
+  - {entity: cover.orphan}
+zones:
+  one: {members: [cover.a]}
+modes: [{id: den}]
+conditions: {}
+values: {}
+rules:
+  den.one: [{then: {position: 0}}]
+""")
+    with pytest.raises(EngineError, match="cover.orphan"):
+        evaluate(cfg, world({}))
+
+
 def test_no_matching_mode_is_an_error():
     cfg = load_config("""
 blinds: [{entity: cover.a}]
@@ -149,3 +196,13 @@ rules: {den.z: [{then: {position: 0}}]}
 def test_the_same_world_always_gives_the_same_decision():
     w = world(DEN)
     assert evaluate(CFG, w) == evaluate(CFG, w)
+
+
+def test_equal_but_separately_built_worlds_give_the_same_decision():
+    # The assertion above only proves idempotency on one object. Reproducibility
+    # across equal snapshots is a separate property: two independently
+    # constructed World instances with equal contents must still decide alike.
+    w1 = world(dict(DEN))
+    w2 = world(dict(DEN))
+    assert w1 is not w2
+    assert evaluate(CFG, w1) == evaluate(CFG, w2)
