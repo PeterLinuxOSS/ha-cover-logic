@@ -165,11 +165,18 @@ rules:
 
   # Príchodové pravidlá kopírujú lamely zo stavovej vetvy zámerne: stará
   # šablóna posiela kľúč `tilt` z `z` aj pre príchodovú variantu.
+  # POZOR: `zp['kvety']` v šablóne je `N if rucne_kuchyna else (KV0 if vecer
+  # else (T100 if pocasie_otvorene else KV))` — `T100` je doslovná konštanta
+  # `{'akcia':'tilt','hodnota':100}`, NIE `KV100`, takže pri zamračenej
+  # horúčave dostane kuchyňa lamely 100 aj keď je `kvety_on` vypnuté. `nie_kvety_on`
+  # preto smie skratovať len vetvu `vecer` (kde je akcia `KV0`, gated) a
+  # koncový fallback (`KV`, tiež gated) — nie vetvu `pocasie_otvorene`.
   horucava.kvety:
-    - {events: [arrival], if: !ref rucne_kuchyna,    then: {position: keep, tilt: keep}}
-    - {events: [arrival], if: !ref nie_kvety_on,     then: {position: keep, tilt: keep}}
+    - {events: [arrival], if: !ref rucne_kuchyna, then: {position: keep, tilt: keep}}
+    - {events: [arrival], if: [!ref vecer, !ref nie_kvety_on], then: {position: keep, tilt: keep}}
     - {events: [arrival], if: !ref vecer,            then: {position: !ref kvety_poz, tilt: 0}}
     - {events: [arrival], if: !ref pocasie_otvorene, then: {position: keep, tilt: 100}}
+    - {events: [arrival], if: !ref nie_kvety_on,     then: {position: keep, tilt: keep}}
     - {events: [arrival], if: {condition: sun_hits_target},
        then: {position: !ref kvety_poz, tilt: 0}}
     - {events: [arrival], then: {position: !ref kvety_poz, tilt: 100}}

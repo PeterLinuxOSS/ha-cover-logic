@@ -25,6 +25,7 @@ testpaths = ["tests"]
 pythonpath = ["custom_components"]
 addopts = "-q"
 filterwarnings = ["error"]
+markers = ["slow: full-space runs; excluded from the default run"]
 
 [tool.ruff]
 target-version = "py312"
