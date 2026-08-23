@@ -22,7 +22,7 @@ packages = []
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["custom_components"]
+pythonpath = ["custom_components", "tests"]
 addopts = "-q"
 filterwarnings = ["error"]
 markers = ["slow: full-space runs; excluded from the default run"]
