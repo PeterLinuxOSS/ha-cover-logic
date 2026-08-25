@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .conditions import evaluate_condition
-from .model import KEEP, Action, Config, Ref, Value
+from .model import Action, Config, Ref, Value
 from .world import Target, World
 
 

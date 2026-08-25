@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from cover_logic.config_schema import load_config_file
 from scenarios import fired_rules, worlds
 

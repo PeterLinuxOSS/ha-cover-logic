@@ -4,7 +4,6 @@ import dataclasses
 import datetime as dt
 
 import pytest
-
 from cover_logic.model import Blind, Zone
 from cover_logic.world import Event, Target, World
 

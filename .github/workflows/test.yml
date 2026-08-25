@@ -17,4 +17,23 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e ".[dev]"
+      # tests/parity is excluded on purpose: the migration gate renders the
+      # live Jinja template out of /config/configuration.yaml, which only
+      # exists on the Home Assistant host. It is the project's central
+      # guarantee and must be run locally before any release.
       - run: python -m pytest tests/ -q --ignore=tests/parity
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # pyproject.toml configured ruff but nothing invoked it until now.
+      # `ruff format --check` is deliberately NOT run: adopting the formatter
+      # would rewrite most of the tree in one commit and bury a history that
+      # was reviewed change by change. Lint catches real defects; formatting
+      # is a separate decision to take on purpose, not as a CI side effect.
+      - run: pipx install ruff
+      - run: ruff check .

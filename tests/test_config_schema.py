@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-
 from cover_logic.conditions import evaluate_condition
 from cover_logic.config_schema import ConfigError, load_config, load_config_file
 from cover_logic.model import KEEP, Action, Ref
@@ -338,7 +337,8 @@ def test_mode_id_containing_dot_raises_config_error():
 def test_same_short_name_in_both_namespaces_resolves_independently():
     text = MINIMAL.replace(
         "conditions:\n  cover_down:",
-        "conditions:\n  shared:\n    condition: state\n    entity_id: input_boolean.cover_down\n    state: \"on\"\n  cover_down:",
+        "conditions:\n  shared:\n    condition: state\n"
+        '    entity_id: input_boolean.cover_down\n    state: "on"\n  cover_down:',
     ).replace(
         "values:\n  kvety_poz:",
         "values:\n  shared:\n    entity: input_number.shared_helper\n    default: 7\n  kvety_poz:",

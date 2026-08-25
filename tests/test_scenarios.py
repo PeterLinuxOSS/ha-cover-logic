@@ -7,7 +7,6 @@ without ever failing loudly, so they get the same rigor as production code.
 from __future__ import annotations
 
 from cover_logic.config_schema import load_config
-
 from scenarios import derive_axes, fired_rules, rule_witnesses, worlds
 
 TWO_AZIMUTH_OVERRIDES = """
