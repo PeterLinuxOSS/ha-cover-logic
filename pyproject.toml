@@ -132,4 +132,14 @@ known-first-party = ["cover_logic"]
 # literal expected values (positions, counts, timestamps); naming every one
 # of those a constant would hurt readability rather than help it, so
 # PLR2004 (magic value) is exempt here too.
-"tests/**" = ["D100", "D101", "D102", "D103", "D104", "D105", "D107", "PLR2004"]
+"tests/**" = [
+    "D100", "D101", "D102", "D103", "D104", "D105", "D107",
+    # D205 (blank line between summary and body) is exempt here too: several
+    # test/harness docstrings (tests/scenarios.py, tests/test_scenarios.py,
+    # tests/test_validation.py) explain a fixture or a backtracking search in
+    # one dense opening paragraph rather than a one-line summary, which reads
+    # better for what they are -- test documentation, not the public API
+    # surface `docs/rationale.md` and the production docstrings serve.
+    "D205",
+    "PLR2004",
+]

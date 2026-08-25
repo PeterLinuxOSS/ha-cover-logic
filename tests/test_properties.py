@@ -99,13 +99,11 @@ def test_the_same_world_always_gives_the_same_decision(config, values):
 )
 @settings(max_examples=200, deadline=None)
 def test_action_axes_are_always_an_int_or_keep(config, values):
-    # The engine deliberately does not clamp axis values to 0..100: the Jinja
-    # template it replaces does not clamp either, so clamping here would break
-    # parity with it. Clamping is the execution layer's job, later. The only
-    # honest guarantee at this layer is "KEEP or an int" -- with
-    # `input_number.kvety_pozicia_zaluzie` (the fixture's one `Ref`) in the
-    # strategy, a helper value like 999 really does flow straight through as
-    # `Action(position=999, ...)`.
+    # The only honest guarantee at this layer is "KEEP or an int" -- see
+    # docs/rationale.md -- "Why the engine does not clamp resolved values to
+    # 0..100". With `input_number.kvety_pozicia_zaluzie` (the fixture's one
+    # `Ref`) in the strategy, a helper value like 999 really does flow
+    # straight through as `Action(position=999, ...)`.
     world = World(states=values, attributes={}, now=NOW, event=Event())
     for action in evaluate(config, world).targets.values():
         for axis in (action.position, action.tilt):

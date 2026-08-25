@@ -16,18 +16,9 @@ from .world import Target, World
 DEFAULT_AZIMUTH_ENTITY = "sensor.sun_solar_azimuth"
 SUN_ENTITY = "sun.sun"
 
-# autoescape stays off, and CodeQL's py/jinja2/autoescape-false is a false
-# positive here: that rule assumes the output reaches a browser. This
-# environment renders one thing only -- a boolean guard from the operator's own
-# configuration -- and the result is compared against a fixed set of truthy
-# strings and discarded. No HTML is produced, nothing is served, and the
-# template author is the system operator, so there is no privilege boundary to
-# cross. Escaping would only alter `<`, `>` and `&`, which a boolean expression
-# does not contain.
-#
-# StrictUndefined is deliberate: an undefined name must raise rather than
-# render empty, because an empty render would read as False, and False here can
-# mean "leave the house open during a heatwave".
+# Autoescape off, StrictUndefined on. See docs/rationale.md -- "Why
+# autoescape stays off" and "Why a broken template raises instead of
+# evaluating False".
 _JINJA = jinja2.Environment(undefined=jinja2.StrictUndefined)
 
 
@@ -41,11 +32,8 @@ def evaluate_condition(
 ) -> bool:
     """Evaluate `cond`. `None` means 'no condition', which is True.
 
-    `_ref_chain` is private: it tracks the names of `ref` conditions currently
-    being resolved, so a `ref` cycle raises a clear error instead of
-    recursing until Python's stack limit. Every recursive call below must
-    thread it through, or the cycle guard silently stops working for that
-    branch.
+    See docs/rationale.md -- "Why `_ref_chain` must be threaded through every
+    recursive call".
     """
     if cond is None:
         return True
@@ -122,8 +110,8 @@ def _state(cond: dict, world: World) -> bool:
 def _numeric_state(cond: dict, world: World) -> bool:
     """`default` mirrors Jinja's `| float(999)` fallback.
 
-    A dead sensor must fall on the safe side, and which side that is depends on
-    the rule — so the default is always explicit in the config, never implied.
+    See docs/rationale.md -- "Why `numeric_state` requires an explicit
+    `default`".
     """
     value = world.number(
         cond["entity_id"],
@@ -155,13 +143,8 @@ def _time(cond: dict, world: World) -> bool:
         if after <= before:
             # Same-day window, e.g. 08:00-18:00.
             return after <= now < before
-        # Wrap-around window, e.g. 22:00-06:00: `after` is later in the
-        # clock than `before`, so the intended window crosses midnight.
-        # ANDing the two one-sided checks (as a naive port of the native HA
-        # schema would) is wrong here -- it always yields an empty set,
-        # since no time is both >= 22:00 and < 06:00 on the same clock face.
-        # The window is everything from `after` to midnight PLUS everything
-        # from midnight to `before`, i.e. an OR of the two checks.
+        # Wrap-around window, e.g. 22:00-06:00. See docs/rationale.md --
+        # "Why the wrap-around time window is an OR, not an AND".
         return now >= after or now < before
     if after is not None:
         return now >= after
@@ -202,10 +185,8 @@ def _template_globals(world: World) -> dict[str, Any]:
 def _sun_hits_target(cond: dict, world: World, target: Target | None) -> bool:
     """True when the sun is within the target's facade sector.
 
-    The sector is HALF-OPEN: [facade - tolerance, facade + tolerance). The
-    template being replaced used `az >= 45 and az < 135`, and the scenario axis
-    contains 45/135/225/315 on purpose, so an inclusive upper bound breaks
-    parity on exactly those points.
+    The sector is HALF-OPEN: [facade - tolerance, facade + tolerance). See
+    docs/rationale.md -- "Why the sun sector is half-open".
     """
     if target is None or target.blind.facade_azimuth is None:
         return False

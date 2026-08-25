@@ -18,12 +18,15 @@ class EngineError(Exception):
 
 @dataclass(frozen=True)
 class Decision:
+    """The resolved mode, the action for every blind, and why each one fired."""
+
     mode: str
     targets: dict[str, Action]
     trace: dict[str, str]
 
 
 def evaluate(config: Config, world: World) -> Decision:
+    """Decide the action for every blind in `config`, given one `World` snapshot."""
     mode = _resolve_mode(config, world)
     # The call must stay -- it raises on a duplicate or orphaned blind -- but
     # the ownership map itself is never read here; `_apply_rules` below
@@ -50,17 +53,10 @@ def _evaluate_zone(
     mode: str,
     zone_id: str,
 ) -> tuple[dict[str, Action], dict[str, str]]:
-    """Decide every blind in one zone, contained: a broken rule anywhere in
-    this zone must not lose the decision for every other zone's blinds.
+    """Decide every blind in one zone; a broken rule here must not affect other zones.
 
-    `EngineError` is deliberately let through uncontained -- both the one
-    raised right here (a zone naming a blind the config does not have) and
-    any raised earlier by mode resolution or the ownership check before this
-    function is ever called. Those mean there is no valid decision to make
-    at all, not that one zone's rules misbehaved, so masking them as
-    keep/keep would hide a config that cannot be evaluated behind a decision
-    that looks normal. Only a failure from evaluating this zone's *rules* --
-    everything that is not an `EngineError` -- is contained here.
+    See docs/rationale.md -- "Why `EngineError` must propagate uncontained
+    out of `_evaluate_zone`".
     """
     targets: dict[str, Action] = {}
     trace: dict[str, str] = {}
@@ -124,12 +120,8 @@ def _apply_rules(
 ) -> tuple[Action, str]:
     """Run the first-match-wins rule list for one (mode, zone), one blind at a time.
 
-    The trace label `#none` is deliberately ambiguous between two causes: no
-    rules were configured at all for this (mode, zone) key, and rules were
-    configured but none of them matched this blind. Both end in "keep, keep"
-    and both are represented the same way. Debugging a `#none` means checking
-    for either cause — first whether `mode.zone` exists in `config.rules` at
-    all, then, if it does, why every rule in it fell through.
+    See docs/rationale.md -- "Why the `#none` trace label is ambiguous on
+    purpose".
     """
     if not rules:
         return Action(), f"{mode}.{zone_id}#none"
@@ -155,6 +147,11 @@ def _resolve_action(action: Action, world: World) -> Action:
 
 
 def _resolve_value(value: Value, world: World) -> Value:
+    """Resolve a `Ref` to the helper's current value, truncated and unclamped.
+
+    See docs/rationale.md -- "Why `_resolve_value` truncates instead of
+    rounding" and "Why the engine does not clamp resolved values to 0..100".
+    """
     if isinstance(value, Ref):
         return int(world.number(value.entity, default=float(value.default)))
     return value

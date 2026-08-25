@@ -17,12 +17,15 @@ WARNING = "warning"
 
 @dataclass(frozen=True)
 class Problem:
+    """One issue found in a configuration, at `ERROR` or `WARNING` severity."""
+
     severity: str
     code: str
     message: str
 
 
 def validate(config: Config) -> list[Problem]:
+    """Run every static check and return all problems found, if any."""
     problems: list[Problem] = []
     problems += _check_ownership(config)
     problems += _check_modes(config)
@@ -196,19 +199,10 @@ def _check_circular_condition_refs(config: Config) -> list[Problem]:
 
 
 def _find_cycle_from(start_name: str, registry: dict[str, dict]) -> list[str] | None:
-    """Find a cycle starting from start_name using an iterative DFS.
+    """Find a cycle reachable from `start_name`, or return `None`.
 
-    Returns a list of condition names forming a cycle in the actual order the
-    references were followed, or None if no cycle exists. Iterative (an
-    explicit stack) rather than recursive so that a long-but-legal reference
-    chain is bounded by heap, not by the interpreter's frame limit -- a config
-    with a few thousand chained conditions must still validate, not crash.
-
-    `visited` marks every node whose references have been (or are being)
-    explored; `on_path` is the subset of `visited` currently on the DFS path
-    from `start_name`. A reference into a visited-but-not-on-path node is a
-    legal cross-edge (e.g. the shared bottom of a diamond); a reference into
-    a node that is on the current path is a back-edge, i.e. a cycle.
+    See docs/rationale.md -- "Why `_find_cycle_from` is iterative, not
+    recursive".
     """
     visited: set[str] = set()
     on_path: set[str] = set()
@@ -248,13 +242,8 @@ def _find_cycle_from(start_name: str, registry: dict[str, dict]) -> list[str] | 
 def _walk_condition_nodes(node) -> Iterator[dict]:
     """Yield every condition dict reachable from `node`.
 
-    `node` is a condition body (a dict), a bare list of conditions (this
-    dialect's list-as-AND shorthand), or None. Recurses into the
-    `conditions:` list of an `and`/`or`/`not` combinator. This is the single
-    traversal behind every check that needs to visit each condition dict in
-    a config once -- the circular-ref check, the unknown-ref check, and the
-    condition-shape check (issue #3) all read from it instead of each
-    re-walking the tree its own way.
+    See docs/rationale.md -- "Why `_walk_condition_nodes` is the single
+    traversal".
     """
     if isinstance(node, dict):
         yield node
@@ -266,22 +255,14 @@ def _walk_condition_nodes(node) -> Iterator[dict]:
 
 
 def _referenced_condition_names(node) -> set[str]:
-    """Return every condition name a `{condition: ref, name: ...}` refers to,
-    anywhere within `node` (a condition body, a bare list of conditions, or
-    None). Built on `_walk_condition_nodes` -- the single walker behind both
-    the circular-ref and the unknown-ref checks.
-    """
+    """Return every condition name a `{condition: ref, name: ...}` in `node` refers to."""
     return {
         n.get("name", "") for n in _walk_condition_nodes(node) if n.get("condition") == COND_REF
     }
 
 
 def _condition_sites(config: Config) -> Iterator[tuple[dict | list | None, str]]:
-    """Every top-level condition slot in the config, paired with a label
-    identifying where it lives (for problem messages). Shared by the
-    unknown-ref check and the condition-shape check so both name locations
-    the same way and neither re-derives this list of slots on its own.
-    """
+    """Yield every top-level condition slot in the config, with a label for problem messages."""
     for cond_name, body in config.conditions.items():
         yield body, f"condition {cond_name!r}"
     for mode in config.modes:
@@ -301,12 +282,8 @@ def _get_referenced_conditions(cond_name: str, registry: dict[str, dict]) -> set
 def _check_unknown_condition_refs(config: Config) -> list[Problem]:
     """Every `{condition: ref, name: N}` must name a condition that exists.
 
-    The YAML parser only catches this for refs written with the `!ref` tag.
-    A hand-written literal `{condition: ref, name: ...}` dict passes
-    `load_config` unchecked -- condition bodies are deliberately exempt from
-    strict key checking -- and would otherwise surface as a bare unhandled
-    `KeyError` deep inside conditions.py at evaluation time instead of a
-    validation report.
+    See docs/rationale.md -- "Why `_check_unknown_condition_refs` exists
+    despite YAML-time checking".
     """
     out: list[Problem] = []
     for node, where in _condition_sites(config):
@@ -339,12 +316,10 @@ _REQUIRED_CONDITION_KEYS: dict[str, tuple[str, ...]] = {
 
 
 def _check_condition_shape(node: dict, where: str) -> list[Problem]:
-    """Check one condition dict's own shape (not its children -- the caller
-    walks those separately). Only unknown types and missing *required* keys
-    are reported; extra keys this dialect does not know about (`alias`,
-    `enabled`, whatever Home Assistant adds next) are deliberately ignored,
-    since condition bodies are native Home Assistant dicts this project does
-    not own the full schema of.
+    """Check one condition dict's own shape; the caller walks its children.
+
+    See docs/rationale.md -- "Why `_check_condition_shape` only checks known
+    types and required keys".
     """
     kind = node.get("condition")
     if kind not in _REQUIRED_CONDITION_KEYS:
@@ -382,14 +357,8 @@ def _check_condition_shape(node: dict, where: str) -> list[Problem]:
 def _check_condition_shapes(config: Config) -> list[Problem]:
     """Check every condition body's shape: known type, required keys present.
 
-    `config_schema._check_keys` deliberately exempts condition bodies from
-    strict key checking (they are native Home Assistant condition dicts, a
-    schema this project does not own), and `_check_unknown_condition_refs`
-    only checks ref *names*. Nothing else validates a condition body's shape
-    -- so an unknown `condition:` value or a missing required key currently
-    passes `validate()` clean and only surfaces as a bare `ValueError` or
-    `KeyError` deep inside `conditions.py` at evaluation time, far from the
-    config that caused it.
+    See docs/rationale.md -- "Why `_check_condition_shapes` exists as a
+    separate check".
     """
     out: list[Problem] = []
     for node, where in _condition_sites(config):

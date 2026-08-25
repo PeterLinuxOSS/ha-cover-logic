@@ -39,6 +39,8 @@ class Target:
 
 @dataclass(frozen=True)
 class World:
+    """One immutable snapshot of every entity state and attribute the engine may read."""
+
     states: Mapping[str, str]
     attributes: Mapping[tuple[str, str], Any] = field(default_factory=dict)
     now: dt.datetime = dt.datetime(1970, 1, 1)
@@ -47,21 +49,21 @@ class World:
     def __post_init__(self) -> None:
         """Copy the mappings so the snapshot cannot be changed from outside.
 
-        `frozen=True` stops the fields being re-assigned; it does nothing about a
-        caller mutating the dict it passed in. This module exists to guarantee that
-        one evaluation sees one consistent state, so that guarantee is enforced here
-        rather than left to callers.
+        See docs/rationale.md -- "Why `World` takes a defensive copy".
         """
         object.__setattr__(self, "states", dict(self.states))
         object.__setattr__(self, "attributes", dict(self.attributes))
 
     def state(self, entity_id: str) -> str | None:
+        """Return the entity's state, or `None` if it is not in the snapshot."""
         return self.states.get(entity_id)
 
     def attribute(self, entity_id: str, attr: str) -> Any | None:
+        """Return one attribute of the entity, or `None` if it is not set."""
         return self.attributes.get((entity_id, attr))
 
     def number(self, entity_id: str, default: float, attribute: str | None = None) -> float:
+        """Read a state or attribute as a float, falling back to `default`."""
         raw = (
             self.attribute(entity_id, attribute) if attribute is not None else self.state(entity_id)
         )

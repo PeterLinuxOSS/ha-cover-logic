@@ -81,23 +81,17 @@ def test_ref_falls_back_to_its_default_when_the_helper_is_missing():
 
 
 def test_ref_truncates_toward_zero_like_jinjas_int_filter():
-    # Parity-critical: the Jinja template this engine replaces uses `| int(34)`,
-    # which truncates toward zero, not `round()`. 50.7 must resolve to 50. This
-    # must NOT be "improved" to rounding — that would silently break parity
-    # against the live system across a whole scenario class.
+    # Parity-critical: 50.7 must resolve to 50, not round to 51. See
+    # docs/rationale.md -- "Why `_resolve_value` truncates instead of
+    # rounding". Must NOT be "improved" to rounding.
     states = {**DEN, "input_number.kvety_pozicia_zaluzie": "50.7"}
     d = evaluate(CFG, world(states))
     assert d.targets["cover.b"] == Action(position=50, tilt=0)
 
 
 def test_ref_value_above_100_passes_through_unclamped():
-    # Deliberate: the engine does not clamp out-of-range helper values, because
-    # the template being replaced does not clamp either — clamping here would
-    # itself break parity. Clamping belongs in the execution layer that issues
-    # the hardware call, where it is a safety concern, not a decision-fidelity
-    # one. Helpers really do drift outside their intended range (see CLAUDE.md
-    # on `float(8)` defaults vs. actual helper state after a restart), so this
-    # is pinning real behaviour, not a hypothetical.
+    # Deliberate. See docs/rationale.md -- "Why the engine does not clamp
+    # resolved values to 0..100".
     states = {**DEN, "input_number.kvety_pozicia_zaluzie": "150"}
     d = evaluate(CFG, world(states))
     assert d.targets["cover.b"] == Action(position=150, tilt=0)

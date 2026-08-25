@@ -23,14 +23,17 @@ class Keep:
     _instance: "Keep | None" = None
 
     def __new__(cls) -> Self:
+        """Return the one and only `Keep` instance, creating it on first use."""
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
 
     def __repr__(self) -> str:
+        """Return the debug repr, always `"KEEP"`."""
         return "KEEP"
 
     def __reduce__(self):
+        """Unpickle back to the singleton instead of a new `Keep`."""
         return (Keep, ())
 
 
@@ -54,12 +57,16 @@ Value = int | Keep | Ref
 
 @dataclass(frozen=True, slots=True)
 class Action:
+    """What to do to one blind's position and tilt axes."""
+
     position: Value = KEEP
     tilt: Value = KEEP
 
 
 @dataclass(frozen=True, slots=True)
 class Blind:
+    """One physical cover and the facts the engine needs about it."""
+
     entity: str
     facade_azimuth: float | None = None
     tolerance: float = 45.0
@@ -70,6 +77,8 @@ class Blind:
 
 @dataclass(frozen=True, slots=True)
 class Zone:
+    """A group of blinds decided together, optionally tied to occupants."""
+
     id: str
     members: tuple[str, ...]
     occupants: tuple[str, ...] = ()
@@ -95,6 +104,8 @@ class Rule:
 
 @dataclass(frozen=True)
 class Config:
+    """The whole parsed configuration: blinds, zones, modes and rules."""
+
     blinds: dict[str, Blind]
     zones: dict[str, Zone]
     modes: tuple[Mode, ...]

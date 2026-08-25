@@ -43,10 +43,8 @@ _AXIS_MIN = 0
 def _check_keys(mapping: dict, allowed: set[str], where: str) -> None:
     """Raise if `mapping` has keys outside `allowed`.
 
-    Only ever called on structures this module owns the schema of: blind,
-    zone, mode, rule, value and action entries, plus the top level. Never
-    call this on a condition body (native HA condition schema, not ours) or
-    on `guards` (unparsed until a later phase).
+    See docs/rationale.md -- "Why condition bodies and `guards` are exempt
+    from strict key checking".
     """
     unknown = set(mapping) - allowed
     if unknown:
@@ -73,15 +71,7 @@ def _expect_list(node: Any, where: str) -> list:
 def _reject_dot(identifier: Any, where: str) -> None:
     """A mode or zone id must not contain '.'.
 
-    `engine.evaluate` builds a rule key as `f"{mode}.{zone}"`, joining the two
-    with a plain string concatenation; `validation._check_rule_keys` recovers
-    them with `key.partition(".")`, which always splits on the FIRST dot. If
-    either id itself contains a dot, that join is not reversible: e.g. mode
-    "a.b" + zone "c" and mode "a" + zone "b.c" both produce the identical key
-    "a.b.c", so a rules entry meant for one pair silently applies to the
-    other -- and `_check_rule_keys` accepts it, because splitting on the
-    first dot happens to name two ids that both exist. Rejecting the dot at
-    parse time is cheaper than making the join unambiguous.
+    See docs/rationale.md -- "Why a mode or zone id must not contain a dot".
     """
     if isinstance(identifier, str) and "." in identifier:
         msg = f"{where} must not contain '.': {identifier!r}"
@@ -98,9 +88,11 @@ class RefTag:
     __slots__ = ("name",)
 
     def __init__(self, name: str) -> None:
+        """Store the referenced condition or value name."""
         self.name = name
 
     def __repr__(self) -> str:
+        """Return a debug repr including the referenced name."""
         return f"RefTag({self.name!r})"
 
 
@@ -112,6 +104,7 @@ _Loader.add_constructor("!ref", lambda loader, node: RefTag(loader.construct_sca
 
 
 def load_config(text: str) -> Config:
+    """Parse YAML config text into a frozen `Config`, raising `ConfigError` on any problem."""
     raw = yaml.load(text, Loader=_Loader) or {}
     raw = _expect_mapping(raw, "top level config")
     _check_keys(raw, _TOP_LEVEL_KEYS, "top level")
@@ -176,6 +169,7 @@ def load_config(text: str) -> Config:
 
 
 def load_config_file(path: str | Path) -> Config:
+    """Read and parse a YAML config file into a frozen `Config`."""
     return load_config(Path(path).read_text(encoding="utf-8"))
 
 
@@ -190,13 +184,8 @@ def _parse_values(raw: dict[str, Any]) -> dict[str, Ref]:
         except (KeyError, TypeError, ValueError) as err:
             msg = f"value {name!r} needs 'entity' and integer 'default'"
             raise ConfigError(msg) from err
-        # A `default` is a config-time constant exactly like a literal action
-        # axis, so it must pass the same 0..100 range check `_parse_axis`
-        # applies to literals -- otherwise `position: !ref` with an
-        # out-of-range fallback validates clean while the same value written
-        # literally as `position: 250` would raise. This cannot affect
-        # parity: parity depends on the helper's runtime value, never on the
-        # fallback used when it is missing or unparsable.
+        # See docs/rationale.md -- "Why a `!ref` default is range-checked
+        # exactly like a literal".
         if not _AXIS_MIN <= default <= _AXIS_MAX:
             msg = f"value {name!r} default must be 0..100, got {default}"
             raise ConfigError(msg)
