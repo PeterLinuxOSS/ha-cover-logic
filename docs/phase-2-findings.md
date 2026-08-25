@@ -7,9 +7,13 @@ was verified by running code, not by inspection.
 Phase 1 ships no hardware control, so none of these can move a blind today.
 They matter when phase 2 adds the Home Assistant layer.
 
+Each is tracked as an issue: #3, #4, #5, #6, #7, #8, #9, #10 (in the order
+below). This file is the durable record — the issues are for working through
+them.
+
 ---
 
-## 1. Condition bodies are validated by nobody — *important*
+## 1. Condition bodies are validated by nobody — *important* (#3)
 
 `config_schema._check_keys` deliberately exempts condition bodies: they are
 native Home Assistant condition dicts whose key set this project does not own.
@@ -35,7 +39,7 @@ decision, not just that zone.
 `_referenced_condition_names` already walks, asserting known `condition:` values
 and the required keys per type.
 
-## 2. One bad rule in one zone destroys every blind's decision — *important*
+## 2. One bad rule in one zone destroys every blind's decision — *important* (#4)
 
 `engine.evaluate` iterates zones in a plain loop with no isolation. Any
 exception from any rule anywhere — an unknown condition type, a template error,
@@ -51,7 +55,7 @@ house open during a heatwave. But the damage should be bounded.
 boundary, mark that blind `#error` in the trace, leave it KEEP, decide the rest.
 The diagnostic sensor then names the broken zone instead of going blank.
 
-## 3. `sun_hits_target` cannot read the azimuth from an attribute — *important*
+## 3. `sun_hits_target` cannot read the azimuth from an attribute — *important* (#5)
 
 `_sun_hits_target` calls `world.number(azimuth_entity, default=-1.0)` with no
 `attribute=` argument, and `DEFAULT_AZIMUTH_ENTITY = "sensor.sun_solar_azimuth"`
@@ -69,7 +73,7 @@ cause — the symptom is only "the sun rules never fire".
 `world.number` already takes an `attribute` argument. That also removes the last
 house-specific constant from the engine.
 
-## 4. No time axis: a time-gated mode kills its whole rule set — *important*
+## 4. No time axis: a time-gated mode kills its whole rule set — *important* (#6)
 
 `tests/scenarios.py` holds `NOW` as a module constant (13:00) and `_require`'s
 `time` branch explicitly gives up. Verified:
@@ -87,7 +91,7 @@ a red suite on day one, told their rules are unreachable when they are not.
 **Fix.** Make `now` an axis, derived from the `after`/`before` values present in
 the config (each boundary ± 1 minute).
 
-## 5. No axis for `condition: template` either — *important*
+## 5. No axis for `condition: template` either — *important* (#7)
 
 A rule guarded by `{{ is_state('input_boolean.x','on') }}` gets no axis for
 `input_boolean.x` and is reported dead. `derive_axes` understands only `state`
@@ -102,7 +106,7 @@ from the template body. Failing that, at least distinguish "unreachable" from
 "not solvable from the axis vocabulary" in the dead-rule message, so nobody is
 sent hunting a bug that does not exist.
 
-## 6. The package cannot tell phase 2 which entities to watch — *important*
+## 6. The package cannot tell phase 2 which entities to watch — *important* (#8)
 
 There is no entity-enumeration API in `custom_components/cover_logic/`. The only
 code that walks the config for entity ids — `_all_condition_nodes` and
@@ -115,7 +119,7 @@ every event.
 **Fix.** Promote it: `config_schema.referenced_entities(config) -> set[str | tuple[str, str]]`,
 and have `scenarios.py` import it.
 
-## 7. `World.__post_init__` copies attributes shallowly — *minor*
+## 7. `World.__post_init__` copies attributes shallowly — *minor* (#9)
 
 The docstring promises the snapshot "cannot be changed from outside", but
 `dict(self.attributes)` shares nested values. Home Assistant attributes are
@@ -126,7 +130,7 @@ Nothing in the engine mutates them, so this is minor today — but the guarantee
 as written is stronger than the code delivers. Either weaken the docstring or
 deep-copy the values.
 
-## 8. Test-suite gaps — *minor*
+## 8. Test-suite gaps — *minor* (#10)
 
 - `test_fixture_has_no_validation_errors` filters to `severity == ERROR`. The
   fixture currently produces zero problems of any severity, so nothing is
