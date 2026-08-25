@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import datetime as dt
 
+from hypothesis import given, settings, strategies as st
 import pytest
+
 from cover_logic.config_schema import load_config_file
 from cover_logic.engine import evaluate
 from cover_logic.model import KEEP
 from cover_logic.world import Event, World
-from hypothesis import given, settings
-from hypothesis import strategies as st
 
 NOW = dt.datetime(2026, 8, 19, 13, 0)
 
@@ -95,4 +95,5 @@ def test_night_mode_never_moves_anything(config):
         attributes={}, now=NOW, event=Event(),
     )
     for action in evaluate(config, world).targets.values():
-        assert action.position is KEEP and action.tilt is KEEP
+        assert action.position is KEEP
+        assert action.tilt is KEEP

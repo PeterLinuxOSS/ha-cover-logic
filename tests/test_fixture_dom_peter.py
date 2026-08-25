@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime as dt
 
 import pytest
+
 from cover_logic.config_schema import load_config_file
 from cover_logic.engine import evaluate
 from cover_logic.validation import ERROR, validate

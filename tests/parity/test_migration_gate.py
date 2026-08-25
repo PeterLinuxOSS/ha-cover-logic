@@ -8,6 +8,7 @@ the arrival variant. Nothing gets switched over in the house until this is green
 from __future__ import annotations
 
 import pytest
+
 from cover_logic.config_schema import load_config_file
 from cover_logic.engine import evaluate
 from cover_logic.world import Event
@@ -28,7 +29,11 @@ def config(fixtures_dir):
 
 
 def scenarios():
-    from test_zaluzie_matica import SCENARE  # the existing 92 160-scenario space
+    # Deliberately local: `test_zaluzie_matica` lives in /config/tests, not in
+    # this repo, and only exists on the Home Assistant host. A module-level
+    # import would raise ImportError at collection time on every other
+    # machine, before `pytestmark`'s `skipif` ever gets a chance to apply.
+    from test_zaluzie_matica import SCENARE  # noqa: PLC0415
 
     return SCENARE
 

@@ -23,7 +23,8 @@ def to_action(akcia: str, hodnota, tilt, *, teplotna_ochrana: bool) -> Action:
             # 100 — it follows teplotna_ochrana_dom.
             tilt = 50 if teplotna_ochrana else 100
         return Action(int(hodnota), int(tilt))
-    raise AssertionError(f"unknown legacy action: {akcia!r}")
+    msg = f"unknown legacy action: {akcia!r}"
+    raise AssertionError(msg)
 
 
 def expected_actions(item: dict, *, variant: str, teplotna_ochrana: bool) -> Action:

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import pytest
-from cover_logic.config_schema import load_config_file
 from scenarios import fired_rules, worlds
+
+from cover_logic.config_schema import load_config_file
+from cover_logic.engine import evaluate
 
 
 @pytest.fixture(scope="module")
@@ -36,8 +38,6 @@ def test_every_rule_fires_at_least_once(config, all_worlds):
 
 
 def test_no_decision_falls_through_to_the_implicit_default(config, all_worlds):
-    from cover_logic.engine import evaluate
-
     fallthrough = []
     for world in all_worlds:
         for entity, label in evaluate(config, world).trace.items():

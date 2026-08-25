@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import datetime as dt
 import os
-import sys
 from pathlib import Path
+import sys
 
 HA_TESTS = Path(os.environ.get("HA_TESTS_DIR", "/config/tests"))
 

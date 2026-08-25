@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import datetime as dt
+import re
 
 import pytest
+
 from cover_logic.config_schema import load_config
 from cover_logic.engine import EngineError, evaluate
 from cover_logic.model import KEEP, Action
@@ -157,7 +159,7 @@ rules:
   den.one: [{then: {position: 0}}]
   den.two: [{then: {position: 100}}]
 """)
-    with pytest.raises(EngineError, match="cover.a"):
+    with pytest.raises(EngineError, match=re.escape("cover.a")):
         evaluate(cfg, world({}))
 
 
@@ -174,7 +176,7 @@ values: {}
 rules:
   den.one: [{then: {position: 0}}]
 """)
-    with pytest.raises(EngineError, match="cover.orphan"):
+    with pytest.raises(EngineError, match=re.escape("cover.orphan")):
         evaluate(cfg, world({}))
 
 
@@ -253,7 +255,7 @@ values: {}
 rules:
   den.broken: [{then: {position: 0}}]
 """)
-    with pytest.raises(EngineError, match="cover.ghost"):
+    with pytest.raises(EngineError, match=re.escape("cover.ghost")):
         evaluate(cfg, world({}))
 
 

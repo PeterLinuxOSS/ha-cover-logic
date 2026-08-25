@@ -4,6 +4,7 @@ import datetime as dt
 
 import jinja2
 import pytest
+
 from cover_logic.conditions import evaluate_condition
 from cover_logic.model import Blind, Zone
 from cover_logic.world import Event, Target, World

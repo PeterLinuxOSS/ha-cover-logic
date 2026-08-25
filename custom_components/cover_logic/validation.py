@@ -10,11 +10,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from dataclasses import dataclass
 
-from .const import (
-    COND_EVENT_TARGETS_ZONE,
-    COND_REF,
-    COND_SUN_HITS_TARGET,
-)
+from .const import COND_EVENT_TARGETS_ZONE, COND_REF, COND_SUN_HITS_TARGET
 from .model import Config
 
 ERROR = "error"
@@ -57,10 +53,12 @@ def _check_ownership(config: Config) -> list[Problem]:
             else:
                 owner[entity] = zone_id
 
-    for entity in config.blinds:
-        if entity not in owner:
-            out.append(Problem(ERROR, "blind_without_zone",
-                               f"blind {entity!r} belongs to no zone, so no rule decides it"))
+    out.extend(
+        Problem(ERROR, "blind_without_zone",
+                f"blind {entity!r} belongs to no zone, so no rule decides it")
+        for entity in config.blinds
+        if entity not in owner
+    )
     return out
 
 
@@ -276,10 +274,12 @@ def _check_unknown_condition_refs(config: Config) -> list[Problem]:
     for node, where in _condition_sites(config):
         if node is None:
             continue
-        for name in sorted(_referenced_condition_names(node)):
-            if name not in config.conditions:
-                out.append(Problem(ERROR, "unknown_condition_ref",
-                                   f"{where} refers to unknown condition {name!r}"))
+        out.extend(
+            Problem(ERROR, "unknown_condition_ref",
+                    f"{where} refers to unknown condition {name!r}")
+            for name in sorted(_referenced_condition_names(node))
+            if name not in config.conditions
+        )
     return out
 
 

@@ -4,6 +4,7 @@ import copy
 import pickle
 
 import pytest
+
 from cover_logic.model import KEEP, Action, Blind, Config, Keep, Mode, Ref, Rule, Zone
 
 
@@ -130,7 +131,7 @@ def test_keep_singleton_survives_deepcopy():
 def test_keep_singleton_survives_pickle():
     """Keep's identity is preserved through pickle round-trip."""
     pickled = pickle.dumps(KEEP)
-    k = pickle.loads(pickled)
+    k = pickle.loads(pickled)  # noqa: S301 -- round-tripping our own trusted data, not untrusted input
     assert k is KEEP
 
 

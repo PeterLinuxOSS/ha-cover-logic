@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import re
+
 import pytest
+
 from cover_logic.conditions import evaluate_condition
 from cover_logic.config_schema import ConfigError, load_config, load_config_file
 from cover_logic.model import KEEP, Action, Ref
@@ -90,7 +93,7 @@ def test_unknown_value_ref_raises_config_error():
 
 def test_out_of_range_position_raises_config_error():
     bad = MINIMAL.replace("position: 100, tilt: keep", "position: 140, tilt: keep")
-    with pytest.raises(ConfigError, match="0..100"):
+    with pytest.raises(ConfigError, match=re.escape("0..100")):
         load_config(bad)
 
 

@@ -70,7 +70,8 @@ def _evaluate_zone(
         for entity in zone.members:
             blind = config.blinds.get(entity)
             if blind is None:
-                raise EngineError(f"zone {zone_id!r} refers to unknown blind {entity!r}")
+                msg = f"zone {zone_id!r} refers to unknown blind {entity!r}"
+                raise EngineError(msg)
             target = Target(blind=blind, zone=zone)
             action, label = _apply_rules(config, rules, world, target, mode, zone_id)
             targets[entity] = action
@@ -80,8 +81,8 @@ def _evaluate_zone(
     except Exception as err:  # noqa: BLE001 -- contain any rule failure, by design
         label = f"{mode}.{zone_id}#error {type(err).__name__}: {err}"
         return (
-            {entity: Action() for entity in zone.members},
-            {entity: label for entity in zone.members},
+            dict.fromkeys(zone.members, Action()),
+            dict.fromkeys(zone.members, label),
         )
     return targets, trace
 
@@ -90,7 +91,8 @@ def _resolve_mode(config: Config, world: World) -> str:
     for mode in config.modes:
         if evaluate_condition(mode.when, world, None, config.conditions):
             return mode.id
-    raise EngineError("no mode matched and no fallback mode is defined")
+    msg = "no mode matched and no fallback mode is defined"
+    raise EngineError(msg)
 
 
 def _resolve_ownership(config: Config) -> dict[str, str]:
@@ -103,16 +105,14 @@ def _resolve_ownership(config: Config) -> dict[str, str]:
     for zone_id, zone in config.zones.items():
         for entity in zone.members:
             if entity in owner:
-                raise EngineError(
-                    f"blind {entity!r} is in two zones: {owner[entity]!r} and {zone_id!r}"
-                )
+                msg = f"blind {entity!r} is in two zones: {owner[entity]!r} and {zone_id!r}"
+                raise EngineError(msg)
             owner[entity] = zone_id
 
     orphans = set(config.blinds) - set(owner)
     if orphans:
-        raise EngineError(
-            f"blind {sorted(orphans)[0]!r} is configured but owned by no zone"
-        )
+        msg = f"blind {min(orphans)!r} is configured but owned by no zone"
+        raise EngineError(msg)
     return owner
 
 

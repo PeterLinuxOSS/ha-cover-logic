@@ -37,6 +37,10 @@ _RULE_KEYS = {"if", "then", "events", "name"}
 _VALUE_KEYS = {"entity", "default"}
 _ACTION_KEYS = {"position", "tilt"}
 
+# A cover's position and tilt are both percentages.
+_AXIS_MAX = 100
+_AXIS_MIN = 0
+
 
 def _check_keys(mapping: dict, allowed: set[str], where: str) -> None:
     """Raise if `mapping` has keys outside `allowed`.
@@ -48,18 +52,23 @@ def _check_keys(mapping: dict, allowed: set[str], where: str) -> None:
     """
     unknown = set(mapping) - allowed
     if unknown:
-        raise ConfigError(f"unknown key(s) {sorted(unknown)} in {where}")
+        msg = f"unknown key(s) {sorted(unknown)} in {where}"
+        raise ConfigError(msg)
 
 
 def _expect_mapping(node: Any, where: str) -> dict:
     if not isinstance(node, dict):
-        raise ConfigError(f"{where} must be a mapping, got {node!r}")
+        msg = f"{where} must be a mapping, got {node!r}"
+        raise ConfigError(msg)
+
     return node
 
 
 def _expect_list(node: Any, where: str) -> list:
     if not isinstance(node, list):
-        raise ConfigError(f"{where} must be a list, got {node!r}")
+        msg = f"{where} must be a list, got {node!r}"
+        raise ConfigError(msg)
+
     return node
 
 
@@ -77,7 +86,9 @@ def _reject_dot(identifier: Any, where: str) -> None:
     parse time is cheaper than making the join unambiguous.
     """
     if isinstance(identifier, str) and "." in identifier:
-        raise ConfigError(f"{where} must not contain '.': {identifier!r}")
+        msg = f"{where} must not contain '.': {identifier!r}"
+        raise ConfigError(msg)
+
 
 
 class RefTag:
@@ -127,9 +138,9 @@ def load_config(text: str) -> Config:
 
     raw_zones = _expect_mapping(raw.get("zones") or {}, "'zones'")
     zones = {}
-    for zone_id, body in raw_zones.items():
+    for zone_id, raw_body in raw_zones.items():
         _reject_dot(zone_id, "zone id")
-        body = _expect_mapping(body, f"zone {zone_id!r}")
+        body = _expect_mapping(raw_body, f"zone {zone_id!r}")
         _check_keys(body, _ZONE_KEYS, f"zone {zone_id!r}")
         zones[zone_id] = Zone(
             id=zone_id,
@@ -138,11 +149,13 @@ def load_config(text: str) -> Config:
         )
 
     modes = []
-    for item in _expect_list(raw.get("modes") or [], "'modes'"):
-        item = _expect_mapping(item, "mode entry")
+    for raw_item in _expect_list(raw.get("modes") or [], "'modes'"):
+        item = _expect_mapping(raw_item, "mode entry")
         _check_keys(item, _MODE_KEYS, "mode")
         if "id" not in item:
-            raise ConfigError(f"mode without 'id': {item!r}")
+            msg = f"mode without 'id': {item!r}"
+            raise ConfigError(msg)
+
         _reject_dot(item["id"], "mode id")
         modes.append(Mode(id=item["id"], when=_parse_condition(item.get("when"), raw_conditions)))
     modes = tuple(modes)
@@ -173,14 +186,15 @@ def load_config_file(path: str | Path) -> Config:
 
 def _parse_values(raw: dict[str, Any]) -> dict[str, Ref]:
     out: dict[str, Ref] = {}
-    for name, body in raw.items():
-        body = _expect_mapping(body, f"value {name!r}")
+    for name, raw_body in raw.items():
+        body = _expect_mapping(raw_body, f"value {name!r}")
         _check_keys(body, _VALUE_KEYS, f"value {name!r}")
         try:
             entity = body["entity"]
             default = int(body["default"])
         except (KeyError, TypeError, ValueError) as err:
-            raise ConfigError(f"value {name!r} needs 'entity' and integer 'default'") from err
+            msg = f"value {name!r} needs 'entity' and integer 'default'"
+            raise ConfigError(msg) from err
         # A `default` is a config-time constant exactly like a literal action
         # axis, so it must pass the same 0..100 range check `_parse_axis`
         # applies to literals -- otherwise `position: !ref` with an
@@ -188,8 +202,10 @@ def _parse_values(raw: dict[str, Any]) -> dict[str, Ref]:
         # literally as `position: 250` would raise. This cannot affect
         # parity: parity depends on the helper's runtime value, never on the
         # fallback used when it is missing or unparsable.
-        if not 0 <= default <= 100:
-            raise ConfigError(f"value {name!r} default must be 0..100, got {default}")
+        if not _AXIS_MIN <= default <= _AXIS_MAX:
+            msg = f"value {name!r} default must be 0..100, got {default}"
+            raise ConfigError(msg)
+
         out[name] = Ref(entity=entity, default=default)
     return out
 
@@ -198,7 +214,9 @@ def _parse_blind(item: Any) -> Blind:
     item = _expect_mapping(item, "blind entry")
     _check_keys(item, _BLIND_KEYS, "blind entry")
     if "entity" not in item:
-        raise ConfigError(f"blind without 'entity': {item!r}")
+        msg = f"blind without 'entity': {item!r}"
+        raise ConfigError(msg)
+
     azimuth = item.get("facade_azimuth")
     return Blind(
         entity=item["entity"],
@@ -215,7 +233,9 @@ def _parse_condition(node: Any, conditions: dict[str, Any]) -> dict | list | Non
         return None
     if isinstance(node, RefTag):
         if node.name not in conditions:
-            raise ConfigError(f"unknown condition ref: {node.name!r}")
+            msg = f"unknown condition ref: {node.name!r}"
+            raise ConfigError(msg)
+
         return {"condition": "ref", "name": node.name}
     if isinstance(node, list):
         return [_parse_condition(child, conditions) for child in node]
@@ -226,7 +246,9 @@ def _parse_condition(node: Any, conditions: dict[str, Any]) -> dict | list | Non
                 _parse_condition(child, conditions) for child in node["conditions"]
             ]
         return out
-    raise ConfigError(f"cannot read condition: {node!r}")
+    msg = f"cannot read condition: {node!r}"
+    raise ConfigError(msg)
+
 
 
 def _parse_axis(node: Any, values: dict[str, Ref]) -> Value:
@@ -234,26 +256,35 @@ def _parse_axis(node: Any, values: dict[str, Ref]) -> Value:
         return KEEP
     if isinstance(node, RefTag):
         if node.name not in values:
-            raise ConfigError(f"unknown value ref: {node.name!r}")
+            msg = f"unknown value ref: {node.name!r}"
+            raise ConfigError(msg)
+
         return values[node.name]
     # `bool` is a subclass of `int` in Python, so this must be rejected
     # explicitly before `int(node)` -- otherwise `position: true` silently
     # becomes `1`, driving a blind to 1% instead of failing loudly.
     if isinstance(node, bool):
-        raise ConfigError(f"action axis must be an integer 0..100, got {node!r}")
+        msg = f"action axis must be an integer 0..100, got {node!r}"
+        raise ConfigError(msg)
+
     if isinstance(node, float):
         # An integral float (`50.0`) is what a human writes by hand in YAML
         # and is accepted; a non-integral one (`50.5`) has no meaning for a
         # cover position/tilt and must not be silently truncated.
         if not node.is_integer():
-            raise ConfigError(f"action axis must be an integer 0..100, got {node!r}")
+            msg = f"action axis must be an integer 0..100, got {node!r}"
+            raise ConfigError(msg)
+
         node = int(node)
     try:
         number = int(node)
     except (TypeError, ValueError) as err:
-        raise ConfigError(f"cannot read action axis: {node!r}") from err
-    if not 0 <= number <= 100:
-        raise ConfigError(f"action axis must be 0..100, got {number}")
+        msg = f"cannot read action axis: {node!r}"
+        raise ConfigError(msg) from err
+    if not _AXIS_MIN <= number <= _AXIS_MAX:
+        msg = f"action axis must be 0..100, got {number}"
+        raise ConfigError(msg)
+
     return number
 
 
@@ -272,7 +303,9 @@ def _parse_rule(
     item = _expect_mapping(item, "rule entry")
     _check_keys(item, _RULE_KEYS, "rule entry")
     if "then" not in item:
-        raise ConfigError(f"rule without 'then': {item!r}")
+        msg = f"rule without 'then': {item!r}"
+        raise ConfigError(msg)
+
     events = item.get("events")
     return Rule(
         then=_parse_action(item["then"], values),

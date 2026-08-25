@@ -30,7 +30,7 @@ SUN_ENTITY = "sun.sun"
 # StrictUndefined is deliberate: an undefined name must raise rather than
 # render empty, because an empty render would read as False, and False here can
 # mean "leave the house open during a heatwave".
-_JINJA = jinja2.Environment(undefined=jinja2.StrictUndefined)  # noqa: S701
+_JINJA = jinja2.Environment(undefined=jinja2.StrictUndefined)
 
 
 def evaluate_condition(
@@ -64,10 +64,11 @@ def evaluate_condition(
             raise KeyError(cond["name"])
         name = cond["name"]
         if name in _ref_chain:
-            raise ValueError(
+            msg = (
                 f"circular condition reference: {name!r} refers back to itself "
                 f"via {sorted(_ref_chain)!r}"
             )
+            raise ValueError(msg)
         return evaluate_condition(
             registry[name],
             world,
@@ -105,7 +106,8 @@ def evaluate_condition(
     if kind == COND_EVENT_TARGETS_ZONE:
         return _event_targets_zone(world, target)
 
-    raise ValueError(f"unknown condition type: {kind!r}")
+    msg = f"unknown condition type: {kind!r}"
+    raise ValueError(msg)
 
 
 def _state(cond: dict, world: World) -> bool:

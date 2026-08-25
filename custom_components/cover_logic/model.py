@@ -8,6 +8,7 @@ named constants into a single shape.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Self
 
 
 class Keep:
@@ -19,7 +20,7 @@ class Keep:
 
     _instance: Keep | None = None
 
-    def __new__(cls) -> Keep:
+    def __new__(cls) -> Self:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance

@@ -250,7 +250,7 @@ rules:
 
 
 def test_diamond_shaped_references_are_not_a_cycle():
-    """a references both b and c; b and c both reference d. Shared and revisited,
+    """A references both b and c; b and c both reference d. Shared and revisited,
     but acyclic -- must not be flagged. The false-positive case that matters most:
     a detector that blocks legitimate configs is worse than no detector.
     """

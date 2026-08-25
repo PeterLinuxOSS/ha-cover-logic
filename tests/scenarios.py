@@ -6,12 +6,13 @@ the scenarios that exercise it appear without anyone writing them.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 import datetime as dt
 import itertools
-from collections.abc import Iterator
 from typing import Any
 
 from cover_logic.conditions import evaluate_condition
+from cover_logic.engine import evaluate
 from cover_logic.model import Config
 from cover_logic.world import Event, Target, World
 
@@ -196,7 +197,7 @@ def derive_axes(config: Config) -> dict[str, list]:
             if attribute is None:
                 add(key, [str(value) for value in values] + ["__other__"])
             else:
-                add(key, list(values) + ["__other__"])
+                add(key, [*values, "__other__"])
         elif kind == "numeric_state":
             bounds = [float(node[k]) for k in ("above", "below") if k in node]
             probes = {"unavailable"}
@@ -329,19 +330,25 @@ def _leaf_true(key: str, node: dict, values: dict[str, Any], axes: dict[str, lis
         if evaluate_condition(node, _probe_world(key, value), None, {}):
             values[key] = value
             return
-    raise _Infeasible(f"no candidate value makes {key} satisfy {node}")
+    msg = f"no candidate value makes {key} satisfy {node}"
+    raise _Infeasible(msg)
+
 
 
 def _leaf_false(key: str, node: dict, values: dict[str, Any], axes: dict[str, list]) -> None:
     if key in values:
         if not evaluate_condition(node, _probe_world(key, values[key]), None, {}):
             return
-        raise _Infeasible(f"pinned {key}={values[key]!r} does not falsify {node}")
+        msg = f"pinned {key}={values[key]!r} does not falsify {node}"
+        raise _Infeasible(msg)
+
     for value in axes.get(key, []):
         if not evaluate_condition(node, _probe_world(key, value), None, {}):
             values[key] = value
             return
-    raise _Infeasible(f"no candidate value makes {key} falsify {node}")
+    msg = f"no candidate value makes {key} falsify {node}"
+    raise _Infeasible(msg)
+
 
 
 def _require(
@@ -364,7 +371,9 @@ def _require(
     """
     if cond is None:
         if not want_true:
-            raise _Infeasible("cannot falsify 'no condition'")
+            msg = "cannot falsify 'no condition'"
+            raise _Infeasible(msg)
+
         return
     if isinstance(cond, list):
         cond = {"condition": "and", "conditions": cond}
@@ -397,13 +406,17 @@ def _require(
                 values.clear()
                 values.update(snapshot)
                 errors.append(str(err))
-        raise _Infeasible(f"no child of {kind!r} could be resolved: {errors}")
+        msg = f"no child of {kind!r} could be resolved: {errors}"
+        raise _Infeasible(msg)
+
 
     if kind == "time":
         empty = World(states={}, attributes={}, now=NOW, event=Event())
         actual = evaluate_condition(cond, empty, None, registry)
         if actual != want_true:
-            raise _Infeasible(f"time condition is fixed by NOW, cannot be made {want_true}")
+            msg = f"time condition is fixed by NOW, cannot be made {want_true}"
+            raise _Infeasible(msg)
+
         return
 
     if kind == "sun_hits_target":
@@ -433,7 +446,9 @@ def _require(
                 try:
                     probe = _sun_probe(sun_entity, azimuth_entity, azimuth_attribute, azimuth)
                     if evaluate_condition(cond, probe, target, registry):
-                        raise _Infeasible("azimuth probe hits the target's facade")
+                        msg = "azimuth probe hits the target's facade"
+                        raise _Infeasible(msg)
+
                     _leaf_true(sun_entity, sun_node, values, axes)
                     _leaf_true(
                         azimuth_key,
@@ -445,14 +460,18 @@ def _require(
                     values.clear()
                     values.update(snapshot)
                     errors.append(str(err))
-            raise _Infeasible(f"no azimuth probe falls outside the target's facade: {errors}")
+            msg = f"no azimuth probe falls outside the target's facade: {errors}"
+            raise _Infeasible(msg)
+
         errors = []
         for azimuth in axes.get(azimuth_key, DEFAULT_AZIMUTH_PROBES):
             snapshot = dict(values)
             try:
                 probe = _sun_probe(sun_entity, azimuth_entity, azimuth_attribute, azimuth)
                 if not evaluate_condition(cond, probe, target, registry):
-                    raise _Infeasible("azimuth probe does not hit the target's facade")
+                    msg = "azimuth probe does not hit the target's facade"
+                    raise _Infeasible(msg)
+
                 _leaf_true(sun_entity, sun_node, values, axes)
                 _leaf_true(
                     azimuth_key,
@@ -464,7 +483,9 @@ def _require(
                 values.clear()
                 values.update(snapshot)
                 errors.append(str(err))
-        raise _Infeasible(f"no azimuth probe hits the target's facade: {errors}")
+        msg = f"no azimuth probe hits the target's facade: {errors}"
+        raise _Infeasible(msg)
+
 
     if kind == "event_targets_zone":
         # Depends on the chosen event's person, not on entity state; the
@@ -473,7 +494,9 @@ def _require(
 
     entity = cond.get("entity_id")
     if entity is None:
-        raise _Infeasible(f"leaf condition without entity_id: {cond}")
+        msg = f"leaf condition without entity_id: {cond}"
+        raise _Infeasible(msg)
+
     key = _axis_key(entity, cond.get("attribute"))
     if want_true:
         _leaf_true(key, cond, values, axes)
@@ -488,7 +511,7 @@ def _solve_rule_witness(config: Config, axes: dict[str, list], key: str, index: 
     rule = config.rules[key][index]
     target = Target(blind=blind, zone=zone)
 
-    event_kind = sorted(rule.events)[0] if rule.events is not None else "state_change"
+    event_kind = min(rule.events) if rule.events is not None else "state_change"
     person = (zone.occupants[0] if zone.occupants else "peter") if event_kind == "arrival" else None
     event = Event(kind=event_kind, person=person)
 
@@ -546,17 +569,16 @@ def _world_from_row(row: dict[str, Any], event: Event) -> World:
 def worlds(config: Config) -> list[World]:
     axes = derive_axes(config)
     rows = pairwise(axes)
-    out: list[World] = []
-    for row in rows:
-        for event in (Event(), Event(kind="arrival", person="peter")):
-            out.append(_world_from_row(row, event))
+    out: list[World] = [
+        _world_from_row(row, event)
+        for row in rows
+        for event in (Event(), Event(kind="arrival", person="peter"))
+    ]
     out.extend(rule_witnesses(config, axes))
     return out
 
 
 def fired_rules(config: Config, all_worlds) -> set[str]:
-    from cover_logic.engine import evaluate
-
     fired: set[str] = set()
     for world in all_worlds:
         for label in evaluate(config, world).trace.values():
