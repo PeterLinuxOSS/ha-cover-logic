@@ -48,8 +48,7 @@ def test_list_is_and():
 
 def test_state_accepts_a_list_of_acceptable_states():
     w = world({"weather.x": "cloudy"})
-    cond = {"condition": "state", "entity_id": "weather.x",
-            "state": ["cloudy", "rainy"]}
+    cond = {"condition": "state", "entity_id": "weather.x", "state": ["cloudy", "rainy"]}
     assert evaluate_condition(cond, w) is True
 
 
@@ -62,15 +61,19 @@ def test_numeric_state_uses_default_when_the_sensor_is_dead():
     # Mirrors `| float(999)` — a missing wind sensor must read as a gale,
     # never as calm.
     w = world({"sensor.wind": "unavailable"})
-    cond = {"condition": "numeric_state", "entity_id": "sensor.wind",
-            "below": 40, "default": 999}
+    cond = {"condition": "numeric_state", "entity_id": "sensor.wind", "below": 40, "default": 999}
     assert evaluate_condition(cond, w) is False
 
 
 def test_numeric_state_reads_an_attribute():
     w = world({"weather.f": "sunny"}, {("weather.f", "wind_speed"): 21.0})
-    cond = {"condition": "numeric_state", "entity_id": "weather.f",
-            "attribute": "wind_speed", "below": 30, "default": 999}
+    cond = {
+        "condition": "numeric_state",
+        "entity_id": "weather.f",
+        "attribute": "wind_speed",
+        "below": 30,
+        "default": 999,
+    }
     assert evaluate_condition(cond, w) is True
 
 
@@ -129,14 +132,12 @@ def test_not_with_several_subconditions_is_de_morgan_not_first_match():
     b_on = {"condition": "state", "entity_id": "b", "state": "on"}
     c_on = {"condition": "state", "entity_id": "c", "state": "on"}
     # Only "a" is on -> at least one sub-condition holds -> not is False.
-    assert evaluate_condition(
-        {"condition": "not", "conditions": [a_on, b_on, c_on]}, w
-    ) is False
+    assert evaluate_condition({"condition": "not", "conditions": [a_on, b_on, c_on]}, w) is False
     # None of them are on -> not is True.
     w_none = world({"a": "off", "b": "off", "c": "off"})
-    assert evaluate_condition(
-        {"condition": "not", "conditions": [a_on, b_on, c_on]}, w_none
-    ) is True
+    assert (
+        evaluate_condition({"condition": "not", "conditions": [a_on, b_on, c_on]}, w_none) is True
+    )
 
 
 def test_ref_resolves_through_the_registry():
@@ -168,7 +169,7 @@ def test_circular_ref_raises_a_clear_error():
     [
         (-1.0, False),
         (44.0, False),
-        (45.0, True),    # lower bound is inclusive
+        (45.0, True),  # lower bound is inclusive
         (134.0, True),
         (135.0, False),  # upper bound is EXCLUSIVE — this is the parity trap
         (224.0, False),
@@ -237,16 +238,19 @@ def test_sun_hits_target_state_based_path_still_works_when_azimuth_attribute_is_
 
 def test_event_targets_zone():
     w = world(event=Event(kind="arrival", person="peter"))
-    assert evaluate_condition({"condition": "event_targets_zone"}, w,
-                              target(occupants=["peter"])) is True
-    assert evaluate_condition({"condition": "event_targets_zone"}, w,
-                              target(occupants=["mimka"])) is False
+    assert (
+        evaluate_condition({"condition": "event_targets_zone"}, w, target(occupants=["peter"]))
+        is True
+    )
+    assert (
+        evaluate_condition({"condition": "event_targets_zone"}, w, target(occupants=["mimka"]))
+        is False
+    )
 
 
 def test_template_condition_sees_the_same_globals_as_home_assistant():
     w = world({"input_boolean.x": "on"})
-    cond = {"condition": "template",
-            "value_template": "{{ is_state('input_boolean.x', 'on') }}"}
+    cond = {"condition": "template", "value_template": "{{ is_state('input_boolean.x', 'on') }}"}
     assert evaluate_condition(cond, w) is True
 
 
@@ -272,8 +276,12 @@ def test_state_can_compare_an_attribute():
         now=NOW,
         event=Event(),
     )
-    cond = {"condition": "state", "entity_id": "alarm_control_panel.alarmo",
-            "attribute": "arm_mode", "state": "armed_vacation"}
+    cond = {
+        "condition": "state",
+        "entity_id": "alarm_control_panel.alarmo",
+        "attribute": "arm_mode",
+        "state": "armed_vacation",
+    }
     assert evaluate_condition(cond, w) is True
 
     cond_no = {**cond, "state": "armed_away"}

@@ -16,9 +16,7 @@ from cover_logic.world import Event
 from . import jinja_bridge as bridge
 from .mapping import expected_actions, world_from_stav
 
-pytestmark = pytest.mark.skipif(
-    not bridge.available(), reason="needs /config/tests/matica.py"
-)
+pytestmark = pytest.mark.skipif(not bridge.available(), reason="needs /config/tests/matica.py")
 
 MAX_REPORTED = 5
 

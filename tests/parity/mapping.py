@@ -34,10 +34,12 @@ def expected_actions(item: dict, *, variant: str, teplotna_ochrana: bool) -> Act
     from the state map even for the arrival one.
     """
     if variant == "state":
-        return to_action(item["akcia"], item["hodnota"], item["tilt"],
-                         teplotna_ochrana=teplotna_ochrana)
-    return to_action(item["akcia_p"], item["hodnota_p"], item["tilt"],
-                     teplotna_ochrana=teplotna_ochrana)
+        return to_action(
+            item["akcia"], item["hodnota"], item["tilt"], teplotna_ochrana=teplotna_ochrana
+        )
+    return to_action(
+        item["akcia_p"], item["hodnota_p"], item["tilt"], teplotna_ochrana=teplotna_ochrana
+    )
 
 
 def world_from_stav(stav, event: Event | None = None) -> World:

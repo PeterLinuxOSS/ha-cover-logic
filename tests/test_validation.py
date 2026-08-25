@@ -29,8 +29,10 @@ def test_a_clean_config_has_no_problems():
 
 
 def test_blind_without_a_zone_is_an_error():
-    text = BASE.replace("blinds:\n  - {entity: cover.a}",
-                        "blinds:\n  - {entity: cover.a}\n  - {entity: cover.orphan}")
+    text = BASE.replace(
+        "blinds:\n  - {entity: cover.a}",
+        "blinds:\n  - {entity: cover.a}\n  - {entity: cover.orphan}",
+    )
     assert "blind_without_zone" in codes(text)
 
 
@@ -40,8 +42,9 @@ def test_zone_referring_to_an_unknown_blind_is_an_error():
 
 
 def test_blind_in_two_zones_is_an_error():
-    text = BASE.replace("  z: {members: [cover.a]}",
-                        "  z: {members: [cover.a]}\n  z2: {members: [cover.a]}")
+    text = BASE.replace(
+        "  z: {members: [cover.a]}", "  z: {members: [cover.a]}\n  z2: {members: [cover.a]}"
+    )
     assert "blind_in_two_zones" in codes(text)
 
 
@@ -65,8 +68,7 @@ def test_rule_key_for_an_unknown_zone_is_an_error():
 
 def test_missing_rule_list_is_a_warning():
     text = BASE.replace(
-        "  den.z:\n    - {if: !ref vzdy, then: {position: 100}}\n"
-        "    - {then: {position: 0}}",
+        "  den.z:\n    - {if: !ref vzdy, then: {position: 100}}\n    - {then: {position: 0}}",
         "  {}",
     )
     problems = validate(load_config(text))
@@ -105,7 +107,7 @@ rules:
 def test_direct_self_referencing_condition_is_an_error():
     """A condition that directly refers to itself."""
     text = BASE.replace(
-        "conditions:\n  vzdy: {condition: state, entity_id: x, state: \"on\"}",
+        'conditions:\n  vzdy: {condition: state, entity_id: x, state: "on"}',
         "conditions:\n  vzdy: {condition: ref, name: vzdy}",
     )
     assert "circular_condition_ref" in codes(text)
@@ -114,7 +116,7 @@ def test_direct_self_referencing_condition_is_an_error():
 def test_two_condition_cycle_is_an_error():
     """Condition A refers to B, B refers to A."""
     text = BASE.replace(
-        "conditions:\n  vzdy: {condition: state, entity_id: x, state: \"on\"}",
+        'conditions:\n  vzdy: {condition: state, entity_id: x, state: "on"}',
         "conditions:\n  vzdy: {condition: ref, name: niekedy}\n"
         "  niekedy: {condition: ref, name: vzdy}",
     )
@@ -168,7 +170,7 @@ rules:
 def test_unused_cyclic_condition_is_still_an_error():
     """Even if a cyclic condition is not referenced in rules, it's still an error."""
     text = BASE.replace(
-        "conditions:\n  vzdy: {condition: state, entity_id: x, state: \"on\"}",
+        'conditions:\n  vzdy: {condition: state, entity_id: x, state: "on"}',
         'conditions:\n  vzdy: {condition: state, entity_id: x, state: "on"}\n'
         "  bad: {condition: ref, name: bad}",
     )
@@ -369,8 +371,8 @@ rules:
 def test_unknown_ref_inside_a_named_condition_is_an_error():
     """A hand-written literal ref (not the !ref tag) bypasses parse-time checking."""
     text = BASE.replace(
-        "conditions:\n  vzdy: {condition: state, entity_id: x, state: \"on\"}",
-        "conditions:\n  vzdy: {condition: state, entity_id: x, state: \"on\"}\n"
+        'conditions:\n  vzdy: {condition: state, entity_id: x, state: "on"}',
+        'conditions:\n  vzdy: {condition: state, entity_id: x, state: "on"}\n'
         "  bad: {condition: ref, name: neexistuje}",
     )
     assert "unknown_condition_ref" in codes(text)
@@ -394,7 +396,7 @@ def test_all_refs_resolved_does_not_trigger_unknown_condition_ref():
 def test_unknown_condition_type_is_an_error():
     text = BASE.replace(
         'conditions:\n  vzdy: {condition: state, entity_id: x, state: "on"}',
-        "conditions:\n  vzdy: {condition: sate, entity_id: x, state: \"on\"}",
+        'conditions:\n  vzdy: {condition: sate, entity_id: x, state: "on"}',
     )
     assert "bad_condition_shape" in codes(text)
 
@@ -458,7 +460,7 @@ def test_and_missing_conditions_key_is_an_error():
 def test_ref_missing_name_is_an_error():
     text = BASE.replace(
         'conditions:\n  vzdy: {condition: state, entity_id: x, state: "on"}',
-        "conditions:\n  vzdy: {condition: state, entity_id: x, state: \"on\"}\n"
+        'conditions:\n  vzdy: {condition: state, entity_id: x, state: "on"}\n'
         "  bad: {condition: ref}",
     )
     assert "bad_condition_shape" in codes(text)
@@ -494,7 +496,7 @@ def test_extra_unknown_key_on_a_condition_body_is_not_reported():
 def test_bad_condition_shape_message_names_the_offending_condition():
     text = BASE.replace(
         'conditions:\n  vzdy: {condition: state, entity_id: x, state: "on"}',
-        "conditions:\n  vzdy: {condition: sate, entity_id: x, state: \"on\"}",
+        'conditions:\n  vzdy: {condition: sate, entity_id: x, state: "on"}',
     )
     problems = [p for p in validate(load_config(text)) if p.code == "bad_condition_shape"]
     assert len(problems) == 1

@@ -90,7 +90,6 @@ def _reject_dot(identifier: Any, where: str) -> None:
         raise ConfigError(msg)
 
 
-
 class RefTag:
     """Placeholder produced by the `!ref` YAML tag.
 
@@ -111,9 +110,7 @@ class _Loader(yaml.SafeLoader):
     pass
 
 
-_Loader.add_constructor(
-    "!ref", lambda loader, node: RefTag(loader.construct_scalar(node))
-)
+_Loader.add_constructor("!ref", lambda loader, node: RefTag(loader.construct_scalar(node)))
 
 
 def load_config(text: str) -> Config:
@@ -250,7 +247,6 @@ def _parse_condition(node: Any, conditions: dict[str, Any]) -> dict | list | Non
     raise ConfigError(msg)
 
 
-
 def _parse_axis(node: Any, values: dict[str, Ref]) -> Value:
     if node is None or node == "keep":
         return KEEP
@@ -297,9 +293,7 @@ def _parse_action(node: Any, values: dict[str, Ref]) -> Action:
     )
 
 
-def _parse_rule(
-    item: Any, conditions: dict[str, Any], values: dict[str, Ref]
-) -> Rule:
+def _parse_rule(item: Any, conditions: dict[str, Any], values: dict[str, Ref]) -> Rule:
     item = _expect_mapping(item, "rule entry")
     _check_keys(item, _RULE_KEYS, "rule entry")
     if "then" not in item:

@@ -30,10 +30,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      # pyproject.toml configured ruff but nothing invoked it until now.
-      # `ruff format --check` is deliberately NOT run: adopting the formatter
-      # would rewrite most of the tree in one commit and bury a history that
-      # was reviewed change by change. Lint catches real defects; formatting
-      # is a separate decision to take on purpose, not as a CI side effect.
       - run: pipx install ruff
       - run: ruff check .
+      - run: ruff format --check .

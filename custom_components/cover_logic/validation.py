@@ -43,19 +43,30 @@ def _check_ownership(config: Config) -> list[Problem]:
     for zone_id, zone in config.zones.items():
         for entity in zone.members:
             if entity not in config.blinds:
-                out.append(Problem(ERROR, "zone_member_unknown",
-                                   f"zone {zone_id!r} refers to unknown blind {entity!r}"))
+                out.append(
+                    Problem(
+                        ERROR,
+                        "zone_member_unknown",
+                        f"zone {zone_id!r} refers to unknown blind {entity!r}",
+                    )
+                )
             if entity in owner:
-                out.append(Problem(
-                    ERROR, "blind_in_two_zones",
-                    f"blind {entity!r} is owned by {owner[entity]!r} and {zone_id!r}",
-                ))
+                out.append(
+                    Problem(
+                        ERROR,
+                        "blind_in_two_zones",
+                        f"blind {entity!r} is owned by {owner[entity]!r} and {zone_id!r}",
+                    )
+                )
             else:
                 owner[entity] = zone_id
 
     out.extend(
-        Problem(ERROR, "blind_without_zone",
-                f"blind {entity!r} belongs to no zone, so no rule decides it")
+        Problem(
+            ERROR,
+            "blind_without_zone",
+            f"blind {entity!r} belongs to no zone, so no rule decides it",
+        )
         for entity in config.blinds
         if entity not in owner
     )
@@ -66,15 +77,25 @@ def _check_modes(config: Config) -> list[Problem]:
     out: list[Problem] = []
     fallbacks = [i for i, m in enumerate(config.modes) if m.when is None]
     if not fallbacks:
-        out.append(Problem(ERROR, "no_fallback_mode",
-                           "no mode without a condition; some states would resolve to no mode"))
+        out.append(
+            Problem(
+                ERROR,
+                "no_fallback_mode",
+                "no mode without a condition; some states would resolve to no mode",
+            )
+        )
         return out
     first = fallbacks[0]
     if first != len(config.modes) - 1:
-        dead = ", ".join(m.id for m in config.modes[first + 1:])
-        out.append(Problem(ERROR, "fallback_mode_not_last",
-                           f"mode {config.modes[first].id!r} has no condition but is not last; "
-                           f"these can never match: {dead}"))
+        dead = ", ".join(m.id for m in config.modes[first + 1 :])
+        out.append(
+            Problem(
+                ERROR,
+                "fallback_mode_not_last",
+                f"mode {config.modes[first].id!r} has no condition but is not last; "
+                f"these can never match: {dead}",
+            )
+        )
     return out
 
 
@@ -84,8 +105,11 @@ def _check_rule_keys(config: Config) -> list[Problem]:
     for key in config.rules:
         mode, _, zone = key.partition(".")
         if mode not in mode_ids or zone not in config.zones:
-            out.append(Problem(ERROR, "unknown_rule_key",
-                               f"rule key {key!r} names an unknown mode or zone"))
+            out.append(
+                Problem(
+                    ERROR, "unknown_rule_key", f"rule key {key!r} names an unknown mode or zone"
+                )
+            )
     return out
 
 
@@ -96,8 +120,13 @@ def _check_rule_lists(config: Config) -> list[Problem]:
             key = f"{mode.id}.{zone_id}"
             rules = config.rules.get(key)
             if not rules:
-                out.append(Problem(WARNING, "missing_rule_list",
-                                   f"{key} has no rules; every blind there keeps its position"))
+                out.append(
+                    Problem(
+                        WARNING,
+                        "missing_rule_list",
+                        f"{key} has no rules; every blind there keeps its position",
+                    )
+                )
                 continue
             out += _check_reachability(key, rules)
     return out
@@ -111,17 +140,27 @@ def _check_reachability(key: str, rules) -> list[Problem]:
     for index, rule in enumerate(rules):
         for scope in catch_all_scopes:
             if scope is None or (rule.events is not None and rule.events <= scope):
-                out.append(Problem(WARNING, "unreachable_rule",
-                                   f"{key}#{index} can never fire; an earlier rule "
-                                   f"with no condition already matches everything"))
+                out.append(
+                    Problem(
+                        WARNING,
+                        "unreachable_rule",
+                        f"{key}#{index} can never fire; an earlier rule "
+                        f"with no condition already matches everything",
+                    )
+                )
                 break
         if rule.when is None:
             catch_all_scopes.append(rule.events)
 
     if not any(r.when is None and r.events is None for r in rules):
-        out.append(Problem(WARNING, "no_catch_all",
-                           f"{key} has no final rule without a condition; "
-                           f"some states fall through to keep/keep silently"))
+        out.append(
+            Problem(
+                WARNING,
+                "no_catch_all",
+                f"{key} has no final rule without a condition; "
+                f"some states fall through to keep/keep silently",
+            )
+        )
     return out
 
 
@@ -147,10 +186,13 @@ def _check_circular_condition_refs(config: Config) -> list[Problem]:
                 # DFS actually followed the references) -- report it as-is,
                 # not re-sorted, so the message names an edge that exists.
                 loop = f"{' -> '.join(cycle)} -> {cycle[0]}"
-                out.append(Problem(
-                    ERROR, "circular_condition_ref",
-                    f"circular condition reference: {loop}",
-                ))
+                out.append(
+                    Problem(
+                        ERROR,
+                        "circular_condition_ref",
+                        f"circular condition reference: {loop}",
+                    )
+                )
 
     return out
 
@@ -232,9 +274,7 @@ def _referenced_condition_names(node) -> set[str]:
     the circular-ref and the unknown-ref checks.
     """
     return {
-        n.get("name", "")
-        for n in _walk_condition_nodes(node)
-        if n.get("condition") == COND_REF
+        n.get("name", "") for n in _walk_condition_nodes(node) if n.get("condition") == COND_REF
     }
 
 
@@ -275,8 +315,7 @@ def _check_unknown_condition_refs(config: Config) -> list[Problem]:
         if node is None:
             continue
         out.extend(
-            Problem(ERROR, "unknown_condition_ref",
-                    f"{where} refers to unknown condition {name!r}")
+            Problem(ERROR, "unknown_condition_ref", f"{where} refers to unknown condition {name!r}")
             for name in sorted(_referenced_condition_names(node))
             if name not in config.conditions
         )
@@ -311,23 +350,34 @@ def _check_condition_shape(node: dict, where: str) -> list[Problem]:
     """
     kind = node.get("condition")
     if kind not in _REQUIRED_CONDITION_KEYS:
-        return [Problem(ERROR, "bad_condition_shape",
-                        f"{where}: unknown condition type {kind!r}")]
+        return [Problem(ERROR, "bad_condition_shape", f"{where}: unknown condition type {kind!r}")]
 
     out: list[Problem] = []
     missing = [key for key in _REQUIRED_CONDITION_KEYS[kind] if key not in node]
     if missing:
-        out.append(Problem(ERROR, "bad_condition_shape",
-                           f"{where}: condition {kind!r} is missing required "
-                           f"key(s) {missing}"))
+        out.append(
+            Problem(
+                ERROR,
+                "bad_condition_shape",
+                f"{where}: condition {kind!r} is missing required key(s) {missing}",
+            )
+        )
     if kind == "numeric_state" and "above" not in node and "below" not in node:
-        out.append(Problem(ERROR, "bad_condition_shape",
-                           f"{where}: condition {kind!r} needs at least one "
-                           f"of 'above'/'below'"))
+        out.append(
+            Problem(
+                ERROR,
+                "bad_condition_shape",
+                f"{where}: condition {kind!r} needs at least one of 'above'/'below'",
+            )
+        )
     if kind == "time" and "after" not in node and "before" not in node:
-        out.append(Problem(ERROR, "bad_condition_shape",
-                           f"{where}: condition {kind!r} needs at least one "
-                           f"of 'after'/'before'"))
+        out.append(
+            Problem(
+                ERROR,
+                "bad_condition_shape",
+                f"{where}: condition {kind!r} needs at least one of 'after'/'before'",
+            )
+        )
     return out
 
 

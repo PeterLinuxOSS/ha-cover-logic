@@ -243,9 +243,7 @@ def pairwise(axes: dict[str, list]) -> list[dict[str, Any]]:
                     best, best_gain = value, gain
             row[key] = best
         covered = {
-            (a, va, b, vb)
-            for (a, va, b, vb) in needed
-            if row.get(a) == va and row.get(b) == vb
+            (a, va, b, vb) for (a, va, b, vb) in needed if row.get(a) == va and row.get(b) == vb
         }
         if not covered:
             break
@@ -292,9 +290,7 @@ def _probe_world(key: str, value: Any) -> World:
     entity, attribute = _split_axis_key(key)
     if attribute is None:
         return World(states={entity: value}, attributes={}, now=NOW, event=Event())
-    return World(
-        states={}, attributes={(entity, attribute): value}, now=NOW, event=Event()
-    )
+    return World(states={}, attributes={(entity, attribute): value}, now=NOW, event=Event())
 
 
 def _sun_probe(
@@ -307,12 +303,15 @@ def _sun_probe(
     if azimuth_attribute is None:
         return World(
             states={sun_entity: "above_horizon", azimuth_entity: azimuth},
-            attributes={}, now=NOW, event=Event(),
+            attributes={},
+            now=NOW,
+            event=Event(),
         )
     return World(
         states={sun_entity: "above_horizon"},
         attributes={(azimuth_entity, azimuth_attribute): azimuth},
-        now=NOW, event=Event(),
+        now=NOW,
+        event=Event(),
     )
 
 
@@ -334,7 +333,6 @@ def _leaf_true(key: str, node: dict, values: dict[str, Any], axes: dict[str, lis
     raise _Infeasible(msg)
 
 
-
 def _leaf_false(key: str, node: dict, values: dict[str, Any], axes: dict[str, list]) -> None:
     if key in values:
         if not evaluate_condition(node, _probe_world(key, values[key]), None, {}):
@@ -348,7 +346,6 @@ def _leaf_false(key: str, node: dict, values: dict[str, Any], axes: dict[str, li
             return
     msg = f"no candidate value makes {key} falsify {node}"
     raise _Infeasible(msg)
-
 
 
 def _require(
@@ -388,8 +385,10 @@ def _require(
         children = cond["conditions"]
         # AND is true iff all children true; OR is true iff any child true;
         # NOT (this dialect's list-NOR) is true iff all children false.
-        all_required = (kind == "and" and want_true) or (kind == "or" and not want_true) or (
-            kind == "not" and want_true
+        all_required = (
+            (kind == "and" and want_true)
+            or (kind == "or" and not want_true)
+            or (kind == "not" and want_true)
         )
         child_truth = want_true if kind != "not" else not want_true
         if all_required:
@@ -408,7 +407,6 @@ def _require(
                 errors.append(str(err))
         msg = f"no child of {kind!r} could be resolved: {errors}"
         raise _Infeasible(msg)
-
 
     if kind == "time":
         empty = World(states={}, attributes={}, now=NOW, event=Event())
@@ -453,7 +451,8 @@ def _require(
                     _leaf_true(
                         azimuth_key,
                         _azimuth_state_node(azimuth_entity, azimuth_attribute, azimuth),
-                        values, axes,
+                        values,
+                        axes,
                     )
                     return
                 except _Infeasible as err:
@@ -476,7 +475,8 @@ def _require(
                 _leaf_true(
                     azimuth_key,
                     _azimuth_state_node(azimuth_entity, azimuth_attribute, azimuth),
-                    values, axes,
+                    values,
+                    axes,
                 )
                 return
             except _Infeasible as err:
@@ -485,7 +485,6 @@ def _require(
                 errors.append(str(err))
         msg = f"no azimuth probe hits the target's facade: {errors}"
         raise _Infeasible(msg)
-
 
     if kind == "event_targets_zone":
         # Depends on the chosen event's person, not on entity state; the

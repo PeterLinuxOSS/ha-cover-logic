@@ -53,8 +53,7 @@ def evaluate_condition(
         return True
     if isinstance(cond, list):
         return all(
-            evaluate_condition(c, world, target, registry, _ref_chain=_ref_chain)
-            for c in cond
+            evaluate_condition(c, world, target, registry, _ref_chain=_ref_chain) for c in cond
         )
 
     kind = cond.get("condition")
@@ -175,9 +174,7 @@ def _time(cond: dict, world: World) -> bool:
 
 def _template(cond: dict, world: World) -> bool:
     """Escape hatch. Exposes the same globals a Home Assistant template gets."""
-    rendered = _JINJA.from_string(cond["value_template"]).render(
-        **_template_globals(world)
-    )
+    rendered = _JINJA.from_string(cond["value_template"]).render(**_template_globals(world))
     return rendered.strip().lower() in ("true", "on", "yes", "1")
 
 
@@ -193,9 +190,7 @@ def _template_globals(world: World) -> dict[str, Any]:
 
     def today_at(text: str = "00:00") -> dt.datetime:
         moment = _parse_hhmm(text)
-        return world.now.replace(
-            hour=moment.hour, minute=moment.minute, second=0, microsecond=0
-        )
+        return world.now.replace(hour=moment.hour, minute=moment.minute, second=0, microsecond=0)
 
     return {
         "is_state": is_state,

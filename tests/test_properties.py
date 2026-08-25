@@ -14,9 +14,21 @@ from cover_logic.world import Event, World
 
 NOW = dt.datetime(2026, 8, 19, 13, 0)
 
-ENTITY_VALUES = ["on", "off", "unknown", "unavailable", "armed_vacation",
-                 "triggered", "above_horizon", "below_horizon", "sunny",
-                 "cloudy", "34", "180", "999"]
+ENTITY_VALUES = [
+    "on",
+    "off",
+    "unknown",
+    "unavailable",
+    "armed_vacation",
+    "triggered",
+    "above_horizon",
+    "below_horizon",
+    "sunny",
+    "cloudy",
+    "34",
+    "180",
+    "999",
+]
 
 
 @pytest.fixture(scope="module")
@@ -26,19 +38,21 @@ def config(fixtures_dir):
 
 @given(
     values=st.dictionaries(
-        keys=st.sampled_from([
-            "input_boolean.cover_down",
-            "alarm_control_panel.alarmo",
-            "input_boolean.teplotna_ochrana_dom",
-            "input_boolean.lighting_on",
-            "input_boolean.kvety_on",
-            "input_boolean.zaluzie_kuchyna_rucne",
-            "binary_sensor.is_home",
-            "input_boolean.some_sleeping",
-            "sun.sun",
-            "sensor.sun_solar_azimuth",
-            "weather.openweathermap",
-        ]),
+        keys=st.sampled_from(
+            [
+                "input_boolean.cover_down",
+                "alarm_control_panel.alarmo",
+                "input_boolean.teplotna_ochrana_dom",
+                "input_boolean.lighting_on",
+                "input_boolean.kvety_on",
+                "input_boolean.zaluzie_kuchyna_rucne",
+                "binary_sensor.is_home",
+                "input_boolean.some_sleeping",
+                "sun.sun",
+                "sensor.sun_solar_azimuth",
+                "weather.openweathermap",
+            ]
+        ),
         values=st.sampled_from(ENTITY_VALUES),
         max_size=11,
     ),
@@ -55,8 +69,14 @@ def test_every_blind_always_gets_exactly_one_action(config, values, arrival):
 
 @given(
     values=st.dictionaries(
-        keys=st.sampled_from(["input_boolean.cover_down", "sun.sun",
-                              "sensor.sun_solar_azimuth", "binary_sensor.is_home"]),
+        keys=st.sampled_from(
+            [
+                "input_boolean.cover_down",
+                "sun.sun",
+                "sensor.sun_solar_azimuth",
+                "binary_sensor.is_home",
+            ]
+        ),
         values=st.sampled_from(ENTITY_VALUES),
     )
 )
@@ -68,9 +88,14 @@ def test_the_same_world_always_gives_the_same_decision(config, values):
 
 @given(
     values=st.dictionaries(
-        keys=st.sampled_from(["input_boolean.cover_down", "sun.sun",
-                              "sensor.sun_solar_azimuth",
-                              "input_number.kvety_pozicia_zaluzie"]),
+        keys=st.sampled_from(
+            [
+                "input_boolean.cover_down",
+                "sun.sun",
+                "sensor.sun_solar_azimuth",
+                "input_number.kvety_pozicia_zaluzie",
+            ]
+        ),
         values=st.sampled_from(ENTITY_VALUES),
     )
 )
@@ -92,7 +117,9 @@ def test_action_axes_are_always_an_int_or_keep(config, values):
 def test_night_mode_never_moves_anything(config):
     world = World(
         states={"input_boolean.cover_down": "on"},
-        attributes={}, now=NOW, event=Event(),
+        attributes={},
+        now=NOW,
+        event=Event(),
     )
     for action in evaluate(config, world).targets.values():
         assert action.position is KEEP

@@ -63,13 +63,9 @@ class World:
     def attribute(self, entity_id: str, attr: str) -> Any | None:
         return self.attributes.get((entity_id, attr))
 
-    def number(
-        self, entity_id: str, default: float, attribute: str | None = None
-    ) -> float:
+    def number(self, entity_id: str, default: float, attribute: str | None = None) -> float:
         raw = (
-            self.attribute(entity_id, attribute)
-            if attribute is not None
-            else self.state(entity_id)
+            self.attribute(entity_id, attribute) if attribute is not None else self.state(entity_id)
         )
         try:
             return float(raw)  # type: ignore[arg-type]

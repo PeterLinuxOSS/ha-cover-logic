@@ -174,6 +174,7 @@ conditions:
 
 # --- Fix 3: unknown keys must raise, but not inside condition bodies/guards -
 
+
 def test_unknown_top_level_key_raises_config_error():
     bad = MINIMAL.replace("blinds:", "blindz:")
     with pytest.raises(ConfigError, match="blindz"):
@@ -202,6 +203,7 @@ def test_condition_body_with_arbitrary_ha_keys_still_parses():
 
 # --- Fix 2: _parse_axis must reject bools and non-integral floats ----------
 
+
 def test_position_true_raises_config_error_instead_of_becoming_one():
     bad = MINIMAL.replace("position: 100, tilt: keep", "position: true, tilt: keep")
     with pytest.raises(ConfigError):
@@ -221,9 +223,7 @@ def test_position_non_integral_float_raises_config_error():
 
 
 def test_position_integral_float_is_accepted():
-    cfg = load_config(
-        MINIMAL.replace("position: 100, tilt: keep", "position: 50.0, tilt: keep")
-    )
+    cfg = load_config(MINIMAL.replace("position: 100, tilt: keep", "position: 50.0, tilt: keep"))
     assert cfg.rules["bezny_den.terasa"][0].then.position == 50
 
 
@@ -242,6 +242,7 @@ def test_out_of_range_value_default_raises_config_error():
 
 
 # --- Fix 3 (continued): shape checks around the strict key checking --------
+
 
 def test_unknown_key_inside_zone_entry_raises_config_error():
     bad = MINIMAL.replace("members: [cover.a]", "members: [cover.a]\n    extra: 1")
@@ -268,6 +269,7 @@ def test_unknown_key_inside_action_raises_config_error():
 
 
 # --- Fix 4: malformed entries raise ConfigError, not raw exceptions --------
+
 
 def test_zone_entry_as_a_list_raises_config_error_not_attribute_error():
     bad = MINIMAL.replace(
@@ -298,6 +300,7 @@ def test_blind_entry_as_a_bare_string_raises_config_error():
 
 # --- Minor coverage gaps -----------------------------------------------
 
+
 def test_load_config_file_reads_and_parses_a_file(tmp_path):
     path = tmp_path / "config.yaml"
     path.write_text(MINIMAL, encoding="utf-8")
@@ -312,14 +315,13 @@ def test_value_only_name_referenced_from_a_condition_slot_raises_config_error():
 
 
 def test_condition_only_name_referenced_from_an_action_axis_raises_config_error():
-    bad = MINIMAL.replace(
-        "position: !ref kvety_poz", "position: !ref cover_down"
-    )
+    bad = MINIMAL.replace("position: !ref kvety_poz", "position: !ref cover_down")
     with pytest.raises(ConfigError, match="cover_down"):
         load_config(bad)
 
 
 # --- A '.' in a mode or zone id would misroute rules ------------------
+
 
 def test_zone_id_containing_dot_raises_config_error():
     """`engine` builds rule keys as f"{mode}.{zone}"; a dot inside the zone id
@@ -338,17 +340,19 @@ def test_mode_id_containing_dot_raises_config_error():
 
 
 def test_same_short_name_in_both_namespaces_resolves_independently():
-    text = MINIMAL.replace(
-        "conditions:\n  cover_down:",
-        "conditions:\n  shared:\n    condition: state\n"
-        '    entity_id: input_boolean.cover_down\n    state: "on"\n  cover_down:',
-    ).replace(
-        "values:\n  kvety_poz:",
-        "values:\n  shared:\n    entity: input_number.shared_helper\n    default: 7\n  kvety_poz:",
-    ).replace(
-        "when: !ref cover_down", "when: !ref shared"
-    ).replace(
-        "position: !ref kvety_poz", "position: !ref shared"
+    text = (
+        MINIMAL.replace(
+            "conditions:\n  cover_down:",
+            "conditions:\n  shared:\n    condition: state\n"
+            '    entity_id: input_boolean.cover_down\n    state: "on"\n  cover_down:',
+        )
+        .replace(
+            "values:\n  kvety_poz:",
+            "values:\n  shared:\n    entity: input_number.shared_helper\n"
+            "    default: 7\n  kvety_poz:",
+        )
+        .replace("when: !ref cover_down", "when: !ref shared")
+        .replace("position: !ref kvety_poz", "position: !ref shared")
     )
     cfg = load_config(text)
     assert cfg.modes[0].when == {"condition": "ref", "name": "shared"}
