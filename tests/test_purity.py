@@ -16,6 +16,7 @@ PURE_MODULES = [
     "config_schema.py",
     "engine.py",
     "validation.py",
+    "legacy.py",
 ]
 
 PKG = Path(__file__).resolve().parent.parent / "custom_components" / "cover_logic"

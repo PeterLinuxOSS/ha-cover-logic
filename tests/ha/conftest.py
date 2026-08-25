@@ -111,6 +111,59 @@ def make_entry():
     return FakeConfigEntry
 
 
+class FakeEntryConfigEntries:
+    """Stands in for `hass.config_entries` as seen from `async_setup_entry`/`async_unload_entry`.
+
+    Once `sensor.py` exists, those two functions touch exactly
+    `.async_forward_entry_setups(entry, platforms)` and
+    `.async_unload_platforms(entry, platforms)` -- this fake covers precisely
+    that surface, records every call so a test can assert what got forwarded
+    or unloaded, and returns `unload_result` (default `True`) the way a real
+    unload does.
+    """
+
+    def __init__(self, *, unload_result=True):
+        """`unload_result` lets a test simulate a platform refusing to unload."""
+        self.forwarded = []
+        self.unloaded = []
+        self.unload_result = unload_result
+
+    async def async_forward_entry_setups(self, entry, platforms):
+        """Record the call; a real platform loader would import and set up each platform."""
+        self.forwarded.append((entry, list(platforms)))
+
+    async def async_unload_platforms(self, entry, platforms):
+        """Record the call and return `unload_result`."""
+        self.unloaded.append((entry, list(platforms)))
+        return self.unload_result
+
+
+class FakeSetupHass:
+    """Stands in for `hass` as seen by `async_setup_entry`/`async_unload_entry`.
+
+    Only `.config_entries` is touched by those two functions -- the
+    coordinator they build reads/writes nothing on `hass` beyond what
+    `hass_factory`'s real minimal `HomeAssistant` covers, but `test_init.py`'s
+    fixtures (`VALID_CONFIG` and friends) reference no entity at all, so
+    `build_world` never calls `hass.states.get` either; this fake needs
+    nothing beyond `.config_entries` to stand in for `hass` in those tests.
+    """
+
+    def __init__(self, *, unload_result=True):
+        """Wrap a fresh `FakeEntryConfigEntries`."""
+        self.config_entries = FakeEntryConfigEntries(unload_result=unload_result)
+
+
+@pytest.fixture
+def setup_hass():
+    """Factory: normal unload by default, or `setup_hass(unload_result=False)` for a refused one."""
+
+    def _make(*, unload_result=True):
+        return FakeSetupHass(unload_result=unload_result)
+
+    return _make
+
+
 class FakeFlowManager:
     """Stands in for `hass.config_entries.flow`: only what base `ConfigFlow` methods touch."""
 

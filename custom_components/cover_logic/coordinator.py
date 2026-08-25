@@ -56,6 +56,10 @@ class CoverLogicCoordinator:
     it -- see `_async_evaluate` -- it only ever updates `last_error`, so a
     diagnostic entity reading `decision` mid-outage shows the last good answer
     instead of nothing.
+
+    `add_listener` is how `sensor.py`'s entity learns a new evaluation has
+    completed -- this class has no `hass.bus` event of its own, so without it
+    the entity would have no way to know when to call `async_write_ha_state`.
     """
 
     def __init__(self, hass: HomeAssistant, config: Config) -> None:
@@ -67,6 +71,7 @@ class CoverLogicCoordinator:
         self.last_success: dt.datetime | None = None
         self._unsub_state_change: Callable[[], None] | None = None
         self._debouncer: Debouncer | None = None
+        self._listeners: list[Callable[[], None]] = []
 
     async def async_setup(self) -> None:
         """Subscribe to the config's referenced entities and run the first evaluation.
@@ -109,6 +114,28 @@ class CoverLogicCoordinator:
             self._debouncer.async_shutdown()
             self._debouncer = None
 
+    def add_listener(self, listener: Callable[[], None]) -> Callable[[], None]:
+        """Register `listener` to be called after every completed evaluation.
+
+        Called once per `_async_evaluate` run, success or failure alike --
+        the diagnostic sensor needs to refresh on a recorded error just as
+        much as on a new `decision`, since `last_error` is part of what it
+        shows. The listener always sees `decision`/`last_error` already
+        updated: `_async_evaluate` notifies only after writing them, never
+        before. Returns an unsubscribe callable; safe to call more than once.
+        """
+        self._listeners.append(listener)
+
+        def _remove() -> None:
+            if listener in self._listeners:
+                self._listeners.remove(listener)
+
+        return _remove
+
+    def _notify_listeners(self) -> None:
+        for listener in list(self._listeners):
+            listener()
+
     @callback
     def _handle_state_change(self, event: Event[EventStateChangedData]) -> None:
         """Schedule a debounced evaluation; never evaluate inline here.
@@ -150,11 +177,13 @@ class CoverLogicCoordinator:
         except Exception as err:
             _LOGGER.exception("cover_logic: evaluation failed, keeping previous decision")
             self.last_error = f"{type(err).__name__}: {err}"
+            self._notify_listeners()
             return
 
         self.decision = decision
         self.last_error = None
         self.last_success = dt_util.utcnow()
+        self._notify_listeners()
 
 
 def _entity_ids(config: Config) -> set[str]:

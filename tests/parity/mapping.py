@@ -1,43 +1,20 @@
-"""Translate the old action vocabulary into the new (position, tilt) pair."""
+"""Parity-test glue around the old-vocabulary translation.
 
-from cover_logic.model import KEEP, Action
+The translation itself (`to_action`/`expected_actions`) lives in
+`cover_logic.legacy` now -- it is not just a test helper, `sensor.py`'s
+`matica_diff` uses the exact same functions to compare the engine against the
+live matrix in the house. Re-exported here so `test_migration_gate.py` does
+not need to change its import. `world_from_stav` stays here: it depends on
+`jinja_bridge.now_for` and the `Stav` test fixture, both specific to this
+offline gate, not something the production sensor has any use for.
+"""
+
+from cover_logic.legacy import expected_actions, to_action
 from cover_logic.world import Event, World
 
 from .jinja_bridge import now_for
 
-
-def to_action(akcia: str, hodnota, tilt, *, teplotna_ochrana: bool) -> Action:
-    if akcia == "nechat":
-        return Action(KEEP, KEEP)
-    if akcia == "zavriet":
-        return Action(0, 0 if hodnota is None else int(hodnota))
-    if akcia == "tilt":
-        return Action(KEEP, int(hodnota))
-    if akcia == "hore":
-        return Action(100, KEEP)
-    if akcia == "pozicia":
-        if tilt is None:
-            # scripts.yaml, `pozicia_tilt_ciel`: a missing tilt is NOT a fixed
-            # 100 — it follows teplotna_ochrana_dom.
-            tilt = 50 if teplotna_ochrana else 100
-        return Action(int(hodnota), int(tilt))
-    msg = f"unknown legacy action: {akcia!r}"
-    raise AssertionError(msg)
-
-
-def expected_actions(item: dict, *, variant: str, teplotna_ochrana: bool) -> Action:
-    """`variant` is 'state' or 'arrival'.
-
-    The legacy `tilt` key is shared by both variants — the template takes it
-    from the state map even for the arrival one.
-    """
-    if variant == "state":
-        return to_action(
-            item["akcia"], item["hodnota"], item["tilt"], teplotna_ochrana=teplotna_ochrana
-        )
-    return to_action(
-        item["akcia_p"], item["hodnota_p"], item["tilt"], teplotna_ochrana=teplotna_ochrana
-    )
+__all__ = ["expected_actions", "to_action", "world_from_stav"]
 
 
 def world_from_stav(stav, event: Event | None = None) -> World:

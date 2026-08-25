@@ -37,6 +37,12 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
+# Plain strings, not `homeassistant.const.Platform.SENSOR` -- an enum import
+# would be one more Home Assistant name at module level, exactly what this
+# file's own docstring rules out. Home Assistant's platform-forwarding calls
+# accept plain strings just as well.
+PLATFORMS: list[str] = ["sensor"]
+
 
 @dataclass
 class CoverLogicData:
@@ -99,18 +105,31 @@ async def async_setup_entry(hass: "HomeAssistant", entry: "CoverLogicConfigEntry
     await coordinator.async_setup()
 
     entry.runtime_data = CoverLogicData(config=config, coordinator=coordinator)
+
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
 
 async def async_unload_entry(hass: "HomeAssistant", entry: "CoverLogicConfigEntry") -> bool:
     """Unload a config entry, leaving nothing behind.
 
-    No platforms are set up yet, so there is nothing to forward-unload; the
-    coordinator's own subscription and any pending debounce are torn down via
+    Platforms are unloaded first, before the coordinator itself is torn
+    down -- `sensor.py`'s entity unsubscribes from
+    `CoverLogicCoordinator.add_listener` in its own `async_will_remove_from_hass`,
+    so the coordinator must still be alive and holding that listener list
+    while `async_unload_platforms` runs. A failed platform unload aborts
+    before touching the coordinator at all, matching Home Assistant's own
+    convention that an unload returning `False` leaves the entry's state
+    untouched for a retry. Only once platforms are confirmed gone are the
+    coordinator's own subscription and any pending debounce torn down via
     `CoverLogicCoordinator.async_unload`. This exists so a config entry reload
     -- unload, then set up again -- re-reads the file both times and starts a
     fresh coordinator each time; see `async_setup_entry`'s docstring for why
     the re-read matters.
     """
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if not unload_ok:
+        return False
+
     await entry.runtime_data.coordinator.async_unload()
     return True
