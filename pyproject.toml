@@ -25,7 +25,9 @@ testpaths = ["tests"]
 pythonpath = ["custom_components", "tests"]
 addopts = "-q"
 filterwarnings = ["error"]
-markers = ["slow: full-space runs; excluded from the default run"]
+markers = [
+    "slow: full-space runs; the default run DOES include this marker -- it exists only so it can be opted out explicitly with `-m \"not slow\"`. `addopts` has no such flag on purpose: the migration gate this marks is the project's central guarantee and is meant to run every time.",
+]
 
 [tool.ruff]
 target-version = "py312"

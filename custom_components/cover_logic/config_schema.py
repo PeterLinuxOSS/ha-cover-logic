@@ -63,6 +63,23 @@ def _expect_list(node: Any, where: str) -> list:
     return node
 
 
+def _reject_dot(identifier: Any, where: str) -> None:
+    """A mode or zone id must not contain '.'.
+
+    `engine.evaluate` builds a rule key as `f"{mode}.{zone}"`, joining the two
+    with a plain string concatenation; `validation._check_rule_keys` recovers
+    them with `key.partition(".")`, which always splits on the FIRST dot. If
+    either id itself contains a dot, that join is not reversible: e.g. mode
+    "a.b" + zone "c" and mode "a" + zone "b.c" both produce the identical key
+    "a.b.c", so a rules entry meant for one pair silently applies to the
+    other -- and `_check_rule_keys` accepts it, because splitting on the
+    first dot happens to name two ids that both exist. Rejecting the dot at
+    parse time is cheaper than making the join unambiguous.
+    """
+    if isinstance(identifier, str) and "." in identifier:
+        raise ConfigError(f"{where} must not contain '.': {identifier!r}")
+
+
 class RefTag:
     """Placeholder produced by the `!ref` YAML tag.
 
@@ -111,6 +128,7 @@ def load_config(text: str) -> Config:
     raw_zones = _expect_mapping(raw.get("zones") or {}, "'zones'")
     zones = {}
     for zone_id, body in raw_zones.items():
+        _reject_dot(zone_id, "zone id")
         body = _expect_mapping(body, f"zone {zone_id!r}")
         _check_keys(body, _ZONE_KEYS, f"zone {zone_id!r}")
         zones[zone_id] = Zone(
@@ -125,6 +143,7 @@ def load_config(text: str) -> Config:
         _check_keys(item, _MODE_KEYS, "mode")
         if "id" not in item:
             raise ConfigError(f"mode without 'id': {item!r}")
+        _reject_dot(item["id"], "mode id")
         modes.append(Mode(id=item["id"], when=_parse_condition(item.get("when"), raw_conditions)))
     modes = tuple(modes)
 
@@ -158,9 +177,20 @@ def _parse_values(raw: dict[str, Any]) -> dict[str, Ref]:
         body = _expect_mapping(body, f"value {name!r}")
         _check_keys(body, _VALUE_KEYS, f"value {name!r}")
         try:
-            out[name] = Ref(entity=body["entity"], default=int(body["default"]))
+            entity = body["entity"]
+            default = int(body["default"])
         except (KeyError, TypeError, ValueError) as err:
             raise ConfigError(f"value {name!r} needs 'entity' and integer 'default'") from err
+        # A `default` is a config-time constant exactly like a literal action
+        # axis, so it must pass the same 0..100 range check `_parse_axis`
+        # applies to literals -- otherwise `position: !ref` with an
+        # out-of-range fallback validates clean while the same value written
+        # literally as `position: 250` would raise. This cannot affect
+        # parity: parity depends on the helper's runtime value, never on the
+        # fallback used when it is missing or unparsable.
+        if not 0 <= default <= 100:
+            raise ConfigError(f"value {name!r} default must be 0..100, got {default}")
+        out[name] = Ref(entity=entity, default=default)
     return out
 
 

@@ -69,52 +69,98 @@ def _all_condition_nodes(config: Config) -> Iterator[dict]:
                 yield from _walk(rule.when)
 
 
-def _sun_entities(config: Config) -> tuple[str, str]:
-    """Which entities `sun_hits_target` reads in THIS configuration.
+def _sun_entity_pairs(config: Config) -> set[tuple[str, str]]:
+    """Every (sun_entity, azimuth_entity) pair `sun_hits_target` reads in THIS
+    configuration.
 
-    The condition accepts `sun_entity` and `azimuth_entity` overrides. A house
-    using its own azimuth sensor would otherwise get an axis for the default
-    name only, every generated world would leave its real sensor unset,
-    `world.number` would fall back to -1, and every sun rule would look dead.
+    The condition accepts `sun_entity` and `azimuth_entity` overrides, and
+    different zones may each point at their own azimuth sensor. Collapsing
+    to a single "last one wins" pair (the previous behaviour of this
+    function) meant every override but the last was never set in any
+    generated world -- `world.number` would fall back to -1 for it and its
+    rule would look dead -- and, worse, a single override anywhere knocked
+    the default `sensor.sun_solar_azimuth` out of the axes entirely, killing
+    every rule that relies on the default. Returning the full set of pairs
+    used (each node's own override, or the default where a node relies on
+    it) is what makes every such pair get its own axis below.
     """
-    sun, azimuth = SUN_ENTITY, DEFAULT_AZIMUTH_ENTITY
+    pairs: set[tuple[str, str]] = set()
     for node in _all_condition_nodes(config):
         if node.get("condition") == "sun_hits_target":
-            sun = node.get("sun_entity", sun)
-            azimuth = node.get("azimuth_entity", azimuth)
-    return sun, azimuth
+            pairs.add((
+                node.get("sun_entity", SUN_ENTITY),
+                node.get("azimuth_entity", DEFAULT_AZIMUTH_ENTITY),
+            ))
+    return pairs
+
+
+def _condition_tolerances(config: Config) -> set[float]:
+    """Every `tolerance` value written directly on a `sun_hits_target` node.
+
+    A rule may override the blind's own tolerance per-condition (`{condition:
+    sun_hits_target, tolerance: 10}`); the sector boundary then sits at
+    `facade_azimuth ± that tolerance`, independent of `blind.tolerance`. Not
+    collecting these means the one boundary the probes exist to catch is
+    exactly the one a rule-level override moves away from the blind default.
+    """
+    tolerances: set[float] = set()
+    for node in _all_condition_nodes(config):
+        if node.get("condition") == "sun_hits_target" and "tolerance" in node:
+            tolerances.add(float(node["tolerance"]))
+    return tolerances
 
 
 def _azimuth_probes(config: Config) -> list[str]:
     """Probe each facade's real sector boundaries, not a fixed 45-degree grid.
 
     The boundary is where an off-by-one in the half-open interval shows up, and
-    it moves with `facade_azimuth` and `tolerance`. A hardcoded grid only probes
+    it moves with `facade_azimuth` and `tolerance` -- a blind's own default
+    tolerance, but also any condition-level `tolerance` override, each of which
+    defines its own boundary for the same facade. A hardcoded grid only probes
     the boundaries of the house it was written for.
     """
+    condition_tolerances = _condition_tolerances(config)
     probes: set[float] = {-1.0}
     for blind in config.blinds.values():
         if blind.facade_azimuth is None:
             continue
         probes.add(blind.facade_azimuth % 360.0)
-        for edge in (
-            blind.facade_azimuth - blind.tolerance,
-            blind.facade_azimuth + blind.tolerance,
-        ):
-            base = edge % 360.0
-            probes.update({(base - 1.0) % 360.0, base, (base + 1.0) % 360.0})
+        for tolerance in {blind.tolerance} | condition_tolerances:
+            for edge in (
+                blind.facade_azimuth - tolerance,
+                blind.facade_azimuth + tolerance,
+            ):
+                base = edge % 360.0
+                probes.update({(base - 1.0) % 360.0, base, (base + 1.0) % 360.0})
     if probes == {-1.0}:
         return list(DEFAULT_AZIMUTH_PROBES)
     return [f"{value:g}" for value in sorted(probes)]
 
 
-def derive_axes(config: Config) -> dict[str, list[str]]:
+def _axis_sort_key(value: Any) -> tuple[str, str]:
+    """Sort key that tolerates a mixed-type axis (e.g. int `100` next to the
+    string sentinel `"__other__"`) without `sorted()` raising on `<` between
+    incomparable types. Not meant to produce a meaningful order across types,
+    only a stable one.
+    """
+    return (type(value).__name__, str(value))
+
+
+def derive_axes(config: Config) -> dict[str, list]:
     """One axis per input the configuration reads, with the values that matter.
 
     An axis key is an entity id, or `entity|attribute` for a condition that
-    reads an attribute rather than a state.
+    reads an attribute rather than a state. State axis values are always
+    strings, matching a real HA entity state. Attribute axis values keep
+    their ORIGINAL type instead of being stringified: Home Assistant
+    attributes are typed (an integer `current_position` is a real `int`, not
+    `'100'`), `_state()` compares with plain `==` and never coerces, and a
+    phase-2 `World` built from live `hass.states` will hold that real type.
+    Stringifying here would make a rule that fires in production look dead in
+    this suite, and vice versa -- precisely inverted from what the suite
+    exists to prove.
     """
-    axes: dict[str, set[str]] = {}
+    axes: dict[str, set] = {}
 
     def add(key: str, values) -> None:
         axes.setdefault(key, set()).update(values)
@@ -124,11 +170,15 @@ def derive_axes(config: Config) -> dict[str, list[str]]:
         entity = node.get("entity_id")
         if not entity:
             continue
-        key = _axis_key(entity, node.get("attribute"))
+        attribute = node.get("attribute")
+        key = _axis_key(entity, attribute)
         if kind == "state":
             wanted = node["state"]
             values = list(wanted) if isinstance(wanted, (list, tuple)) else [wanted]
-            add(key, [str(value) for value in values] + ["__other__"])
+            if attribute is None:
+                add(key, [str(value) for value in values] + ["__other__"])
+            else:
+                add(key, list(values) + ["__other__"])
         elif kind == "numeric_state":
             bounds = [float(node[k]) for k in ("above", "below") if k in node]
             probes = {"unavailable"}
@@ -136,16 +186,17 @@ def derive_axes(config: Config) -> dict[str, list[str]]:
                 probes.update({str(bound - 1), str(bound), str(bound + 1)})
             add(key, probes)
 
-    sun_entity, azimuth_entity = _sun_entities(config)
-    add(sun_entity, ["above_horizon", "below_horizon"])
-    add(azimuth_entity, _azimuth_probes(config))
+    azimuth_probes = _azimuth_probes(config)
+    for sun_entity, azimuth_entity in _sun_entity_pairs(config):
+        add(sun_entity, ["above_horizon", "below_horizon"])
+        add(azimuth_entity, azimuth_probes)
     for ref in config.values.values():
         add(ref.entity, [str(ref.default), "unavailable"])
 
-    return {key: sorted(values) for key, values in axes.items()}
+    return {key: sorted(values, key=_axis_sort_key) for key, values in axes.items()}
 
 
-def pairwise(axes: dict[str, list[str]]) -> list[dict[str, str]]:
+def pairwise(axes: dict[str, list]) -> list[dict[str, Any]]:
     """Greedy covering array: every pair of values appears in at least one row.
 
     Not minimal, but small — and pair coverage is where the real bugs live.
@@ -157,7 +208,7 @@ def pairwise(axes: dict[str, list[str]]) -> list[dict[str, str]]:
             for vb in axes[b]:
                 needed.add((a, va, b, vb))
 
-    rows: list[dict[str, str]] = []
+    rows: list[dict[str, Any]] = []
     while needed:
         row = {k: axes[k][0] for k in keys}
         for key in keys:
@@ -218,7 +269,7 @@ class _Infeasible(Exception):
     """This rule's guard cannot be solved from the current axis vocabulary."""
 
 
-def _probe_world(key: str, value: str) -> World:
+def _probe_world(key: str, value: Any) -> World:
     entity, attribute = _split_axis_key(key)
     if attribute is None:
         return World(states={entity: value}, attributes={}, now=NOW, event=Event())
@@ -227,7 +278,7 @@ def _probe_world(key: str, value: str) -> World:
     )
 
 
-def _leaf_true(key: str, node: dict, values: dict[str, str], axes: dict[str, list[str]]) -> None:
+def _leaf_true(key: str, node: dict, values: dict[str, Any], axes: dict[str, list]) -> None:
     for value in axes.get(key, []):
         if key in values and values[key] != value:
             continue
@@ -237,7 +288,7 @@ def _leaf_true(key: str, node: dict, values: dict[str, str], axes: dict[str, lis
     raise _Infeasible(f"no candidate value makes {key} satisfy {node}")
 
 
-def _leaf_false(key: str, node: dict, values: dict[str, str], axes: dict[str, list[str]]) -> None:
+def _leaf_false(key: str, node: dict, values: dict[str, Any], axes: dict[str, list]) -> None:
     if key in values:
         if not evaluate_condition(node, _probe_world(key, values[key]), None, {}):
             return
@@ -252,8 +303,8 @@ def _leaf_false(key: str, node: dict, values: dict[str, str], axes: dict[str, li
 def _require(
     cond: Any,
     want_true: bool,
-    values: dict[str, str],
-    axes: dict[str, list[str]],
+    values: dict[str, Any],
+    axes: dict[str, list],
     registry: dict[str, dict],
     target: Target,
 ) -> None:
@@ -317,8 +368,40 @@ def _require(
         azimuth_entity = cond.get("azimuth_entity", DEFAULT_AZIMUTH_ENTITY)
         sun_node = {"condition": "state", "entity_id": sun_entity, "state": "above_horizon"}
         if not want_true:
-            _leaf_false(sun_entity, sun_node, values, axes)
-            return
+            # Falsifying via the sun entity works whenever it is free (or
+            # already pinned below the horizon elsewhere). But a sibling
+            # `sun_hits_target` rule in the same list (e.g. one tolerance
+            # nested inside another) commonly pins the sun entity to
+            # 'above_horizon' first, via its own TRUE requirement -- at that
+            # point the sun path can never falsify anything, even though the
+            # rule is still trivially reachable by landing the azimuth
+            # outside THIS condition's sector while the sun stays up.
+            try:
+                _leaf_false(sun_entity, sun_node, values, axes)
+                return
+            except _Infeasible as err:
+                errors = [str(err)]
+            for azimuth in axes.get(azimuth_entity, DEFAULT_AZIMUTH_PROBES):
+                snapshot = dict(values)
+                try:
+                    probe = World(
+                        states={sun_entity: "above_horizon", azimuth_entity: azimuth},
+                        attributes={}, now=NOW, event=Event(),
+                    )
+                    if evaluate_condition(cond, probe, target, registry):
+                        raise _Infeasible("azimuth probe hits the target's facade")
+                    _leaf_true(sun_entity, sun_node, values, axes)
+                    _leaf_true(
+                        azimuth_entity,
+                        {"condition": "state", "entity_id": azimuth_entity, "state": azimuth},
+                        values, axes,
+                    )
+                    return
+                except _Infeasible as err:
+                    values.clear()
+                    values.update(snapshot)
+                    errors.append(str(err))
+            raise _Infeasible(f"no azimuth probe falls outside the target's facade: {errors}")
         errors = []
         for azimuth in axes.get(azimuth_entity, DEFAULT_AZIMUTH_PROBES):
             snapshot = dict(values)
@@ -357,7 +440,7 @@ def _require(
         _leaf_false(key, cond, values, axes)
 
 
-def _solve_rule_witness(config: Config, axes: dict[str, list[str]], key: str, index: int) -> World:
+def _solve_rule_witness(config: Config, axes: dict[str, list], key: str, index: int) -> World:
     mode_id, zone_id = key.split(".", 1)
     zone = config.zones[zone_id]
     blind = config.blinds[zone.members[0]]
@@ -368,7 +451,7 @@ def _solve_rule_witness(config: Config, axes: dict[str, list[str]], key: str, in
     person = (zone.occupants[0] if zone.occupants else "peter") if event_kind == "arrival" else None
     event = Event(kind=event_kind, person=person)
 
-    values: dict[str, str] = {}
+    values: dict[str, Any] = {}
     modes = list(config.modes)
     mode_pos = next(i for i, m in enumerate(modes) if m.id == mode_id)
 
@@ -391,7 +474,7 @@ def _solve_rule_witness(config: Config, axes: dict[str, list[str]], key: str, in
     return _world_from_row(full, event)
 
 
-def rule_witnesses(config: Config, axes: dict[str, list[str]]) -> list[World]:
+def rule_witnesses(config: Config, axes: dict[str, list]) -> list[World]:
     """One structurally-derived world per rule, supplementing pairwise()."""
     out: list[World] = []
     for key, rules in config.rules.items():
@@ -406,10 +489,10 @@ def rule_witnesses(config: Config, axes: dict[str, list[str]]) -> list[World]:
     return out
 
 
-def _world_from_row(row: dict[str, str], event: Event) -> World:
+def _world_from_row(row: dict[str, Any], event: Event) -> World:
     """Split a covering-array row back into states and attributes."""
     states: dict[str, str] = {}
-    attributes: dict[tuple[str, str], str] = {}
+    attributes: dict[tuple[str, str], Any] = {}
     for key, value in row.items():
         entity, attribute = _split_axis_key(key)
         if attribute is None:
