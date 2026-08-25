@@ -10,7 +10,11 @@ from __future__ import annotations
 from collections.abc import Iterator
 from dataclasses import dataclass
 
-from .const import COND_REF
+from .const import (
+    COND_EVENT_TARGETS_ZONE,
+    COND_REF,
+    COND_SUN_HITS_TARGET,
+)
 from .model import Config
 
 ERROR = "error"
@@ -32,6 +36,7 @@ def validate(config: Config) -> list[Problem]:
     problems += _check_rule_lists(config)
     problems += _check_circular_condition_refs(config)
     problems += _check_unknown_condition_refs(config)
+    problems += _check_condition_shapes(config)
     return problems
 
 
@@ -202,27 +207,52 @@ def _find_cycle_from(start_name: str, registry: dict[str, dict]) -> list[str] | 
     return None
 
 
+def _walk_condition_nodes(node) -> Iterator[dict]:
+    """Yield every condition dict reachable from `node`.
+
+    `node` is a condition body (a dict), a bare list of conditions (this
+    dialect's list-as-AND shorthand), or None. Recurses into the
+    `conditions:` list of an `and`/`or`/`not` combinator. This is the single
+    traversal behind every check that needs to visit each condition dict in
+    a config once -- the circular-ref check, the unknown-ref check, and the
+    condition-shape check (issue #3) all read from it instead of each
+    re-walking the tree its own way.
+    """
+    if isinstance(node, dict):
+        yield node
+        for sub_cond in node.get("conditions", []):
+            yield from _walk_condition_nodes(sub_cond)
+    elif isinstance(node, list):
+        for item in node:
+            yield from _walk_condition_nodes(item)
+
+
 def _referenced_condition_names(node) -> set[str]:
     """Return every condition name a `{condition: ref, name: ...}` refers to,
     anywhere within `node` (a condition body, a bare list of conditions, or
-    None). The single walker behind both the circular-ref and the
-    unknown-ref checks -- one traversal, two callers.
+    None). Built on `_walk_condition_nodes` -- the single walker behind both
+    the circular-ref and the unknown-ref checks.
     """
-    referenced: set[str] = set()
+    return {
+        n.get("name", "")
+        for n in _walk_condition_nodes(node)
+        if n.get("condition") == COND_REF
+    }
 
-    def walk(n):
-        if isinstance(n, dict):
-            if n.get("condition") == COND_REF:
-                referenced.add(n.get("name", ""))
-            elif "conditions" in n:
-                for sub_cond in n["conditions"]:
-                    walk(sub_cond)
-        elif isinstance(n, list):
-            for item in n:
-                walk(item)
 
-    walk(node)
-    return referenced
+def _condition_sites(config: Config) -> Iterator[tuple[dict | list | None, str]]:
+    """Every top-level condition slot in the config, paired with a label
+    identifying where it lives (for problem messages). Shared by the
+    unknown-ref check and the condition-shape check so both name locations
+    the same way and neither re-derives this list of slots on its own.
+    """
+    for cond_name, body in config.conditions.items():
+        yield body, f"condition {cond_name!r}"
+    for mode in config.modes:
+        yield mode.when, f"mode {mode.id!r}"
+    for key, rules in config.rules.items():
+        for index, rule in enumerate(rules):
+            yield rule.when, f"rule {key}#{index}"
 
 
 def _get_referenced_conditions(cond_name: str, registry: dict[str, dict]) -> set[str]:
@@ -243,21 +273,80 @@ def _check_unknown_condition_refs(config: Config) -> list[Problem]:
     validation report.
     """
     out: list[Problem] = []
-
-    def check(node, where: str) -> None:
+    for node, where in _condition_sites(config):
         if node is None:
-            return
+            continue
         for name in sorted(_referenced_condition_names(node)):
             if name not in config.conditions:
                 out.append(Problem(ERROR, "unknown_condition_ref",
                                    f"{where} refers to unknown condition {name!r}"))
+    return out
 
-    for cond_name, body in config.conditions.items():
-        check(body, f"condition {cond_name!r}")
-    for mode in config.modes:
-        check(mode.when, f"mode {mode.id!r}")
-    for key, rules in config.rules.items():
-        for index, rule in enumerate(rules):
-            check(rule.when, f"rule {key}#{index}")
 
+# Required keys per condition type. `time`, `numeric_state` and
+# `sun_hits_target`/`event_targets_zone` need extra "at least one of" or
+# "none required" handling beyond a flat required-set, so they are handled
+# separately in `_check_condition_shape` -- this only covers the flat case.
+_REQUIRED_CONDITION_KEYS: dict[str, tuple[str, ...]] = {
+    "state": ("entity_id", "state"),
+    "numeric_state": ("entity_id", "default"),
+    "time": (),
+    "template": ("value_template",),
+    COND_REF: ("name",),
+    "and": ("conditions",),
+    "or": ("conditions",),
+    "not": ("conditions",),
+    COND_SUN_HITS_TARGET: (),
+    COND_EVENT_TARGETS_ZONE: (),
+}
+
+
+def _check_condition_shape(node: dict, where: str) -> list[Problem]:
+    """Check one condition dict's own shape (not its children -- the caller
+    walks those separately). Only unknown types and missing *required* keys
+    are reported; extra keys this dialect does not know about (`alias`,
+    `enabled`, whatever Home Assistant adds next) are deliberately ignored,
+    since condition bodies are native Home Assistant dicts this project does
+    not own the full schema of.
+    """
+    kind = node.get("condition")
+    if kind not in _REQUIRED_CONDITION_KEYS:
+        return [Problem(ERROR, "bad_condition_shape",
+                        f"{where}: unknown condition type {kind!r}")]
+
+    out: list[Problem] = []
+    missing = [key for key in _REQUIRED_CONDITION_KEYS[kind] if key not in node]
+    if missing:
+        out.append(Problem(ERROR, "bad_condition_shape",
+                           f"{where}: condition {kind!r} is missing required "
+                           f"key(s) {missing}"))
+    if kind == "numeric_state" and "above" not in node and "below" not in node:
+        out.append(Problem(ERROR, "bad_condition_shape",
+                           f"{where}: condition {kind!r} needs at least one "
+                           f"of 'above'/'below'"))
+    if kind == "time" and "after" not in node and "before" not in node:
+        out.append(Problem(ERROR, "bad_condition_shape",
+                           f"{where}: condition {kind!r} needs at least one "
+                           f"of 'after'/'before'"))
+    return out
+
+
+def _check_condition_shapes(config: Config) -> list[Problem]:
+    """Check every condition body's shape: known type, required keys present.
+
+    `config_schema._check_keys` deliberately exempts condition bodies from
+    strict key checking (they are native Home Assistant condition dicts, a
+    schema this project does not own), and `_check_unknown_condition_refs`
+    only checks ref *names*. Nothing else validates a condition body's shape
+    -- so an unknown `condition:` value or a missing required key currently
+    passes `validate()` clean and only surfaces as a bare `ValueError` or
+    `KeyError` deep inside `conditions.py` at evaluation time, far from the
+    config that caused it.
+    """
+    out: list[Problem] = []
+    for node, where in _condition_sites(config):
+        if node is None:
+            continue
+        for n in _walk_condition_nodes(node):
+            out += _check_condition_shape(n, where)
     return out

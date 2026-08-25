@@ -386,3 +386,117 @@ def test_unknown_ref_in_a_rule_if_is_an_error():
 
 def test_all_refs_resolved_does_not_trigger_unknown_condition_ref():
     assert "unknown_condition_ref" not in codes(BASE)
+
+
+# --- issue #3: condition body shape ------------------------------------------
+
+
+def test_unknown_condition_type_is_an_error():
+    text = BASE.replace(
+        'conditions:\n  vzdy: {condition: state, entity_id: x, state: "on"}',
+        "conditions:\n  vzdy: {condition: sate, entity_id: x, state: \"on\"}",
+    )
+    assert "bad_condition_shape" in codes(text)
+
+
+def test_numeric_state_missing_default_is_an_error():
+    text = BASE.replace(
+        'conditions:\n  vzdy: {condition: state, entity_id: x, state: "on"}',
+        "conditions:\n  vzdy: {condition: numeric_state, entity_id: sensor.t, above: 25}",
+    )
+    assert "bad_condition_shape" in codes(text)
+
+
+def test_state_missing_state_key_is_an_error():
+    text = BASE.replace(
+        'conditions:\n  vzdy: {condition: state, entity_id: x, state: "on"}',
+        "conditions:\n  vzdy: {condition: state, entity_id: input_boolean.x}",
+    )
+    assert "bad_condition_shape" in codes(text)
+
+
+def test_state_missing_entity_id_is_an_error():
+    text = BASE.replace(
+        'conditions:\n  vzdy: {condition: state, entity_id: x, state: "on"}',
+        'conditions:\n  vzdy: {condition: state, state: "on"}',
+    )
+    assert "bad_condition_shape" in codes(text)
+
+
+def test_numeric_state_missing_above_and_below_is_an_error():
+    text = BASE.replace(
+        'conditions:\n  vzdy: {condition: state, entity_id: x, state: "on"}',
+        "conditions:\n  vzdy: {condition: numeric_state, entity_id: sensor.t, default: 5}",
+    )
+    assert "bad_condition_shape" in codes(text)
+
+
+def test_time_missing_after_and_before_is_an_error():
+    text = BASE.replace(
+        'conditions:\n  vzdy: {condition: state, entity_id: x, state: "on"}',
+        "conditions:\n  vzdy: {condition: time}",
+    )
+    assert "bad_condition_shape" in codes(text)
+
+
+def test_template_missing_value_template_is_an_error():
+    text = BASE.replace(
+        'conditions:\n  vzdy: {condition: state, entity_id: x, state: "on"}',
+        "conditions:\n  vzdy: {condition: template}",
+    )
+    assert "bad_condition_shape" in codes(text)
+
+
+def test_and_missing_conditions_key_is_an_error():
+    text = BASE.replace(
+        'conditions:\n  vzdy: {condition: state, entity_id: x, state: "on"}',
+        "conditions:\n  vzdy: {condition: and}",
+    )
+    assert "bad_condition_shape" in codes(text)
+
+
+def test_ref_missing_name_is_an_error():
+    text = BASE.replace(
+        'conditions:\n  vzdy: {condition: state, entity_id: x, state: "on"}',
+        "conditions:\n  vzdy: {condition: state, entity_id: x, state: \"on\"}\n"
+        "  bad: {condition: ref}",
+    )
+    assert "bad_condition_shape" in codes(text)
+
+
+def test_sun_hits_target_and_event_targets_zone_have_no_required_keys():
+    text = BASE.replace(
+        'conditions:\n  vzdy: {condition: state, entity_id: x, state: "on"}',
+        "conditions:\n  vzdy: {condition: sun_hits_target}\n"
+        "  vzdy2: {condition: event_targets_zone}",
+    )
+    problems = validate(load_config(text))
+    assert not any(p.code == "bad_condition_shape" for p in problems)
+
+
+def test_a_valid_condition_body_reports_no_shape_problem():
+    assert "bad_condition_shape" not in codes(BASE)
+
+
+def test_extra_unknown_key_on_a_condition_body_is_not_reported():
+    """Condition bodies may carry keys this dialect ignores (`alias`,
+    `enabled`, whatever Home Assistant adds next) -- only unknown types and
+    missing required keys are errors.
+    """
+    text = BASE.replace(
+        'conditions:\n  vzdy: {condition: state, entity_id: x, state: "on"}',
+        'conditions:\n  vzdy: {condition: state, entity_id: x, state: "on", '
+        'alias: "my condition", enabled: true, some_future_key: 1}',
+    )
+    assert "bad_condition_shape" not in codes(text)
+
+
+def test_bad_condition_shape_message_names_the_offending_condition():
+    text = BASE.replace(
+        'conditions:\n  vzdy: {condition: state, entity_id: x, state: "on"}',
+        "conditions:\n  vzdy: {condition: sate, entity_id: x, state: \"on\"}",
+    )
+    problems = [p for p in validate(load_config(text)) if p.code == "bad_condition_shape"]
+    assert len(problems) == 1
+    assert "vzdy" in problems[0].message
+    assert "sate" in problems[0].message
