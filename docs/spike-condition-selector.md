@@ -137,6 +137,24 @@ Odôvodnenie:
 4. Frontend komponent (`ha-selector-condition`) reálne existuje v distribuovanom
    frontende.
 
+### Doplnené 2026-08-25 — časť medzery zatvorená behovo
+
+Do repozitára pribudol `.venv` s **Pythonom 3.14.7 a `homeassistant==2026.8.0`**, teda
+presne tou verziou, ktorá beží v dome. Proti nej sa overilo to, čo dovtedy stálo len na
+čítaní zdrojáku:
+
+```
+from homeassistant.helpers import selector
+'condition' in selector.SELECTORS              ->  True
+from homeassistant.config_entries import ConfigSubentryFlow   ->  OK
+```
+
+Selector je teda **naozaj registrovaný** v bežiacej verzii a `ConfigSubentryFlow` sa
+importuje. Verdikt A stojí. Zostáva neoverené správanie vo **frontende** — to je
+TypeScript mimo `home-assistant/core` a uzavrie to až fáza 4.
+
+Text nižšie je pôvodný zápis spiku, ponechaný pre kontext.
+
 **Čo verdikt NIE je:** nie je overenie „naživo v tejto inštalácii". Nikto v HA core
 ani medzi tunajšími custom_components zatiaľ nepoužil presne tento selector v presne
 tomto kontexte (subentry flow, mimo automatizácie), takže ide o odvodenie zo
