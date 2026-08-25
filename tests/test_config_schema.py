@@ -3,7 +3,12 @@ import re
 import pytest
 
 from cover_logic.conditions import evaluate_condition
-from cover_logic.config_schema import ConfigError, load_config, load_config_file
+from cover_logic.config_schema import (
+    ConfigError,
+    load_config,
+    load_config_file,
+    referenced_entities,
+)
 from cover_logic.model import KEEP, Action, Ref
 from cover_logic.world import World
 
@@ -356,3 +361,69 @@ def test_same_short_name_in_both_namespaces_resolves_independently():
     assert cfg.modes[0].when == {"condition": "ref", "name": "shared"}
     rule = cfg.rules["bezny_den.terasa"][1]
     assert rule.then.position == Ref(entity="input_number.shared_helper", default=7)
+
+
+# --- referenced_entities() (issue #8) ---------------------------------------
+
+REFERENCED_ENTITIES_CONFIG = """
+blinds:
+  - {entity: cover.a, facade_azimuth: 180}
+  - {entity: cover.b, facade_azimuth: 180}
+zones:
+  zone_one: {members: [cover.a]}
+  zone_two: {members: [cover.b]}
+modes:
+  - {id: noc, when: !ref cover_down}
+  - {id: den}
+conditions:
+  cover_down:
+    condition: state
+    entity_id: input_boolean.cover_down
+    state: "on"
+values:
+  kvety_poz:
+    entity: input_number.kvety_pozicia_zaluzie
+    default: 34
+rules:
+  noc.zone_one:
+    - {then: {position: keep}}
+  noc.zone_two:
+    - {then: {position: keep}}
+  den.zone_one:
+    - if: {condition: state, entity_id: binary_sensor.dvere, attribute: is_open, state: "on"}
+      then: {position: !ref kvety_poz}
+    - if: {condition: sun_hits_target, azimuth_entity: sensor.az_one}
+      then: {position: 0}
+    - then: {position: 100}
+  den.zone_two:
+    - if: {condition: sun_hits_target, azimuth_entity: sensor.az_two, azimuth_attribute: azimuth}
+      then: {position: 0}
+    - then: {position: 100}
+"""
+
+
+def test_referenced_entities_covers_state_attribute_sun_overrides_and_values():
+    """Covers, in one config: a plain state condition (named, reached through
+    `!ref` from a mode's `when`), an attribute condition written inline in a
+    rule's `if`, two `sun_hits_target` conditions with *different*
+    `azimuth_entity` overrides (one of them also using `azimuth_attribute`),
+    and a `values:` ref. `sun.sun` itself must appear too -- both
+    `sun_hits_target` nodes read it via the default `sun_entity`.
+    """
+    cfg = load_config(REFERENCED_ENTITIES_CONFIG)
+    assert referenced_entities(cfg) == {
+        "input_boolean.cover_down",
+        ("binary_sensor.dvere", "is_open"),
+        "sun.sun",
+        "sensor.az_one",
+        ("sensor.az_two", "azimuth"),
+        "input_number.kvety_pozicia_zaluzie",
+    }
+
+
+def test_referenced_entities_on_minimal_config_has_no_attribute_tuples():
+    cfg = load_config(MINIMAL)
+    assert referenced_entities(cfg) == {
+        "input_boolean.cover_down",
+        "input_number.kvety_pozicia_zaluzie",
+    }

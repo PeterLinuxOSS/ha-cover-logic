@@ -5,11 +5,14 @@ There is exactly one representation of the rules, so config and tests can never
 drift apart.
 """
 
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from .conditions import DEFAULT_AZIMUTH_ENTITY, SUN_ENTITY
+from .const import COND_SUN_HITS_TARGET
 from .model import KEEP, Action, Blind, Config, Mode, Ref, Rule, Value, Zone
 
 
@@ -296,3 +299,88 @@ def _parse_rule(item: Any, conditions: dict[str, Any], values: dict[str, Ref]) -
         events=None if events is None else frozenset(events),
         name=item.get("name", ""),
     )
+
+
+def walk_condition_nodes(node: Any) -> Iterator[dict]:
+    """Yield `node` and every condition nested under its `conditions` list.
+
+    Shared by `referenced_entities` below and by `tests/scenarios.py`'s
+    scenario derivation -- moved here (out of the test tree) so both walk the
+    same tree the same way and cannot drift apart. `node` may be `None` (no
+    condition), a single condition dict, or a list of condition dicts (the
+    top-level shape a mode's `when` or a rule's `if` can take before
+    `_parse_condition` wraps a bare list in `and`); yields nothing for `None`.
+    """
+    if isinstance(node, list):
+        for child in node:
+            yield from walk_condition_nodes(child)
+    elif isinstance(node, dict):
+        yield node
+        for child in node.get("conditions", []):
+            yield from walk_condition_nodes(child)
+
+
+def all_condition_nodes(config: Config) -> Iterator[dict]:
+    """Every condition node `config` can evaluate.
+
+    Not only the `conditions:` section: a condition written inline in a
+    mode's `when` or a rule's `if` is just as real, and the entities it reads
+    need to be subscribed to just the same. Reading only named conditions
+    works by accident in a config that routes everything through `!ref`, and
+    silently under-covers one that does not.
+    """
+    for cond in config.conditions.values():
+        yield from walk_condition_nodes(cond)
+    for mode in config.modes:
+        if mode.when is not None:
+            yield from walk_condition_nodes(mode.when)
+    for rules in config.rules.values():
+        for rule in rules:
+            if rule.when is not None:
+                yield from walk_condition_nodes(rule.when)
+
+
+def referenced_entities(config: Config) -> set[str | tuple[str, str]]:
+    """Every entity `config` reads, for subscribing a coordinator to exactly that set.
+
+    A plain `entity_id` string means a state read; an `(entity_id, attribute)`
+    tuple means an attribute read -- mirroring how `conditions.py` reads each
+    one (`World.state` vs. `World.attribute`/`World.number(..., attribute=)`).
+
+    Covers:
+    - every `state` / `numeric_state` condition reached by `all_condition_nodes`
+      (named, or written inline in a mode's `when` or a rule's `if`), honouring
+      an optional `attribute`;
+    - the `sun_entity` and `azimuth_entity` a `sun_hits_target` condition reads,
+      per-condition overrides included -- a config may use several different
+      overrides, and each gets its own entry, not just the last;
+    - `azimuth_attribute` (issue #5): when set, the azimuth entity is read as
+      an attribute, not a state, and is collected as a tuple accordingly;
+    - the helper entities behind `values:` refs, always a state read (see
+      `engine._resolve_value`, which calls `world.number(value.entity, ...)`
+      with no `attribute`).
+
+    A `template` condition's `value_template` is not parsed for entity
+    references -- Jinja templates are an intentional escape hatch (see
+    `conditions._template`) and are not enumerable the way the structured
+    condition dialect is.
+    """
+    out: set[str | tuple[str, str]] = set()
+
+    def add(entity: str, attribute: str | None = None) -> None:
+        out.add(entity if attribute is None else (entity, attribute))
+
+    for node in all_condition_nodes(config):
+        kind = node.get("condition")
+        if kind in ("state", "numeric_state"):
+            entity = node.get("entity_id")
+            if entity is not None:
+                add(entity, node.get("attribute"))
+        elif kind == COND_SUN_HITS_TARGET:
+            add(node.get("sun_entity", SUN_ENTITY))
+            add(node.get("azimuth_entity", DEFAULT_AZIMUTH_ENTITY), node.get("azimuth_attribute"))
+
+    for ref in config.values.values():
+        add(ref.entity)
+
+    return out

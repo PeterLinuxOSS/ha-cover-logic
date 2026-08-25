@@ -4,12 +4,12 @@ This is what makes the suite universal: add a condition in the new house and
 the scenarios that exercise it appear without anyone writing them.
 """
 
-from collections.abc import Iterator
 import datetime as dt
 import itertools
 from typing import Any
 
 from cover_logic.conditions import evaluate_condition
+from cover_logic.config_schema import all_condition_nodes
 from cover_logic.engine import evaluate
 from cover_logic.model import Config
 from cover_logic.world import Event, Target, World
@@ -37,36 +37,6 @@ def _axis_key(entity: str, attribute: str | None = None) -> str:
 def _split_axis_key(key: str) -> tuple[str, str | None]:
     entity, sep, attribute = key.partition(AXIS_SEP)
     return entity, (attribute if sep else None)
-
-
-def _walk(node: Any) -> Iterator[dict]:
-    if isinstance(node, list):
-        for child in node:
-            yield from _walk(child)
-    elif isinstance(node, dict):
-        yield node
-        for child in node.get("conditions", []):
-            yield from _walk(child)
-
-
-def _all_condition_nodes(config: Config) -> Iterator[dict]:
-    """Every condition node the configuration can evaluate.
-
-    Not only the `conditions:` section: a condition written inline in a mode's
-    `when` or a rule's `if` is just as real, and the entities it reads need
-    axes too. Reading only named conditions works by accident in a config that
-    routes everything through `!ref`, and silently under-covers one that does
-    not.
-    """
-    for cond in config.conditions.values():
-        yield from _walk(cond)
-    for mode in config.modes:
-        if mode.when is not None:
-            yield from _walk(mode.when)
-    for rules in config.rules.values():
-        for rule in rules:
-            if rule.when is not None:
-                yield from _walk(rule.when)
 
 
 def _azimuth_axis_key(node: dict) -> str:
@@ -105,7 +75,7 @@ def _sun_entity_pairs(config: Config) -> set[tuple[str, str]]:
     that has nothing to do with reachability.
     """
     pairs: set[tuple[str, str]] = set()
-    for node in _all_condition_nodes(config):
+    for node in all_condition_nodes(config):
         if node.get("condition") == "sun_hits_target":
             pairs.add((node.get("sun_entity", SUN_ENTITY), _azimuth_axis_key(node)))
     return pairs
@@ -121,7 +91,7 @@ def _condition_tolerances(config: Config) -> set[float]:
     exactly the one a rule-level override moves away from the blind default.
     """
     tolerances: set[float] = set()
-    for node in _all_condition_nodes(config):
+    for node in all_condition_nodes(config):
         if node.get("condition") == "sun_hits_target" and "tolerance" in node:
             tolerances.add(float(node["tolerance"]))
     return tolerances
@@ -182,7 +152,7 @@ def derive_axes(config: Config) -> dict[str, list]:
     def add(key: str, values) -> None:
         axes.setdefault(key, set()).update(values)
 
-    for node in _all_condition_nodes(config):
+    for node in all_condition_nodes(config):
         kind = node.get("condition")
         entity = node.get("entity_id")
         if not entity:
