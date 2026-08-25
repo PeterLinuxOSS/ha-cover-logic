@@ -175,9 +175,9 @@ def _template_globals(world: World) -> dict[str, Any]:
 
     return {
         "is_state": is_state,
-        "states": states,
-        "state_attr": state_attr,
         "now": lambda: world.now,
+        "state_attr": state_attr,
+        "states": states,
         "today_at": today_at,
     }
 

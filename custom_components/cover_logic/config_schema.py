@@ -20,20 +20,22 @@ class ConfigError(Exception):
 # Key sets for the structures this file owns. Condition bodies (native HA
 # condition dicts) and `guards` (schema not settled yet) are deliberately
 # excluded from strict checking -- see the scoping note on `_check_keys`.
-_TOP_LEVEL_KEYS = {"blinds", "zones", "modes", "conditions", "values", "rules", "guards"}
+# Constants and set contents below are alphabetised; membership testing
+# (`set(mapping) - allowed`) never depends on order.
+_ACTION_KEYS = {"position", "tilt"}
 _BLIND_KEYS = {
     "entity",
     "facade_azimuth",
+    "has_tilt",
+    "tilt_after_arrival",
     "tolerance",
     "travel_time",
-    "tilt_after_arrival",
-    "has_tilt",
 }
-_ZONE_KEYS = {"members", "occupants"}
 _MODE_KEYS = {"id", "when"}
-_RULE_KEYS = {"if", "then", "events", "name"}
-_VALUE_KEYS = {"entity", "default"}
-_ACTION_KEYS = {"position", "tilt"}
+_RULE_KEYS = {"events", "if", "name", "then"}
+_TOP_LEVEL_KEYS = {"blinds", "conditions", "guards", "modes", "rules", "values", "zones"}
+_VALUE_KEYS = {"default", "entity"}
+_ZONE_KEYS = {"members", "occupants"}
 
 # A cover's position and tilt are both percentages.
 _AXIS_MAX = 100

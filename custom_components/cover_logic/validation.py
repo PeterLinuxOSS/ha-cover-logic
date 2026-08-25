@@ -301,17 +301,20 @@ def _check_unknown_condition_refs(config: Config) -> list[Problem]:
 # `sun_hits_target`/`event_targets_zone` need extra "at least one of" or
 # "none required" handling beyond a flat required-set, so they are handled
 # separately in `_check_condition_shape` -- this only covers the flat case.
+# Entries and each tuple's contents are alphabetised by condition/key name;
+# lookup is always by key (`_REQUIRED_CONDITION_KEYS[kind]`), never by
+# position or iteration order.
 _REQUIRED_CONDITION_KEYS: dict[str, tuple[str, ...]] = {
-    "state": ("entity_id", "state"),
-    "numeric_state": ("entity_id", "default"),
-    "time": (),
-    "template": ("value_template",),
-    COND_REF: ("name",),
     "and": ("conditions",),
-    "or": ("conditions",),
-    "not": ("conditions",),
-    COND_SUN_HITS_TARGET: (),
     COND_EVENT_TARGETS_ZONE: (),
+    "not": ("conditions",),
+    "numeric_state": ("default", "entity_id"),
+    "or": ("conditions",),
+    COND_REF: ("name",),
+    "state": ("entity_id", "state"),
+    COND_SUN_HITS_TARGET: (),
+    "template": ("value_template",),
+    "time": (),
 }
 
 
