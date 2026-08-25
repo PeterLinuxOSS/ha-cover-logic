@@ -225,6 +225,20 @@ def test_position_integral_float_is_accepted():
     assert cfg.rules["bezny_den.terasa"][0].then.position == 50
 
 
+def test_out_of_range_value_default_raises_config_error():
+    """A `default` is a config-time constant exactly like a literal axis, so
+    it must be range-checked identically -- an out-of-range fallback must not
+    validate clean just because it is reached through `!ref` instead of
+    written directly as `position: 250`.
+    """
+    bad = MINIMAL.replace(
+        "entity: input_number.kvety_pozicia_zaluzie\n    default: 34",
+        "entity: input_number.kvety_pozicia_zaluzie\n    default: 250",
+    )
+    with pytest.raises(ConfigError, match="kvety_poz"):
+        load_config(bad)
+
+
 # --- Fix 3 (continued): shape checks around the strict key checking --------
 
 def test_unknown_key_inside_zone_entry_raises_config_error():
@@ -300,6 +314,24 @@ def test_condition_only_name_referenced_from_an_action_axis_raises_config_error(
         "position: !ref kvety_poz", "position: !ref cover_down"
     )
     with pytest.raises(ConfigError, match="cover_down"):
+        load_config(bad)
+
+
+# --- A '.' in a mode or zone id would misroute rules ------------------
+
+def test_zone_id_containing_dot_raises_config_error():
+    """`engine` builds rule keys as f"{mode}.{zone}"; a dot inside the zone id
+    itself makes that join ambiguous with a differently-split (mode, zone)
+    pair that happens to produce the same string. Reject it at parse time.
+    """
+    bad = MINIMAL.replace("terasa:\n    members: [cover.a]", "b.c:\n    members: [cover.a]")
+    with pytest.raises(ConfigError, match=r"b\.c"):
+        load_config(bad)
+
+
+def test_mode_id_containing_dot_raises_config_error():
+    bad = MINIMAL.replace("{id: noc, when: !ref cover_down}", "{id: a.b, when: !ref cover_down}")
+    with pytest.raises(ConfigError, match=r"a\.b"):
         load_config(bad)
 
 

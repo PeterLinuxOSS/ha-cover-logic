@@ -27,7 +27,10 @@ class Decision:
 
 def evaluate(config: Config, world: World) -> Decision:
     mode = _resolve_mode(config, world)
-    owner = _resolve_ownership(config)
+    # The call must stay -- it raises on a duplicate or orphaned blind -- but
+    # the ownership map itself is never read here; `_apply_rules` below
+    # resolves each blind's rules straight from `config.rules`.
+    _resolve_ownership(config)
 
     targets: dict[str, Action] = {}
     trace: dict[str, str] = {}
