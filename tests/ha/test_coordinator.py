@@ -136,11 +136,49 @@ def test_evaluation_error_keeps_previous_decision_and_is_recorded(
                 await asyncio.sleep(_WAIT)
 
             assert coordinator.decision is previous
-            assert coordinator.last_error == "boom"
+            assert coordinator.last_error == "EngineError: boom"
             assert any(
                 record.levelname == "ERROR" and record.exc_info is not None
                 for record in caplog.records
             )
+
+            await coordinator.async_unload()
+        finally:
+            await hass.async_stop(force=True)
+
+    asyncio.run(_run())
+
+
+def test_non_engine_error_is_also_caught_and_recorded(config, hass_factory, monkeypatch, caplog):
+    """The realistic failures are not `EngineError`.
+
+    A typo'd condition type raises `ValueError` from the evaluator, and a broken
+    user template raises out of Jinja on purpose. Catching only `EngineError`
+    would let those escape into the debouncer's callback: `last_error` would
+    stay unset and the sensor would keep showing a stale answer with nothing
+    indicating a problem.
+    """
+
+    async def _run():
+        hass = hass_factory()
+        try:
+            coordinator = CoverLogicCoordinator(hass, config)
+            await coordinator.async_setup()
+            previous = coordinator.decision
+            assert previous is not None
+
+            def _raise(_config, _world):
+                msg = "unknown condition type: 'sate'"
+                raise ValueError(msg)
+
+            monkeypatch.setattr(coordinator_module, "evaluate", _raise)
+
+            with caplog.at_level("ERROR", logger="cover_logic.coordinator"):
+                hass.states.async_set("input_boolean.a", "on")
+                await asyncio.sleep(_WAIT)
+
+            assert coordinator.decision is previous
+            assert coordinator.last_error == "ValueError: unknown condition type: 'sate'"
 
             await coordinator.async_unload()
         finally:

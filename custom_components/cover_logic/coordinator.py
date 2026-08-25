@@ -27,7 +27,7 @@ from homeassistant.helpers.event import EventStateChangedData, async_track_state
 import homeassistant.util.dt as dt_util
 
 from .config_schema import referenced_entities
-from .engine import Decision, EngineError, evaluate
+from .engine import Decision, evaluate
 from .ha_world import build_world
 from .model import Config
 
@@ -128,21 +128,28 @@ class CoverLogicCoordinator:
     async def _async_evaluate(self) -> None:
         """Snapshot the world once and evaluate it, keeping `decision` on error.
 
-        `EngineError` -- a configuration invariant broken at evaluation time
-        (a blind in two zones, a blind in no zone, no mode matched) -- is
-        caught, logged with its traceback, and recorded in `last_error`
-        rather than propagated: a transient bad state (e.g. mid-reload, a
-        helper briefly missing) must not blank a diagnostic sensor that was
-        showing a perfectly good answer a moment ago. The failure is still
-        visible -- in the log, and in `last_error` for a later sensor to
-        surface -- never swallowed silently.
+        Any evaluation failure is caught, logged with its traceback, and
+        recorded in `last_error` rather than propagated: a transient bad state
+        (e.g. mid-reload, a helper briefly missing) must not blank a diagnostic
+        sensor that was showing a perfectly good answer a moment ago. The
+        failure stays visible -- in the log, and in `last_error` for a sensor to
+        surface -- and is never swallowed silently.
+
+        The catch is deliberately broad, not limited to `EngineError`. The
+        failures this will actually meet in a house are not configuration
+        invariants: a typo'd condition type raises `ValueError`, and a broken
+        user template raises out of Jinja by design, because evaluating it as
+        False could mean leaving the house open during a heatwave. Catching only
+        `EngineError` would let those escape into the debouncer's callback,
+        where `last_error` is never set and the sensor keeps showing a stale
+        answer with no sign that anything is wrong.
         """
         world = build_world(self.hass, self.config)
         try:
             decision = evaluate(self.config, world)
-        except EngineError as err:
+        except Exception as err:
             _LOGGER.exception("cover_logic: evaluation failed, keeping previous decision")
-            self.last_error = str(err)
+            self.last_error = f"{type(err).__name__}: {err}"
             return
 
         self.decision = decision
