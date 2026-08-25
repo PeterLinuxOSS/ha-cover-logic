@@ -25,11 +25,11 @@ from homeassistant.helpers.entity import EntityCategory
 
 from cover_logic.engine import Decision
 from cover_logic.model import KEEP, Action
-import cover_logic.sensor as sensor_module
 from cover_logic.sensor import (
     LEGACY_MATRIX_ENTITY,
     LEGACY_TEPLOTNA_OCHRANA_ENTITY,
     CoverLogicModeSensor,
+    async_setup_entry,
 )
 
 
@@ -274,7 +274,7 @@ def test_async_setup_entry_adds_one_sensor_bound_to_the_coordinator():
     entry = SimpleNamespace(runtime_data=runtime_data, entry_id="entry1")
     added = []
 
-    asyncio.run(sensor_module.async_setup_entry(None, entry, added.extend))
+    asyncio.run(async_setup_entry(None, entry, added.extend))
 
     assert len(added) == 1
     (added_sensor,) = added

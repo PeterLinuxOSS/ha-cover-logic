@@ -18,8 +18,11 @@ pytest.importorskip("homeassistant")
 
 from homeassistant.core import EVENT_STATE_CHANGED
 
-import cover_logic.coordinator as coordinator_module
-from cover_logic.coordinator import DEBOUNCE_COOLDOWN, CoverLogicCoordinator
+from cover_logic.coordinator import (
+    DEBOUNCE_COOLDOWN,
+    CoverLogicCoordinator,
+    evaluate as real_evaluate,
+)
 from cover_logic.engine import EngineError
 
 # Comfortably more than one debounce window: enough for a pending call to
@@ -31,13 +34,13 @@ _WAIT = DEBOUNCE_COOLDOWN + 0.2
 def _counting_evaluate(monkeypatch):
     """Wrap `coordinator.evaluate` to record every call while still running the real engine."""
     calls = []
-    original = coordinator_module.evaluate
+    original = real_evaluate
 
     def _wrapped(config, world):
         calls.append(world)
         return original(config, world)
 
-    monkeypatch.setattr(coordinator_module, "evaluate", _wrapped)
+    monkeypatch.setattr("cover_logic.coordinator.evaluate", _wrapped)
     return calls
 
 
@@ -129,7 +132,7 @@ def test_evaluation_error_keeps_previous_decision_and_is_recorded(
                 msg = "boom"
                 raise EngineError(msg)
 
-            monkeypatch.setattr(coordinator_module, "evaluate", _raise)
+            monkeypatch.setattr("cover_logic.coordinator.evaluate", _raise)
 
             with caplog.at_level("ERROR", logger="cover_logic.coordinator"):
                 hass.states.async_set("input_boolean.a", "on")
@@ -171,7 +174,7 @@ def test_non_engine_error_is_also_caught_and_recorded(config, hass_factory, monk
                 msg = "unknown condition type: 'sate'"
                 raise ValueError(msg)
 
-            monkeypatch.setattr(coordinator_module, "evaluate", _raise)
+            monkeypatch.setattr("cover_logic.coordinator.evaluate", _raise)
 
             with caplog.at_level("ERROR", logger="cover_logic.coordinator"):
                 hass.states.async_set("input_boolean.a", "on")
