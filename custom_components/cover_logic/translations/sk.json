@@ -1,0 +1,19 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Cover Logic",
+        "description": "Zadajte cestu k YAML súboru s definíciou žalúzií, zón a pravidiel. Súbor sa hneď načíta a skontroluje.",
+        "data": {
+          "config_path": "Cesta ku konfiguračnému súboru"
+        }
+      }
+    },
+    "error": {
+      "invalid_config": "Tento súbor sa nedá použiť: {error_detail}"
+    },
+    "abort": {
+      "already_configured": "Cover Logic je už nastavený, podporovaná je len jedna inštancia."
+    }
+  }
+}

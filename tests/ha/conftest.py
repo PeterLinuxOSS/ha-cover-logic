@@ -109,3 +109,60 @@ class FakeConfigEntry:
 def make_entry():
     """Factory: `make_entry({"config_path": "..."})` -> a `FakeConfigEntry`."""
     return FakeConfigEntry
+
+
+class FakeFlowManager:
+    """Stands in for `hass.config_entries.flow`: only what base `ConfigFlow` methods touch."""
+
+    def async_progress_by_handler(
+        self, handler, *, include_uninitialized=False, match_context=None
+    ):
+        """No other flow is ever in progress in these tests."""
+        return []
+
+
+class FakeConfigEntries:
+    """Stands in for `hass.config_entries`, as seen from inside a config flow step.
+
+    `ConfigFlow.async_set_unique_id`/`_abort_if_unique_id_configured` are the
+    only base-class methods `CoverLogicConfigFlow` calls (see
+    `test_config_flow.py`'s module docstring for why a real `ConfigEntries`
+    manager -- storage, the loader, the full flow manager -- is not built
+    here instead). Between them they touch exactly
+    `.flow.async_progress_by_handler(...)` and
+    `.async_entry_for_domain_unique_id(...)`; this fake covers precisely
+    that surface.
+    """
+
+    def __init__(self, existing_entry=None):
+        """`existing_entry`, if given, is what `async_entry_for_domain_unique_id` returns."""
+        self.flow = FakeFlowManager()
+        self._existing_entry = existing_entry
+
+    def async_entry_for_domain_unique_id(self, domain, unique_id):
+        """Return the pre-seeded entry, standing in for 'a second instance already exists'."""
+        return self._existing_entry
+
+
+class FakeExistingEntry:
+    """The one attribute `_abort_if_unique_id_configured` reads off a found entry."""
+
+    source = "user"
+
+
+class FakeFlowHass:
+    """Stands in for `hass` as seen by a `ConfigFlow` step: only `.config_entries`."""
+
+    def __init__(self, existing_entry=None):
+        """Wrap a `FakeConfigEntries` seeded with `existing_entry` (or none)."""
+        self.config_entries = FakeConfigEntries(existing_entry)
+
+
+@pytest.fixture
+def flow_hass():
+    """Factory: `flow_hass()` for a fresh flow, `flow_hass(existing=True)` for a second instance."""
+
+    def _make(*, existing=False):
+        return FakeFlowHass(FakeExistingEntry() if existing else None)
+
+    return _make

@@ -1,0 +1,19 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Cover Logic",
+        "description": "Point Cover Logic at the YAML file describing your blinds, zones and rules. It is loaded and checked right away.",
+        "data": {
+          "config_path": "Configuration file path"
+        }
+      }
+    },
+    "error": {
+      "invalid_config": "This file could not be used: {error_detail}"
+    },
+    "abort": {
+      "already_configured": "Cover Logic is already set up; only one instance is supported."
+    }
+  }
+}
