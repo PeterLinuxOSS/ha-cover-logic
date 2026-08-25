@@ -36,3 +36,9 @@ jobs:
       - run: pipx install ruff
       - run: ruff check .
       - run: ruff format --check .
+
+  hassfest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: home-assistant/actions/hassfest@master
