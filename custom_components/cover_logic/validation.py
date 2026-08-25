@@ -7,8 +7,8 @@ anything. Runs in the test suite and again on import in the UI.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Iterator
 
 from .const import COND_REF
 from .model import Config
@@ -45,8 +45,10 @@ def _check_ownership(config: Config) -> list[Problem]:
                 out.append(Problem(ERROR, "zone_member_unknown",
                                    f"zone {zone_id!r} refers to unknown blind {entity!r}"))
             if entity in owner:
-                out.append(Problem(ERROR, "blind_in_two_zones",
-                                   f"blind {entity!r} is owned by {owner[entity]!r} and {zone_id!r}"))
+                out.append(Problem(
+                    ERROR, "blind_in_two_zones",
+                    f"blind {entity!r} is owned by {owner[entity]!r} and {zone_id!r}",
+                ))
             else:
                 owner[entity] = zone_id
 
@@ -141,8 +143,11 @@ def _check_circular_condition_refs(config: Config) -> list[Problem]:
                 # `cycle` is already in real traversal order (the order the
                 # DFS actually followed the references) -- report it as-is,
                 # not re-sorted, so the message names an edge that exists.
-                out.append(Problem(ERROR, "circular_condition_ref",
-                                   f"circular condition reference: {' -> '.join(cycle)} -> {cycle[0]}"))
+                loop = f"{' -> '.join(cycle)} -> {cycle[0]}"
+                out.append(Problem(
+                    ERROR, "circular_condition_ref",
+                    f"circular condition reference: {loop}",
+                ))
 
     return out
 

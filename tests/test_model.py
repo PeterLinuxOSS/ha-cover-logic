@@ -4,7 +4,6 @@ import copy
 import pickle
 
 import pytest
-
 from cover_logic.model import KEEP, Action, Blind, Config, Keep, Mode, Ref, Rule, Zone
 
 

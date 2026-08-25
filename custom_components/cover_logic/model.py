@@ -8,7 +8,6 @@ named constants into a single shape.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Union
 
 
 class Keep:
@@ -18,9 +17,9 @@ class Keep:
     built independently still holds.
     """
 
-    _instance: "Keep | None" = None
+    _instance: Keep | None = None
 
-    def __new__(cls) -> "Keep":
+    def __new__(cls) -> Keep:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
@@ -47,7 +46,7 @@ class Ref:
     default: int
 
 
-Value = Union[int, Keep, Ref]
+Value = int | Keep | Ref
 
 
 @dataclass(frozen=True, slots=True)

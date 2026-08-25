@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import datetime as dt
 
+import jinja2
 import pytest
-
 from cover_logic.conditions import evaluate_condition
 from cover_logic.model import Blind, Zone
 from cover_logic.world import Event, Target, World
@@ -221,7 +221,7 @@ def test_template_with_undefined_variable_propagates_instead_of_swallowing():
     # try/except: a future change that swallows the error should make this
     # test fail.
     cond = {"condition": "template", "value_template": "{{ this_is_undefined }}"}
-    with pytest.raises(Exception):
+    with pytest.raises(jinja2.UndefinedError):
         evaluate_condition(cond, world())
 
 

@@ -64,7 +64,11 @@ def test_rule_key_for_an_unknown_zone_is_an_error():
 
 
 def test_missing_rule_list_is_a_warning():
-    text = BASE.replace("  den.z:\n    - {if: !ref vzdy, then: {position: 100}}\n    - {then: {position: 0}}", "  {}")
+    text = BASE.replace(
+        "  den.z:\n    - {if: !ref vzdy, then: {position: 100}}\n"
+        "    - {then: {position: 0}}",
+        "  {}",
+    )
     problems = validate(load_config(text))
     assert any(p.code == "missing_rule_list" and p.severity == "warning" for p in problems)
 
@@ -111,7 +115,8 @@ def test_two_condition_cycle_is_an_error():
     """Condition A refers to B, B refers to A."""
     text = BASE.replace(
         "conditions:\n  vzdy: {condition: state, entity_id: x, state: \"on\"}",
-        "conditions:\n  vzdy: {condition: ref, name: niekedy}\n  niekedy: {condition: ref, name: vzdy}",
+        "conditions:\n  vzdy: {condition: ref, name: niekedy}\n"
+        "  niekedy: {condition: ref, name: vzdy}",
     )
     assert "circular_condition_ref" in codes(text)
 
@@ -164,7 +169,8 @@ def test_unused_cyclic_condition_is_still_an_error():
     """Even if a cyclic condition is not referenced in rules, it's still an error."""
     text = BASE.replace(
         "conditions:\n  vzdy: {condition: state, entity_id: x, state: \"on\"}",
-        "conditions:\n  vzdy: {condition: state, entity_id: x, state: \"on\"}\n  bad: {condition: ref, name: bad}",
+        'conditions:\n  vzdy: {condition: state, entity_id: x, state: "on"}\n'
+        "  bad: {condition: ref, name: bad}",
     )
     assert "circular_condition_ref" in codes(text)
 

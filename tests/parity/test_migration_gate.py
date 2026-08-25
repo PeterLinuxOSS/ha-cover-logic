@@ -8,7 +8,6 @@ the arrival variant. Nothing gets switched over in the house until this is green
 from __future__ import annotations
 
 import pytest
-
 from cover_logic.config_schema import load_config_file
 from cover_logic.engine import evaluate
 from cover_logic.world import Event

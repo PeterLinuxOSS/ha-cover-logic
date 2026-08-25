@@ -5,13 +5,12 @@ from __future__ import annotations
 import datetime as dt
 
 import pytest
-from hypothesis import given, settings
-from hypothesis import strategies as st
-
 from cover_logic.config_schema import load_config_file
 from cover_logic.engine import evaluate
 from cover_logic.model import KEEP
 from cover_logic.world import Event, World
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 NOW = dt.datetime(2026, 8, 19, 13, 0)
 

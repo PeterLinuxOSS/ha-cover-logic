@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import datetime as dt
 import itertools
-from typing import Any, Iterator
+from collections.abc import Iterator
+from typing import Any
 
 from cover_logic.conditions import evaluate_condition
 from cover_logic.model import Config
@@ -356,7 +357,8 @@ def _require(
         raise _Infeasible(f"no child of {kind!r} could be resolved: {errors}")
 
     if kind == "time":
-        actual = evaluate_condition(cond, World(states={}, attributes={}, now=NOW, event=Event()), None, registry)
+        empty = World(states={}, attributes={}, now=NOW, event=Event())
+        actual = evaluate_condition(cond, empty, None, registry)
         if actual != want_true:
             raise _Infeasible(f"time condition is fixed by NOW, cannot be made {want_true}")
         return
