@@ -16,18 +16,11 @@ ever imported by Home Assistant's platform loader, or -- behind
 by anything the system-Python 3.12 pure test run touches (see
 `coordinator.py`'s own docstring for the full reasoning).
 
-Deliberately built on the generic `homeassistant.helpers.entity.Entity`
-rather than `homeassistant.components.sensor.SensorEntity`: importing
-`homeassistant.components.sensor` pulls in that component's websocket API,
-which pulls in `homeassistant.components.http`, which -- with the versions
-pinned for this project's dev venv -- raises a `DeprecationWarning` at import
-time (`aiohttp`'s "inheriting from `web.Application` is discouraged") that
-`pyproject.toml`'s `filterwarnings = ["error"]` turns into a hard failure
-merely by importing this module, before any test in it even runs. `Entity`
-gives every attribute this sensor needs (`state`, `extra_state_attributes`,
-`unique_id`, `entity_category`, `available`, `has_entity_name`) without that
-chain; nothing here is sensor-domain-specific enough to need `SensorEntity`
-itself (no unit of measurement, device class, or state class).
+Built on `SensorEntity`, as a sensor platform should be. Importing it pulls in
+`homeassistant.components.http`, which raises an `aiohttp` `DeprecationWarning`
+at import time; `pyproject.toml` silences that one warning specifically rather
+than letting a third-party deprecation we cannot fix decide which base class
+production code uses.
 """
 
 from collections.abc import Callable
@@ -35,8 +28,9 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
+from homeassistant.components.sensor import SensorEntity
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity import Entity, EntityCategory
+from homeassistant.helpers.entity import EntityCategory
 
 from .legacy import expected_actions
 from .model import KEEP, Action
@@ -78,7 +72,7 @@ def _serialize_action(action: Action) -> dict[str, Any]:
     return {"position": _serialize_value(action.position), "tilt": _serialize_value(action.tilt)}
 
 
-class CoverLogicModeSensor(Entity):
+class CoverLogicModeSensor(SensorEntity):
     """`sensor.cover_logic_mode`.
 
     The active mode, why every blind got its target, and how that compares
@@ -122,7 +116,7 @@ class CoverLogicModeSensor(Entity):
         return self._coordinator.decision is not None
 
     @property
-    def state(self) -> str | None:
+    def native_value(self) -> str | None:
         """The active mode, or `None` before the first evaluation completes."""
         decision = self._coordinator.decision
         return decision.mode if decision is not None else None

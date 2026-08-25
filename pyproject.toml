@@ -30,7 +30,16 @@ packages = []
 testpaths = ["tests"]
 pythonpath = ["custom_components", "tests"]
 addopts = "-q"
-filterwarnings = ["error"]
+filterwarnings = [
+    "error",
+    # aiohttp deprecation raised from inside `homeassistant.components.http`,
+    # which `homeassistant.components.sensor` pulls in transitively. It is not
+    # our code and we cannot fix it. Without this, importing `SensorEntity`
+    # fails collection -- and a warning we have no control over would end up
+    # dictating which base class the production sensor uses, which is the wrong
+    # way round.
+    "ignore:Inheritance class HomeAssistantApplication from web.Application is discouraged:DeprecationWarning",
+]
 markers = [
     "slow: full-space runs; the default run DOES include this marker -- it exists only so it can be opted out explicitly with `-m \"not slow\"`. `addopts` has no such flag on purpose: the migration gate this marks is the project's central guarantee and is meant to run every time.",
 ]
