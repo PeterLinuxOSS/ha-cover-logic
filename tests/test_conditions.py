@@ -195,6 +195,45 @@ def test_sun_sector_wraps_around_north():
     assert evaluate_condition({"condition": "sun_hits_target"}, w, target(azimuth=0.0)) is True
 
 
+def test_sun_hits_target_reads_the_azimuth_from_an_attribute():
+    """In stock Home Assistant the azimuth lives on `sun.sun` as an
+    attribute -- `sensor.sun_solar_azimuth` is disabled by default, so a new
+    installation has no working path without `azimuth_attribute`.
+    """
+    w = world(
+        states={"sun.sun": "above_horizon"},
+        attributes={("sun.sun", "azimuth"): 90.0},
+    )
+    cond = {
+        "condition": "sun_hits_target",
+        "azimuth_entity": "sun.sun",
+        "azimuth_attribute": "azimuth",
+    }
+    assert evaluate_condition(cond, w, target(azimuth=90.0)) is True
+
+
+def test_sun_hits_target_attribute_path_respects_the_sector_too():
+    w = world(
+        states={"sun.sun": "above_horizon"},
+        attributes={("sun.sun", "azimuth"): 200.0},
+    )
+    cond = {
+        "condition": "sun_hits_target",
+        "azimuth_entity": "sun.sun",
+        "azimuth_attribute": "azimuth",
+    }
+    assert evaluate_condition(cond, w, target(azimuth=90.0)) is False
+
+
+def test_sun_hits_target_state_based_path_still_works_when_azimuth_attribute_is_absent():
+    """The existing plain-state azimuth path (a separate `azimuth_entity`
+    with no `attribute:`) must be unchanged by adding attribute support.
+    """
+    w = world({"sun.sun": "above_horizon", "sensor.sun_solar_azimuth": "90"})
+    cond = {"condition": "sun_hits_target"}
+    assert evaluate_condition(cond, w, target(azimuth=90.0)) is True
+
+
 def test_event_targets_zone():
     w = world(event=Event(kind="arrival", person="peter"))
     assert evaluate_condition({"condition": "event_targets_zone"}, w,

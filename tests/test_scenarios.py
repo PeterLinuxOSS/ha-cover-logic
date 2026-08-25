@@ -170,3 +170,85 @@ def test_two_tolerance_rule_list_has_no_dead_rule_end_to_end():
         if f"{key}#{index}" not in fired
     ]
     assert not dead
+
+
+AZIMUTH_ATTRIBUTE = """
+blinds:
+  - {entity: cover.a, facade_azimuth: 180}
+zones:
+  zone_one: {members: [cover.a]}
+modes:
+  - {id: den}
+conditions: {}
+values: {}
+rules:
+  den.zone_one:
+    - {if: {condition: sun_hits_target, azimuth_entity: sun.sun, azimuth_attribute: azimuth},
+       then: {position: 0}}
+    - {then: {position: 100}}
+"""
+
+
+def test_azimuth_attribute_condition_gets_an_axis():
+    """`_sun_entity_pairs` used to assume the azimuth was always a plain
+    state; a config reading it off `sun.sun`'s `azimuth` attribute must get
+    its own attribute-keyed axis, exactly like any other attribute
+    condition, not be silently dropped.
+    """
+    config = load_config(AZIMUTH_ATTRIBUTE)
+    axes = derive_axes(config)
+    assert "sun.sun|azimuth" in axes
+    assert "sun.sun" in axes
+
+
+TWO_TOLERANCE_RULE_LIST_AZIMUTH_ATTRIBUTE = """
+blinds:
+  - {entity: cover.a, facade_azimuth: 180}
+zones:
+  zone_one: {members: [cover.a]}
+modes:
+  - {id: den}
+conditions: {}
+values: {}
+rules:
+  den.zone_one:
+    - {if: {condition: sun_hits_target, azimuth_entity: sun.sun, azimuth_attribute: azimuth,
+             tolerance: 10}, then: {position: 10}}
+    - {if: {condition: sun_hits_target, azimuth_entity: sun.sun, azimuth_attribute: azimuth,
+             tolerance: 45}, then: {position: 45}}
+    - {then: {position: 0}}
+"""
+
+
+def test_azimuth_attribute_rule_gets_a_structural_witness_in_a_deep_chain():
+    """The same deep-chain reachability `rule_witnesses` proves for the
+    state-based path (`test_second_of_two_tolerance_rules_gets_a_structural_
+    witness`) must also hold when the azimuth is read off an attribute --
+    `_require`'s `sun_hits_target` branch used to build its probe worlds by
+    writing the azimuth into `states`, unconditionally, which silently
+    never satisfies an `azimuth_attribute` condition and would report a
+    reachable rule as dead the moment pairwise coverage alone is not enough.
+    """
+    config = load_config(TWO_TOLERANCE_RULE_LIST_AZIMUTH_ATTRIBUTE)
+    axes = derive_axes(config)
+    witnesses = rule_witnesses(config, axes)
+    fired = fired_rules(config, witnesses)
+    assert "den.zone_one#1" in fired
+
+
+def test_azimuth_attribute_rule_is_not_reported_dead():
+    """Verify end-to-end, the same way `test_every_rule_fires_at_least_once`
+    does: a config using `azimuth_attribute` must not have its sun rule
+    reported dead just because the harness never varied the attribute it
+    actually reads.
+    """
+    config = load_config(AZIMUTH_ATTRIBUTE)
+    all_worlds = worlds(config)
+    fired = fired_rules(config, all_worlds)
+    dead = [
+        f"{key}#{index}"
+        for key, rules in config.rules.items()
+        for index in range(len(rules))
+        if f"{key}#{index}" not in fired
+    ]
+    assert not dead

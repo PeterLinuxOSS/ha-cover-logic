@@ -70,9 +70,23 @@ def _all_condition_nodes(config: Config) -> Iterator[dict]:
                 yield from _walk(rule.when)
 
 
+def _azimuth_axis_key(node: dict) -> str:
+    """The axis key `sun_hits_target` node `node` reads its azimuth from.
+
+    Plain state (the historical, still-default path) keys on the entity
+    alone; `azimuth_attribute` (issue #5 -- stock Home Assistant carries the
+    azimuth as an attribute of `sun.sun`, not a standalone entity) keys on
+    `entity|attribute`, exactly like any other attribute condition's axis.
+    """
+    return _axis_key(
+        node.get("azimuth_entity", DEFAULT_AZIMUTH_ENTITY),
+        node.get("azimuth_attribute"),
+    )
+
+
 def _sun_entity_pairs(config: Config) -> set[tuple[str, str]]:
-    """Every (sun_entity, azimuth_entity) pair `sun_hits_target` reads in THIS
-    configuration.
+    """Every (sun_entity, azimuth_axis_key) pair `sun_hits_target` reads in
+    THIS configuration.
 
     The condition accepts `sun_entity` and `azimuth_entity` overrides, and
     different zones may each point at their own azimuth sensor. Collapsing
@@ -84,14 +98,17 @@ def _sun_entity_pairs(config: Config) -> set[tuple[str, str]]:
     every rule that relies on the default. Returning the full set of pairs
     used (each node's own override, or the default where a node relies on
     it) is what makes every such pair get its own axis below.
+
+    The azimuth half of the pair is an axis KEY (`_azimuth_axis_key`), not a
+    bare entity id: a node using `azimuth_attribute` reads an attribute, not
+    a state, and needs the `entity|attribute` key to land in the right axis
+    -- otherwise it is silently dropped and its rule looks dead for a reason
+    that has nothing to do with reachability.
     """
     pairs: set[tuple[str, str]] = set()
     for node in _all_condition_nodes(config):
         if node.get("condition") == "sun_hits_target":
-            pairs.add((
-                node.get("sun_entity", SUN_ENTITY),
-                node.get("azimuth_entity", DEFAULT_AZIMUTH_ENTITY),
-            ))
+            pairs.add((node.get("sun_entity", SUN_ENTITY), _azimuth_axis_key(node)))
     return pairs
 
 
@@ -188,9 +205,9 @@ def derive_axes(config: Config) -> dict[str, list]:
             add(key, probes)
 
     azimuth_probes = _azimuth_probes(config)
-    for sun_entity, azimuth_entity in _sun_entity_pairs(config):
+    for sun_entity, azimuth_key in _sun_entity_pairs(config):
         add(sun_entity, ["above_horizon", "below_horizon"])
-        add(azimuth_entity, azimuth_probes)
+        add(azimuth_key, azimuth_probes)
     for ref in config.values.values():
         add(ref.entity, [str(ref.default), "unavailable"])
 
@@ -277,6 +294,32 @@ def _probe_world(key: str, value: Any) -> World:
     return World(
         states={}, attributes={(entity, attribute): value}, now=NOW, event=Event()
     )
+
+
+def _sun_probe(
+    sun_entity: str, azimuth_entity: str, azimuth_attribute: str | None, azimuth: Any
+) -> World:
+    """A world with the sun above the horizon and the azimuth set the same
+    way the real condition reads it -- as a state, or (issue #5) as an
+    attribute of `azimuth_entity` when the condition says `azimuth_attribute`.
+    """
+    if azimuth_attribute is None:
+        return World(
+            states={sun_entity: "above_horizon", azimuth_entity: azimuth},
+            attributes={}, now=NOW, event=Event(),
+        )
+    return World(
+        states={sun_entity: "above_horizon"},
+        attributes={(azimuth_entity, azimuth_attribute): azimuth},
+        now=NOW, event=Event(),
+    )
+
+
+def _azimuth_state_node(azimuth_entity: str, azimuth_attribute: str | None, azimuth: Any) -> dict:
+    node = {"condition": "state", "entity_id": azimuth_entity, "state": azimuth}
+    if azimuth_attribute is not None:
+        node["attribute"] = azimuth_attribute
+    return node
 
 
 def _leaf_true(key: str, node: dict, values: dict[str, Any], axes: dict[str, list]) -> None:
@@ -368,6 +411,8 @@ def _require(
         # constants: a house may point this at its own sun/azimuth sensors.
         sun_entity = cond.get("sun_entity", SUN_ENTITY)
         azimuth_entity = cond.get("azimuth_entity", DEFAULT_AZIMUTH_ENTITY)
+        azimuth_attribute = cond.get("azimuth_attribute")
+        azimuth_key = _azimuth_axis_key(cond)
         sun_node = {"condition": "state", "entity_id": sun_entity, "state": "above_horizon"}
         if not want_true:
             # Falsifying via the sun entity works whenever it is free (or
@@ -383,19 +428,16 @@ def _require(
                 return
             except _Infeasible as err:
                 errors = [str(err)]
-            for azimuth in axes.get(azimuth_entity, DEFAULT_AZIMUTH_PROBES):
+            for azimuth in axes.get(azimuth_key, DEFAULT_AZIMUTH_PROBES):
                 snapshot = dict(values)
                 try:
-                    probe = World(
-                        states={sun_entity: "above_horizon", azimuth_entity: azimuth},
-                        attributes={}, now=NOW, event=Event(),
-                    )
+                    probe = _sun_probe(sun_entity, azimuth_entity, azimuth_attribute, azimuth)
                     if evaluate_condition(cond, probe, target, registry):
                         raise _Infeasible("azimuth probe hits the target's facade")
                     _leaf_true(sun_entity, sun_node, values, axes)
                     _leaf_true(
-                        azimuth_entity,
-                        {"condition": "state", "entity_id": azimuth_entity, "state": azimuth},
+                        azimuth_key,
+                        _azimuth_state_node(azimuth_entity, azimuth_attribute, azimuth),
                         values, axes,
                     )
                     return
@@ -405,19 +447,16 @@ def _require(
                     errors.append(str(err))
             raise _Infeasible(f"no azimuth probe falls outside the target's facade: {errors}")
         errors = []
-        for azimuth in axes.get(azimuth_entity, DEFAULT_AZIMUTH_PROBES):
+        for azimuth in axes.get(azimuth_key, DEFAULT_AZIMUTH_PROBES):
             snapshot = dict(values)
             try:
-                probe = World(
-                    states={sun_entity: "above_horizon", azimuth_entity: azimuth},
-                    attributes={}, now=NOW, event=Event(),
-                )
+                probe = _sun_probe(sun_entity, azimuth_entity, azimuth_attribute, azimuth)
                 if not evaluate_condition(cond, probe, target, registry):
                     raise _Infeasible("azimuth probe does not hit the target's facade")
                 _leaf_true(sun_entity, sun_node, values, axes)
                 _leaf_true(
-                    azimuth_entity,
-                    {"condition": "state", "entity_id": azimuth_entity, "state": azimuth},
+                    azimuth_key,
+                    _azimuth_state_node(azimuth_entity, azimuth_attribute, azimuth),
                     values, axes,
                 )
                 return

@@ -218,7 +218,9 @@ def _sun_hits_target(cond: dict, world: World, target: Target | None) -> bool:
         return False
 
     azimuth = world.number(
-        cond.get("azimuth_entity", DEFAULT_AZIMUTH_ENTITY), default=-1.0
+        cond.get("azimuth_entity", DEFAULT_AZIMUTH_ENTITY),
+        default=-1.0,
+        attribute=cond.get("azimuth_attribute"),
     )
     tolerance = float(cond.get("tolerance", target.blind.tolerance))
     delta = (azimuth - target.blind.facade_azimuth + 180.0) % 360.0 - 180.0
