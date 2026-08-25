@@ -1,10 +1,12 @@
-"""Fixtures for the ha_world tests.
+"""Fixtures shared by the `tests/ha/` suite.
 
-Everything here imports Home Assistant, so the whole package only collects
-under the Python 3.14 venv (see the module-level `importorskip` in
-`test_ha_world.py`). This file itself does not import `homeassistant` at
-module level, so it is harmless to import under system Python 3.12 --
-collection is skipped by the test module, not by this conftest.
+Everything here imports only `cover_logic` (pure) and `pytest` -- no
+`homeassistant` import -- so it is harmless to collect under system Python
+3.12, which has no `homeassistant` installed at all. Each *test module* under
+`tests/ha/` guards its own Home Assistant imports with a module-level
+`pytest.importorskip("homeassistant")`, which is what actually keeps the
+system-Python run green; this file just must not defeat that by importing
+`homeassistant` itself.
 """
 
 import pytest
@@ -82,3 +84,28 @@ class FakeHass:
 def fake_hass():
     """Factory: `fake_hass({"cover.a": State(...)})` -> a `FakeHass`."""
     return FakeHass
+
+
+class FakeConfigEntry:
+    """Duck-typed stand-in for `homeassistant.config_entries.ConfigEntry`.
+
+    `async_setup_entry`/`async_unload_entry` (see `test_init.py`) only ever
+    read `entry.data` and read/write `entry.runtime_data`. Building a real
+    `ConfigEntry` needs a live `HomeAssistant` with a working
+    `config_entries` manager (on-disk storage, the event bus, the flow
+    manager, ...) -- disproportionate for exercising two attribute reads and
+    one attribute write, the same tradeoff `FakeHass` above makes for
+    `build_world`. Real `ConfigEntry` has no `__slots__`, so `runtime_data`
+    is a plain assignable attribute there too; this fake matches that shape
+    by simply not setting it until `async_setup_entry` does.
+    """
+
+    def __init__(self, data):
+        """Store `data`; `runtime_data` is left unset, matching a fresh entry."""
+        self.data = data
+
+
+@pytest.fixture
+def make_entry():
+    """Factory: `make_entry({"config_path": "..."})` -> a `FakeConfigEntry`."""
+    return FakeConfigEntry

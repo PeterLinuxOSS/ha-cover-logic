@@ -2,7 +2,7 @@
   "domain": "cover_logic",
   "name": "Cover Logic",
   "codeowners": ["@PeterLinuxOSS"],
-  "config_flow": false,
+  "config_flow": true,
   "documentation": "https://github.com/PeterLinuxOSS/ha-cover-logic",
   "integration_type": "hub",
   "iot_class": "calculated",
