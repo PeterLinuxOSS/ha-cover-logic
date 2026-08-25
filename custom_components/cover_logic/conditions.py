@@ -18,7 +18,19 @@ from .world import Target, World
 DEFAULT_AZIMUTH_ENTITY = "sensor.sun_solar_azimuth"
 SUN_ENTITY = "sun.sun"
 
-_JINJA = jinja2.Environment(undefined=jinja2.StrictUndefined)
+# autoescape stays off, and CodeQL's py/jinja2/autoescape-false is a false
+# positive here: that rule assumes the output reaches a browser. This
+# environment renders one thing only -- a boolean guard from the operator's own
+# configuration -- and the result is compared against a fixed set of truthy
+# strings and discarded. No HTML is produced, nothing is served, and the
+# template author is the system operator, so there is no privilege boundary to
+# cross. Escaping would only alter `<`, `>` and `&`, which a boolean expression
+# does not contain.
+#
+# StrictUndefined is deliberate: an undefined name must raise rather than
+# render empty, because an empty render would read as False, and False here can
+# mean "leave the house open during a heatwave".
+_JINJA = jinja2.Environment(undefined=jinja2.StrictUndefined)  # noqa: S701
 
 
 def evaluate_condition(
