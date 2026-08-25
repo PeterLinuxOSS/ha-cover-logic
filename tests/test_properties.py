@@ -1,7 +1,5 @@
 """Invariants that must hold no matter what the configuration says."""
 
-from __future__ import annotations
-
 import datetime as dt
 
 from hypothesis import given, settings, strategies as st

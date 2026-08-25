@@ -4,8 +4,6 @@ This is what makes exhaustive testing possible: no HA, no event loop, no I/O.
 If someone adds `from homeassistant...` to one of these modules, this fails.
 """
 
-from __future__ import annotations
-
 import ast
 from pathlib import Path
 

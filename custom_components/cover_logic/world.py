@@ -5,8 +5,6 @@ class: the same snapshot always produces the same decision, no matter what
 changes underneath while the decision is being acted upon.
 """
 
-from __future__ import annotations
-
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 import datetime as dt

@@ -4,8 +4,6 @@ These are tests of the test infrastructure: bugs here make the suite blind
 without ever failing loudly, so they get the same rigor as production code.
 """
 
-from __future__ import annotations
-
 from scenarios import derive_axes, fired_rules, rule_witnesses, worlds
 
 from cover_logic.config_schema import load_config

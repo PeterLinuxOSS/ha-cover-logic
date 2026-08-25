@@ -1,7 +1,5 @@
 """Every rule must be reachable, and the suite must prove it by firing it."""
 
-from __future__ import annotations
-
 import pytest
 from scenarios import fired_rules, worlds
 

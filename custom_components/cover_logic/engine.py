@@ -5,8 +5,6 @@ action, and the trace records which rule produced it — so 'why did it do that'
 is answerable from the output alone, never by re-deriving the logic by hand.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 
 from .conditions import evaluate_condition

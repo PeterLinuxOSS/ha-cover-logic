@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from cover_logic.config_schema import load_config
 from cover_logic.validation import validate
 

@@ -1,7 +1,5 @@
 """Shared fixtures. Phase 1 needs almost nothing — the engine is pure."""
 
-from __future__ import annotations
-
 from pathlib import Path
 
 import pytest

@@ -4,8 +4,6 @@ This is what makes the suite universal: add a condition in the new house and
 the scenarios that exercise it appear without anyone writing them.
 """
 
-from __future__ import annotations
-
 from collections.abc import Iterator
 import datetime as dt
 import itertools

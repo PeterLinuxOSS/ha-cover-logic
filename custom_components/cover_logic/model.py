@@ -5,8 +5,6 @@ An action is a pair of axes — height and slats — and either axis may say
 named constants into a single shape.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from typing import Self
 
@@ -18,7 +16,11 @@ class Keep:
     built independently still holds.
     """
 
-    _instance: Keep | None = None
+    # Quoted: self-referencing the class from inside its own body, before the
+    # name `Keep` is bound. Without `from __future__ import annotations` (see
+    # pyproject.toml -- core bans it) this annotation is evaluated eagerly at
+    # class-body execution time, and `Keep` does not exist yet at that point.
+    _instance: "Keep | None" = None
 
     def __new__(cls) -> Self:
         if cls._instance is None:

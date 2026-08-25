@@ -1,7 +1,5 @@
 """The fixture must be structurally sound before parity is even attempted."""
 
-from __future__ import annotations
-
 import datetime as dt
 
 import pytest

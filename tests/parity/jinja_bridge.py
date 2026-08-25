@@ -5,8 +5,6 @@ straight out of configuration.yaml, so the gate compares against reality rather
 than against a second copy of it.
 """
 
-from __future__ import annotations
-
 import datetime as dt
 import os
 from pathlib import Path

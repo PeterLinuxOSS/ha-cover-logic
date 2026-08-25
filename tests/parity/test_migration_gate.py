@@ -5,8 +5,6 @@ what the live Jinja matrix produces — entity by entity, on both the state and
 the arrival variant. Nothing gets switched over in the house until this is green.
 """
 
-from __future__ import annotations
-
 import pytest
 
 from cover_logic.config_schema import load_config_file

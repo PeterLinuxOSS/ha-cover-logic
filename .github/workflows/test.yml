@@ -10,7 +10,10 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.12", "3.13"]
+        # 3.12 is this project's floor (see `requires-python` in
+        # pyproject.toml); 3.14 is the version Home Assistant 2026.8 itself
+        # requires. Both ends, plus the version in between, are covered.
+        python-version: ["3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

@@ -2,6 +2,12 @@
 name = "cover-logic"
 version = "0.1.0"
 description = "Universal rule-based cover (blind) controller for Home Assistant"
+# Home Assistant 2026.8.0 itself requires Python >=3.14.2. The floor here is
+# lower on purpose: the decision core (`custom_components/cover_logic/`) is
+# pure Python with no Home Assistant imports and is meant to be testable
+# standalone, including on whatever Python a contributor's machine happens to
+# have -- see the CI matrix below, which covers both this floor and the real
+# Home Assistant runtime.
 requires-python = ">=3.12"
 dependencies = ["PyYAML>=6.0", "Jinja2>=3.1"]
 

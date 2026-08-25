@@ -1,7 +1,5 @@
 """Translate the old action vocabulary into the new (position, tilt) pair."""
 
-from __future__ import annotations
-
 from cover_logic.model import KEEP, Action
 from cover_logic.world import Event, World
 

@@ -5,8 +5,6 @@ schema, so the same structures the user edits in the UI are what the engine
 runs — plus two target-relative built-ins that generic HA has no notion of.
 """
 
-from __future__ import annotations
-
 import datetime as dt
 from typing import Any
 

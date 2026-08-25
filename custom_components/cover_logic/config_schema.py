@@ -5,8 +5,6 @@ There is exactly one representation of the rules, so config and tests can never
 drift apart.
 """
 
-from __future__ import annotations
-
 from pathlib import Path
 from typing import Any
 
