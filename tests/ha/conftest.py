@@ -166,3 +166,50 @@ def flow_hass():
         return FakeFlowHass(FakeExistingEntry() if existing else None)
 
     return _make
+
+
+@pytest.fixture
+def hass_factory(tmp_path):
+    """Factory for a real, minimal `homeassistant.core.HomeAssistant`.
+
+    `test_coordinator.py` needs `async_track_state_change_event` and
+    `homeassistant.helpers.debounce.Debouncer` to genuinely dispatch events
+    and schedule timers -- both reach into `hass.bus`, `hass.data` and
+    `hass.loop` deeply enough (keyed listener bookkeeping, `HassJob`
+    dispatch, `loop.call_later`) that a `FakeHass` covering just `.states`,
+    the way `test_ha_world.py`'s does, would mean reimplementing that
+    plumbing by hand -- exactly the risk of subtle incorrectness a fake is
+    supposed to avoid, not invite. A real `HomeAssistant` sidesteps that
+    without needing `pytest-homeassistant-custom-component` (pinned to
+    `homeassistant==2025.1.4`, see the project's own constraint): its
+    constructor does not start integrations, load config, or spin up
+    storage -- only `hass.bus`, `hass.states`, `hass.data` and `hass.loop`
+    exist, which is exactly the surface these two helpers need and no more.
+
+    `HomeAssistant.__init__` calls `asyncio.get_running_loop()`, so it can
+    only be constructed while a loop is already running -- this fixture
+    therefore returns a plain callable rather than a ready-made instance,
+    for a test to invoke from inside its own `asyncio.run(...)` body (the
+    project's established async-test shape, e.g. `test_init.py`). The loop
+    that ends up bound to `hass.loop` must be the same loop used for the
+    rest of that test -- a `HomeAssistant` built in one `asyncio.run(...)`
+    call and used from a different one fails opaquely (the Debouncer's
+    `loop.call_later` binds the now-closed original loop) -- so a caller
+    must construct, use and call `await hass.async_stop(force=True)` on the
+    instance all inside one `asyncio.run(...)` body. `force=True` is needed
+    because `hass.state` never leaves `CoreState.not_running` here (nothing
+    calls `async_start`); without it, `async_stop` is a no-op and the
+    constructor's background `import_executor` thread is never shut down.
+    """
+
+    def _make():
+        # Deferred: see `tests/ha/conftest.py`'s own module docstring --
+        # this file must stay importable under system Python 3.12, which has
+        # no `homeassistant` installed, so the import lives inside the
+        # factory function, only ever called from a module that has already
+        # done `pytest.importorskip("homeassistant")`.
+        from homeassistant.core import HomeAssistant  # noqa: PLC0415
+
+        return HomeAssistant(str(tmp_path))
+
+    return _make

@@ -33,18 +33,17 @@ if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
 
+    from .coordinator import CoverLogicCoordinator
+
 _LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
 class CoverLogicData:
-    """What `entry.runtime_data` carries.
-
-    Just the parsed configuration for now -- a later phase's coordinator
-    will need to add itself here too, once it exists.
-    """
+    """What `entry.runtime_data` carries: the parsed config and its coordinator."""
 
     config: Config
+    coordinator: "CoverLogicCoordinator"
 
 
 if TYPE_CHECKING:
@@ -92,17 +91,26 @@ async def async_setup_entry(hass: "HomeAssistant", entry: "CoverLogicConfigEntry
     for problem in problems:
         _LOGGER.warning("cover_logic: config at %s: %s: %s", path, problem.code, problem.message)
 
-    entry.runtime_data = CoverLogicData(config=config)
+    # Deferred: see the module docstring for why this cannot be a top-level
+    # import.
+    from .coordinator import CoverLogicCoordinator  # noqa: PLC0415
+
+    coordinator = CoverLogicCoordinator(hass, config)
+    await coordinator.async_setup()
+
+    entry.runtime_data = CoverLogicData(config=config, coordinator=coordinator)
     return True
 
 
 async def async_unload_entry(hass: "HomeAssistant", entry: "CoverLogicConfigEntry") -> bool:
     """Unload a config entry, leaving nothing behind.
 
-    No platforms are set up yet and nothing subscribes to state changes (that
-    starts with the coordinator, a later phase), so there is nothing to
-    forward-unload and no listener to cancel. This exists so a config entry
-    reload -- unload, then set up again -- re-reads the file both times; see
-    `async_setup_entry`'s docstring for why that matters.
+    No platforms are set up yet, so there is nothing to forward-unload; the
+    coordinator's own subscription and any pending debounce are torn down via
+    `CoverLogicCoordinator.async_unload`. This exists so a config entry reload
+    -- unload, then set up again -- re-reads the file both times and starts a
+    fresh coordinator each time; see `async_setup_entry`'s docstring for why
+    the re-read matters.
     """
+    await entry.runtime_data.coordinator.async_unload()
     return True
