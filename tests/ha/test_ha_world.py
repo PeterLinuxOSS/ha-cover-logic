@@ -89,6 +89,34 @@ def test_now_is_naive_and_matches_ha_local_wall_clock(config, fake_hass):
     assert before <= world.now <= after
 
 
+def test_now_follows_the_configured_zone_not_utc(config, fake_hass):
+    """`World.now` must read the wall clock of Home Assistant's configured zone.
+
+    The test above pins the implementation (`dt_util.now()`), but in a bare venv
+    `dt_util` has no zone set and defaults to UTC -- so that test's notion of
+    "correct" is UTC, while the house this runs in is on Europe/Prague. Inside a
+    real Home Assistant the zone is set during core setup and the two differ by
+    an hour or two.
+
+    That gap matters: the `vecer` condition is `after: "12:30"`, compared against
+    `world.now.time()`. A two-hour shift moves the evening window by two hours
+    and would surface as a spurious disagreement with the old matrix. So pin the
+    property, not just the call: set a non-UTC zone and assert the reading
+    follows it.
+    """
+    original = dt_util.get_default_time_zone()
+    try:
+        dt_util.set_default_time_zone(dt_util.get_time_zone("Europe/Prague"))
+        hass = fake_hass({})
+
+        world = build_world(hass, config)
+
+        expected = dt.datetime.now(dt_util.get_time_zone("Europe/Prague"))
+        assert abs((world.now - expected.replace(tzinfo=None)).total_seconds()) < 5
+    finally:
+        dt_util.set_default_time_zone(original)
+
+
 def test_default_event_is_a_plain_state_change(config, fake_hass):
     hass = fake_hass({})
 
