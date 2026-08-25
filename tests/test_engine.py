@@ -197,6 +197,84 @@ def test_the_same_world_always_gives_the_same_decision():
     assert evaluate(CFG, w) == evaluate(CFG, w)
 
 
+def test_a_zone_whose_rule_raises_gets_keep_and_other_zones_are_unaffected():
+    """A hand-written condition body with an unknown type bypasses validate()
+    (config_schema deliberately does not check condition-body keys) and
+    raises inside evaluate_condition. That must not take down blinds in
+    other, unrelated zones.
+    """
+    cfg = load_config("""
+blinds:
+  - {entity: cover.a}
+  - {entity: cover.b}
+zones:
+  broken: {members: [cover.a]}
+  fine: {members: [cover.b]}
+modes: [{id: den}]
+conditions: {}
+values: {}
+rules:
+  den.broken:
+    - {if: {condition: sate, entity_id: x, state: "on"}, then: {position: 100}}
+    - {then: {position: 0}}
+  den.fine:
+    - {then: {position: 42}}
+""")
+    d = evaluate(cfg, world({}))
+
+    # The unaffected zone decided normally.
+    assert d.targets["cover.b"] == Action(position=42, tilt=KEEP)
+    assert d.trace["cover.b"] == "den.fine#0"
+
+    # The broken zone's blind keeps its position, and the trace names the
+    # exception so the cause is recoverable from the output alone.
+    assert d.targets["cover.a"] == Action()
+    assert d.trace["cover.a"].startswith("den.broken#error ")
+    assert "ValueError" in d.trace["cover.a"]
+    assert "sate" in d.trace["cover.a"]
+
+    # `fired_rules` recovers the rule key via `label.split(" ")[0]` -- the
+    # error label must still split cleanly into a key-shaped first token.
+    assert d.trace["cover.a"].split(" ")[0] == "den.broken#error"
+
+
+def test_zone_naming_an_unknown_blind_still_raises():
+    """This is an ownership-class failure (there is no valid decision to
+    make at all), not a rule-evaluation failure -- it must propagate out of
+    evaluate(), not be contained at the zone boundary.
+    """
+    cfg = load_config("""
+blinds: [{entity: cover.a}]
+zones:
+  broken: {members: [cover.a, cover.ghost]}
+modes: [{id: den}]
+conditions: {}
+values: {}
+rules:
+  den.broken: [{then: {position: 0}}]
+""")
+    with pytest.raises(EngineError, match="cover.ghost"):
+        evaluate(cfg, world({}))
+
+
+def test_mode_resolution_error_still_raises_alongside_a_broken_zone():
+    """Mode resolution happens before any zone is evaluated, so a broken
+    rule elsewhere in the config must not mask a real 'no mode matched'.
+    """
+    cfg = load_config("""
+blinds: [{entity: cover.a}]
+zones: {z: {members: [cover.a]}}
+modes: [{id: noc, when: !ref never}]
+conditions:
+  never: {condition: state, entity_id: nothing.here, state: "on"}
+values: {}
+rules:
+  den.z: [{if: {condition: sate, entity_id: x, state: "on"}, then: {position: 0}}]
+""")
+    with pytest.raises(EngineError, match="no mode matched"):
+        evaluate(cfg, world({}))
+
+
 def test_equal_but_separately_built_worlds_give_the_same_decision():
     # The assertion above only proves idempotency on one object. Reproducibility
     # across equal snapshots is a separate property: two independently

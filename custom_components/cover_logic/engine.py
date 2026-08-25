@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .conditions import evaluate_condition
-from .model import Action, Config, Ref, Value
+from .model import Action, Config, Ref, Value, Zone
 from .world import Target, World
 
 
@@ -37,6 +37,36 @@ def evaluate(config: Config, world: World) -> Decision:
 
     for zone_id, zone in config.zones.items():
         rules = config.rules.get(f"{mode}.{zone_id}")
+        zone_targets, zone_trace = _evaluate_zone(config, rules, world, zone, mode, zone_id)
+        targets.update(zone_targets)
+        trace.update(zone_trace)
+
+    return Decision(mode=mode, targets=targets, trace=trace)
+
+
+def _evaluate_zone(
+    config: Config,
+    rules: tuple | None,
+    world: World,
+    zone: Zone,
+    mode: str,
+    zone_id: str,
+) -> tuple[dict[str, Action], dict[str, str]]:
+    """Decide every blind in one zone, contained: a broken rule anywhere in
+    this zone must not lose the decision for every other zone's blinds.
+
+    `EngineError` is deliberately let through uncontained -- both the one
+    raised right here (a zone naming a blind the config does not have) and
+    any raised earlier by mode resolution or the ownership check before this
+    function is ever called. Those mean there is no valid decision to make
+    at all, not that one zone's rules misbehaved, so masking them as
+    keep/keep would hide a config that cannot be evaluated behind a decision
+    that looks normal. Only a failure from evaluating this zone's *rules* --
+    everything that is not an `EngineError` -- is contained here.
+    """
+    targets: dict[str, Action] = {}
+    trace: dict[str, str] = {}
+    try:
         for entity in zone.members:
             blind = config.blinds.get(entity)
             if blind is None:
@@ -45,8 +75,15 @@ def evaluate(config: Config, world: World) -> Decision:
             action, label = _apply_rules(config, rules, world, target, mode, zone_id)
             targets[entity] = action
             trace[entity] = label
-
-    return Decision(mode=mode, targets=targets, trace=trace)
+    except EngineError:
+        raise
+    except Exception as err:  # noqa: BLE001 -- contain any rule failure, by design
+        label = f"{mode}.{zone_id}#error {type(err).__name__}: {err}"
+        return (
+            {entity: Action() for entity in zone.members},
+            {entity: label for entity in zone.members},
+        )
+    return targets, trace
 
 
 def _resolve_mode(config: Config, world: World) -> str:
