@@ -18,6 +18,7 @@ never runs anywhere `homeassistant` is not already installed.
 import logging
 
 from homeassistant import config_entries
+from homeassistant.core import HomeAssistant
 import voluptuous as vol
 
 from .config_schema import ConfigError, load_config_file
@@ -27,14 +28,17 @@ from .validation import ERROR, validate
 _LOGGER = logging.getLogger(__name__)
 
 
-def _describe_problems(path: str) -> str | None:
+async def _describe_problems(hass: HomeAssistant, path: str) -> str | None:
     """Load and validate `path`; return a problem summary, or `None` if it is clean.
 
     "Clean" means no `ERROR`-severity problem -- a `WARNING`-only config is
-    accepted here exactly as `async_setup_entry` accepts it.
+    accepted here exactly as `async_setup_entry` accepts it. `load_config_file`
+    does a blocking `Path.read_text`, so it runs inside
+    `hass.async_add_executor_job` rather than directly on the event loop this
+    step is awaited from -- the same reasoning as `__init__.async_setup_entry`.
     """
     try:
-        config = load_config_file(path)
+        config = await hass.async_add_executor_job(load_config_file, path)
     except ConfigError as err:
         return str(err)
     except OSError as err:
@@ -68,7 +72,7 @@ class CoverLogicConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             path = user_input[CONF_CONFIG_PATH]
-            problem = _describe_problems(path)
+            problem = await _describe_problems(self.hass, path)
             if problem is None:
                 return self.async_create_entry(title="Cover Logic", data=user_input)
 

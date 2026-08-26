@@ -79,7 +79,7 @@ async def async_setup_entry(hass: "HomeAssistant", entry: "CoverLogicConfigEntry
     path = entry.data[CONF_CONFIG_PATH]
 
     try:
-        config = load_config_file(path)
+        config = await hass.async_add_executor_job(load_config_file, path)
     except ConfigError as err:
         msg = f"cover_logic: config at {path!r} is invalid: {err}"
         raise ConfigEntryNotReady(msg) from err

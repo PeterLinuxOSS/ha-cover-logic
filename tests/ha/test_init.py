@@ -14,6 +14,9 @@ real attribute to call, which `None` does not have.
 """
 
 import asyncio
+from pathlib import Path
+import threading
+from unittest import mock
 
 import pytest
 
@@ -148,6 +151,34 @@ def test_unload_fails_and_leaves_coordinator_alone_when_a_platform_refuses(
     # The coordinator is still the one from setup -- async_unload_entry
     # returned before ever calling CoverLogicCoordinator.async_unload.
     assert entry.runtime_data.coordinator is coordinator
+
+
+def test_setup_reads_the_config_file_off_the_event_loop(tmp_path, make_entry, setup_hass):
+    """`load_config_file` does a blocking `Path.read_text` -- calling it directly
+    from `async_setup_entry` blocks Home Assistant's event loop (its own
+    `protect_loop` machinery logs exactly this for a raw `open()` there). It
+    must run inside `hass.async_add_executor_job`, on a thread other than the
+    caller's -- the same thread `Path.read_text` runs on is proof it never
+    went through the executor at all.
+    """
+    entry = _entry(make_entry, _write(tmp_path, VALID_CONFIG))
+    hass = setup_hass()
+    read_thread_idents = []
+    original_read_text = Path.read_text
+
+    def spy_read_text(self, *args, **kwargs):
+        read_thread_idents.append(threading.get_ident())
+        return original_read_text(self, *args, **kwargs)
+
+    async def run():
+        with mock.patch.object(Path, "read_text", spy_read_text):
+            await async_setup_entry(hass, entry)
+
+    caller_thread_ident = threading.get_ident()
+    asyncio.run(run())
+
+    assert read_thread_idents, "load_config_file never read the file at all"
+    assert read_thread_idents[0] != caller_thread_ident
 
 
 def test_reload_rereads_the_file_not_a_cached_parse(tmp_path, make_entry, setup_hass):

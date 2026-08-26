@@ -23,6 +23,9 @@ the raised `AbortFlow` and its `.reason`, not a result dict.
 """
 
 import asyncio
+from pathlib import Path
+import threading
+from unittest import mock
 
 import pytest
 
@@ -115,6 +118,34 @@ def test_flow_creates_entry_for_a_good_path(flow_hass, tmp_path):
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"] == {CONF_CONFIG_PATH: str(path)}
+
+
+def test_flow_reads_the_config_file_off_the_event_loop(flow_hass, tmp_path):
+    """`_describe_problems` does a blocking `Path.read_text` via `load_config_file`
+    -- calling it directly from the awaited `async_step_user` blocks Home
+    Assistant's event loop every time someone adds or reconfigures this
+    integration through the UI. It must run inside
+    `hass.async_add_executor_job`, on a thread other than the caller's.
+    """
+    flow = _make_flow(flow_hass())
+    path = tmp_path / "cover_logic.yaml"
+    path.write_text(VALID_CONFIG, encoding="utf-8")
+    read_thread_idents = []
+    original_read_text = Path.read_text
+
+    def spy_read_text(self, *args, **kwargs):
+        read_thread_idents.append(threading.get_ident())
+        return original_read_text(self, *args, **kwargs)
+
+    async def run():
+        with mock.patch.object(Path, "read_text", spy_read_text):
+            await flow.async_step_user({CONF_CONFIG_PATH: str(path)})
+
+    caller_thread_ident = threading.get_ident()
+    asyncio.run(run())
+
+    assert read_thread_idents, "_describe_problems never read the file at all"
+    assert read_thread_idents[0] != caller_thread_ident
 
 
 def test_second_instance_is_aborted(flow_hass):

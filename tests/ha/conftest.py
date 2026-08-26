@@ -9,6 +9,8 @@ system-Python run green; this file just must not defeat that by importing
 `homeassistant` itself.
 """
 
+import asyncio
+
 import pytest
 
 from cover_logic.config_schema import load_config
@@ -153,6 +155,18 @@ class FakeSetupHass:
         """Wrap a fresh `FakeEntryConfigEntries`."""
         self.config_entries = FakeEntryConfigEntries(unload_result=unload_result)
 
+    async def async_add_executor_job(self, target, *args):
+        """Genuinely run `target` off the current thread, like the real one does.
+
+        Not a same-thread stub -- `test_init.py`'s blocking-I/O test asserts
+        the target ran on a different thread than the caller, so this must
+        actually hop through an executor (`loop.run_in_executor`, the same
+        primitive `HomeAssistant.async_add_executor_job` itself calls) rather
+        than just awaiting the call in place.
+        """
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, target, *args)
+
 
 @pytest.fixture
 def setup_hass():
@@ -204,11 +218,20 @@ class FakeExistingEntry:
 
 
 class FakeFlowHass:
-    """Stands in for `hass` as seen by a `ConfigFlow` step: only `.config_entries`."""
+    """Stands in for `hass` as seen by a `ConfigFlow` step: `.config_entries` and
+    `.async_add_executor_job`.
+    """
 
     def __init__(self, existing_entry=None):
         """Wrap a `FakeConfigEntries` seeded with `existing_entry` (or none)."""
         self.config_entries = FakeConfigEntries(existing_entry)
+
+    async def async_add_executor_job(self, target, *args):
+        """Genuinely run `target` off the current thread -- see `FakeSetupHass`'s
+        identical method for why this cannot be a same-thread stub.
+        """
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, target, *args)
 
 
 @pytest.fixture
