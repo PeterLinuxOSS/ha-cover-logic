@@ -14,6 +14,7 @@ PURE_MODULES = [
     "world.py",
     "conditions.py",
     "config_schema.py",
+    "config_store.py",
     "engine.py",
     "validation.py",
     "legacy.py",

@@ -44,6 +44,10 @@ test:
   engine may read, plus `Event` and `Target`.
 - `conditions.py` — evaluates one condition body against a `World`.
 - `config_schema.py` — parses YAML text into a `Config`.
+- `config_store.py` — builds the same `Config` from Home Assistant config
+  subentries, so the UI and a YAML file are two doors into one representation
+  rather than two representations. It duck-types the entry rather than
+  importing `homeassistant`, which is what keeps it on this list.
 - `engine.py` — `evaluate(config, world) -> Decision`, the decision core.
 - `validation.py` — static checks over a `Config` (`validate(config) ->
   list[Problem]`).
@@ -67,8 +71,9 @@ test:
   `async_unload_entry`.
 
 `tests/test_purity.py` enforces the split with an AST walk: it parses
-`model.py`, `world.py`, `conditions.py`, `config_schema.py`, `engine.py`,
-`validation.py` and `legacy.py` and fails if any of them imports anything
+`model.py`, `world.py`, `conditions.py`, `config_schema.py`,
+`config_store.py`, `engine.py`, `validation.py` and `legacy.py` and fails if
+any of them imports anything
 starting with `homeassistant`. This is what makes exhaustive testing of the
 decision logic possible without an HA runtime, event loop or I/O — the whole
 `tests/test_scenarios.py` / `tests/parity/` machinery depends on the core
