@@ -195,6 +195,21 @@ def test_sun_sector_wraps_around_north():
     assert evaluate_condition({"condition": "sun_hits_target"}, w, target(azimuth=0.0)) is True
 
 
+def test_sun_hits_target_is_false_for_a_north_facade_when_the_azimuth_sensor_is_missing():
+    """A missing/unavailable azimuth reading falls back to `world.number`'s
+    -1.0 "impossible" sentinel. Routed straight through the sector's modular
+    arithmetic, that sentinel wraps right back INTO a north-facing sector --
+    wrongly firing the sun rule during a sensor outage for exactly the facade
+    orientation a disabled-by-default `sensor.sun_solar_azimuth` (issue #5)
+    makes a realistic default-install condition, not an exotic one.
+    """
+    w = world({"sun.sun": "above_horizon"})  # sensor.sun_solar_azimuth not in the snapshot at all
+    cond = {"condition": "sun_hits_target"}
+    assert evaluate_condition(cond, w, target(azimuth=0.0)) is False
+    assert evaluate_condition(cond, w, target(azimuth=350.0)) is False
+    assert evaluate_condition(cond, w, target(azimuth=10.0)) is False
+
+
 def test_sun_hits_target_reads_the_azimuth_from_an_attribute():
     """In stock Home Assistant the azimuth lives on `sun.sun` as an
     attribute -- `sensor.sun_solar_azimuth` is disabled by default, so a new

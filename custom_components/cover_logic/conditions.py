@@ -16,6 +16,12 @@ from .world import Target, World
 DEFAULT_AZIMUTH_ENTITY = "sensor.sun_solar_azimuth"
 SUN_ENTITY = "sun.sun"
 
+# A real compass bearing lies in this half-open range -- used to reject a
+# missing/unparsable azimuth reading by name rather than trusting a magic
+# sentinel to stay clear of `_sun_hits_target`'s sector arithmetic.
+_AZIMUTH_MIN = 0.0
+_AZIMUTH_MAX = 360.0
+
 # Autoescape off, StrictUndefined on. See docs/rationale.md -- "Why
 # autoescape stays off" and "Why a broken template raises instead of
 # evaluating False".
@@ -198,6 +204,14 @@ def _sun_hits_target(cond: dict, world: World, target: Target | None) -> bool:
         default=-1.0,
         attribute=cond.get("azimuth_attribute"),
     )
+    # -1.0 above is an "impossible" sentinel for a missing/unparsable
+    # reading, not a real bearing -- routing it straight into the modular
+    # sector arithmetic below would wrap it right back INTO the sector for a
+    # facade near north (see docs/rationale.md -- "Why a missing azimuth
+    # reading is checked explicitly, not routed through the sector maths").
+    if not _AZIMUTH_MIN <= azimuth < _AZIMUTH_MAX:
+        return False
+
     tolerance = float(cond.get("tolerance", target.blind.tolerance))
     delta = (azimuth - target.blind.facade_azimuth + 180.0) % 360.0 - 180.0
     return -tolerance <= delta < tolerance
