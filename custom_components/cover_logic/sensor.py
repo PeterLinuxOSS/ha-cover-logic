@@ -30,8 +30,10 @@ from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity import EntityCategory
 
+from .const import DOMAIN
 from .legacy import expected_actions
 from .model import KEEP, Action
 
@@ -86,9 +88,22 @@ class CoverLogicModeSensor(SensorEntity):
     _attr_icon = "mdi:window-shutter-cog"
 
     def __init__(self, coordinator: "CoverLogicCoordinator", entry_id: str) -> None:
-        """Store the coordinator to read from and derive a stable `unique_id`."""
+        """Store the coordinator to read from and derive a stable `unique_id`.
+
+        The device exists so `has_entity_name` has something to prefix with.
+        Without it Home Assistant has no device name to prepend and the entity
+        lands as `sensor.mode` -- accurate about nothing and impossible to find
+        in a house with hundreds of entities. With it, the same entity is
+        `sensor.cover_logic_mode` and every later entity groups under one
+        device rather than scattering.
+        """
         self._coordinator = coordinator
         self._attr_unique_id = f"{entry_id}_mode"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, entry_id)},
+            name="Cover Logic",
+            entry_type=DeviceEntryType.SERVICE,
+        )
         self._remove_listener: Callable[[], None] | None = None
 
     async def async_added_to_hass(self) -> None:
