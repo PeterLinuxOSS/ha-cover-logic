@@ -289,3 +289,108 @@ def hass_factory(tmp_path):
         return HomeAssistant(str(tmp_path))
 
     return _make
+
+
+class FakeSubentry:
+    """Duck-typed stand-in for `homeassistant.config_entries.ConfigSubentry`.
+
+    Mutable, unlike the real frozen dataclass: `FakeSubentryConfigEntries.
+    async_update_subentry` (below) needs somewhere to write the new
+    `data`/`title` a reconfigure step produces, standing in for what the real
+    `hass.config_entries.async_update_subentry` does to the real, frozen one
+    via `object.__setattr__`.
+    """
+
+    def __init__(self, subentry_id, subentry_type, data, title=""):
+        """Store the attributes `config_store.config_from_subentries` and
+        `ConfigSubentryFlow` itself read.
+        """
+        self.subentry_id = subentry_id
+        self.subentry_type = subentry_type
+        self.data = dict(data)
+        self.title = title
+
+
+class FakeSubentryEntry:
+    """Duck-typed stand-in for `homeassistant.config_entries.ConfigEntry`, as seen
+    from inside a subentry flow.
+
+    `config_store.config_from_subentries` and `ConfigSubentryFlow._get_entry`/
+    `_get_reconfigure_subentry` only ever read `.data` and `.subentries` off
+    the entry -- see `config_store.py`'s own "Duck-typed on purpose"
+    docstring section. `.subentries` is a plain, mutable `dict` here, unlike
+    the real `MappingProxyType`: a test attaches the subentry a `CREATE_ENTRY`
+    result would have produced by calling `add_subentry` below, mirroring
+    what the real `ConfigSubentryFlowManager` does once a flow finishes --
+    the same tradeoff `test_config_flow.py`'s own module docstring explains
+    for why that suite drives flow steps directly instead of the full
+    manager.
+    """
+
+    def __init__(self, entry_id="entry1", data=None):
+        """Start with no subentries; `data` defaults to `{}` (no `guards`)."""
+        self.entry_id = entry_id
+        self.data = data or {}
+        self.subentries: dict[str, FakeSubentry] = {}
+
+    def add_subentry(self, subentry_type, data, *, title=""):
+        """Attach a new subentry, as a finished add flow would. Returns its id."""
+        subentry_id = f"sub{len(self.subentries)}"
+        self.subentries[subentry_id] = FakeSubentry(subentry_id, subentry_type, data, title)
+        return subentry_id
+
+
+@pytest.fixture
+def subentry_entry():
+    """Factory: `subentry_entry()` -> a fresh, empty `FakeSubentryEntry`."""
+    return FakeSubentryEntry
+
+
+class FakeSubentryConfigEntries:
+    """Stands in for `hass.config_entries`, as seen from inside a subentry flow step.
+
+    Covers exactly the two calls `ConfigSubentryFlow`'s own base-class
+    methods make on it: `.async_get_known_entry(...)` (used by `_get_entry`/
+    `_get_reconfigure_subentry`) and `.async_update_subentry(...)` (used by
+    `async_update_and_abort`). `unique_id` is accepted and ignored -- none of
+    this project's subentry flows set one.
+    """
+
+    def __init__(self, entry):
+        """Wrap the one `FakeSubentryEntry` this fake ever returns."""
+        self._entry = entry
+
+    def async_get_known_entry(self, entry_id):
+        """Return the wrapped entry regardless of `entry_id` -- there is only ever one."""
+        return self._entry
+
+    def async_update_subentry(self, entry, subentry, *, data=None, title=None, unique_id=None):
+        """Write `data`/`title` onto `subentry` in place, like the real update does."""
+        if data is not None:
+            subentry.data = dict(data)
+        if title is not None:
+            subentry.title = title
+        return True
+
+
+class FakeSubentryHass:
+    """Stands in for `hass` as seen from inside a `ConfigSubentryFlow` step.
+
+    Only `.config_entries` is touched: none of this project's subentry-flow
+    steps do blocking I/O, so unlike `FakeFlowHass` this fake needs no
+    `async_add_executor_job`.
+    """
+
+    def __init__(self, entry):
+        """Wrap `entry` behind a `FakeSubentryConfigEntries`."""
+        self.config_entries = FakeSubentryConfigEntries(entry)
+
+
+@pytest.fixture
+def subentry_hass():
+    """Factory: `subentry_hass(entry)` -> hass as seen from inside a subentry flow."""
+
+    def _make(entry):
+        return FakeSubentryHass(entry)
+
+    return _make

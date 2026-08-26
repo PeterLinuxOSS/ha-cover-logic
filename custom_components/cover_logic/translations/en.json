@@ -15,5 +15,106 @@
     "abort": {
       "already_configured": "Cover Logic is already set up; only one instance is supported."
     }
+  },
+  "config_subentries": {
+    "blind": {
+      "entry_type": "Blind",
+      "initiate_flow": {
+        "user": "Add blind"
+      },
+      "step": {
+        "user": {
+          "title": "Add blind",
+          "description": "One physical cover Cover Logic can decide a position and tilt for.",
+          "data": {
+            "entity": "Cover entity",
+            "facade_azimuth": "Facade azimuth",
+            "tolerance": "Sun sector tolerance",
+            "travel_time": "Full travel time",
+            "has_tilt": "Has a tilt (slat) axis",
+            "tilt_after_arrival": "Tilt only after the position finishes moving"
+          }
+        },
+        "reconfigure": {
+          "title": "Edit blind",
+          "data": {
+            "entity": "[%key:component::cover_logic::config_subentries::blind::step::user::data::entity%]",
+            "facade_azimuth": "[%key:component::cover_logic::config_subentries::blind::step::user::data::facade_azimuth%]",
+            "tolerance": "[%key:component::cover_logic::config_subentries::blind::step::user::data::tolerance%]",
+            "travel_time": "[%key:component::cover_logic::config_subentries::blind::step::user::data::travel_time%]",
+            "has_tilt": "[%key:component::cover_logic::config_subentries::blind::step::user::data::has_tilt%]",
+            "tilt_after_arrival": "[%key:component::cover_logic::config_subentries::blind::step::user::data::tilt_after_arrival%]"
+          }
+        }
+      },
+      "error": {
+        "invalid_config": "[%key:component::cover_logic::config::error::invalid_config%]"
+      },
+      "abort": {
+        "reconfigure_successful": "[%key:common::config_flow::abort::reconfigure_successful%]"
+      }
+    },
+    "zone": {
+      "entry_type": "Zone",
+      "initiate_flow": {
+        "user": "Add zone"
+      },
+      "step": {
+        "user": {
+          "title": "Add zone",
+          "description": "A group of blinds Cover Logic decides together, one rule list at a time.",
+          "data": {
+            "id": "Zone id",
+            "members": "Blinds in this zone",
+            "occupants": "Occupants"
+          }
+        },
+        "reconfigure": {
+          "title": "Edit zone",
+          "data": {
+            "id": "[%key:component::cover_logic::config_subentries::zone::step::user::data::id%]",
+            "members": "[%key:component::cover_logic::config_subentries::zone::step::user::data::members%]",
+            "occupants": "[%key:component::cover_logic::config_subentries::zone::step::user::data::occupants%]"
+          }
+        }
+      },
+      "error": {
+        "invalid_config": "[%key:component::cover_logic::config::error::invalid_config%]"
+      },
+      "abort": {
+        "reconfigure_successful": "[%key:common::config_flow::abort::reconfigure_successful%]"
+      }
+    },
+    "value": {
+      "entry_type": "Value",
+      "initiate_flow": {
+        "user": "Add value"
+      },
+      "step": {
+        "user": {
+          "title": "Add value",
+          "description": "A helper entity read at decision time, for use as !ref in an action.",
+          "data": {
+            "id": "Value id",
+            "entity": "Helper entity",
+            "default": "Default (used if the entity is missing or unreadable)"
+          }
+        },
+        "reconfigure": {
+          "title": "Edit value",
+          "data": {
+            "id": "[%key:component::cover_logic::config_subentries::value::step::user::data::id%]",
+            "entity": "[%key:component::cover_logic::config_subentries::value::step::user::data::entity%]",
+            "default": "[%key:component::cover_logic::config_subentries::value::step::user::data::default%]"
+          }
+        }
+      },
+      "error": {
+        "invalid_config": "[%key:component::cover_logic::config::error::invalid_config%]"
+      },
+      "abort": {
+        "reconfigure_successful": "[%key:common::config_flow::abort::reconfigure_successful%]"
+      }
+    }
   }
 }

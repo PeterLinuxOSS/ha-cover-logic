@@ -15,5 +15,106 @@
     "abort": {
       "already_configured": "Cover Logic je už nastavený, podporovaná je len jedna inštancia."
     }
+  },
+  "config_subentries": {
+    "blind": {
+      "entry_type": "Žalúzia",
+      "initiate_flow": {
+        "user": "Pridať žalúziu"
+      },
+      "step": {
+        "user": {
+          "title": "Pridať žalúziu",
+          "description": "Jedna fyzická žalúzia, pre ktorú Cover Logic určuje polohu a lamely.",
+          "data": {
+            "entity": "Entita žalúzie",
+            "facade_azimuth": "Azimut fasády",
+            "tolerance": "Tolerancia slnečného sektora",
+            "travel_time": "Čas plného dojazdu",
+            "has_tilt": "Má lamelovú os",
+            "tilt_after_arrival": "Lamely nastaviť až po dojazde polohy"
+          }
+        },
+        "reconfigure": {
+          "title": "Upraviť žalúziu",
+          "data": {
+            "entity": "[%key:component::cover_logic::config_subentries::blind::step::user::data::entity%]",
+            "facade_azimuth": "[%key:component::cover_logic::config_subentries::blind::step::user::data::facade_azimuth%]",
+            "tolerance": "[%key:component::cover_logic::config_subentries::blind::step::user::data::tolerance%]",
+            "travel_time": "[%key:component::cover_logic::config_subentries::blind::step::user::data::travel_time%]",
+            "has_tilt": "[%key:component::cover_logic::config_subentries::blind::step::user::data::has_tilt%]",
+            "tilt_after_arrival": "[%key:component::cover_logic::config_subentries::blind::step::user::data::tilt_after_arrival%]"
+          }
+        }
+      },
+      "error": {
+        "invalid_config": "[%key:component::cover_logic::config::error::invalid_config%]"
+      },
+      "abort": {
+        "reconfigure_successful": "[%key:common::config_flow::abort::reconfigure_successful%]"
+      }
+    },
+    "zone": {
+      "entry_type": "Zóna",
+      "initiate_flow": {
+        "user": "Pridať zónu"
+      },
+      "step": {
+        "user": {
+          "title": "Pridať zónu",
+          "description": "Skupina žalúzií, o ktorých Cover Logic rozhoduje spoločne, podľa jedného zoznamu pravidiel.",
+          "data": {
+            "id": "Identifikátor zóny",
+            "members": "Žalúzie v tejto zóne",
+            "occupants": "Obyvatelia"
+          }
+        },
+        "reconfigure": {
+          "title": "Upraviť zónu",
+          "data": {
+            "id": "[%key:component::cover_logic::config_subentries::zone::step::user::data::id%]",
+            "members": "[%key:component::cover_logic::config_subentries::zone::step::user::data::members%]",
+            "occupants": "[%key:component::cover_logic::config_subentries::zone::step::user::data::occupants%]"
+          }
+        }
+      },
+      "error": {
+        "invalid_config": "[%key:component::cover_logic::config::error::invalid_config%]"
+      },
+      "abort": {
+        "reconfigure_successful": "[%key:common::config_flow::abort::reconfigure_successful%]"
+      }
+    },
+    "value": {
+      "entry_type": "Hodnota",
+      "initiate_flow": {
+        "user": "Pridať hodnotu"
+      },
+      "step": {
+        "user": {
+          "title": "Pridať hodnotu",
+          "description": "Entita helpera čítaná v čase rozhodovania, použiteľná ako !ref v akcii.",
+          "data": {
+            "id": "Identifikátor hodnoty",
+            "entity": "Entita helpera",
+            "default": "Predvolená hodnota (ak entita chýba alebo sa nedá prečítať)"
+          }
+        },
+        "reconfigure": {
+          "title": "Upraviť hodnotu",
+          "data": {
+            "id": "[%key:component::cover_logic::config_subentries::value::step::user::data::id%]",
+            "entity": "[%key:component::cover_logic::config_subentries::value::step::user::data::entity%]",
+            "default": "[%key:component::cover_logic::config_subentries::value::step::user::data::default%]"
+          }
+        }
+      },
+      "error": {
+        "invalid_config": "[%key:component::cover_logic::config::error::invalid_config%]"
+      },
+      "abort": {
+        "reconfigure_successful": "[%key:common::config_flow::abort::reconfigure_successful%]"
+      }
+    }
   }
 }
