@@ -1,0 +1,165 @@
+# Example Cover Logic configuration.
+#
+# A different, invented house from the one this repository actually drives
+# (fixtures/dom_peter.yaml) -- see MODELS.md, "The configuration format", for
+# the field-by-field reference this file is a worked example of. This file is
+# loaded and validated by tests/test_example_config.py, so it is guaranteed to
+# stay parseable and error-free; it is NOT wired into any parity check and is
+# never read by the integration itself.
+#
+# The house: a two-bedroom apartment with four windows, one per compass
+# direction, an away/night/home mode split, and a security panel and a
+# temperature sensor as the only two external inputs. Load it yourself with:
+#
+#   from cover_logic.config_schema import load_config_file
+#   config = load_config_file("docs/example-config.yaml")
+
+# --- Blinds -----------------------------------------------------------------
+# One entry per physical cover entity. `facade_azimuth` is the compass
+# bearing (0..360) the window faces; a blind with no fixed orientation can
+# omit it, at the cost of `sun_hits_target` never matching it. `tolerance` is
+# how many degrees either side of `facade_azimuth` count as "the sun is on
+# this facade" (defaults to 45.0 if omitted). `has_tilt: false` marks a
+# roller blind with no slats -- the kitchen's, below.
+blinds:
+  - entity: cover.living_room_balcony
+    facade_azimuth: 180 # south
+    tolerance: 40
+  - entity: cover.bedroom_window
+    facade_azimuth: 90 # east
+  - entity: cover.office_window
+    facade_azimuth: 270 # west
+  - entity: cover.kitchen_window
+    facade_azimuth: 0 # north
+    has_tilt: false # roller blind, no slats
+
+# --- Zones --------------------------------------------------------------
+# Every blind belongs to exactly one zone -- `validate()` reports an error if
+# a blind is in two zones or in none. A zone is the unit of decision (rules
+# are keyed by mode + zone, never by individual blind) and, through
+# `occupants`, the unit `event_targets_zone` checks an arrival against.
+zones:
+  living_room:
+    members: [cover.living_room_balcony]
+  bedroom:
+    members: [cover.bedroom_window]
+    occupants: [alex]
+  office:
+    members: [cover.office_window]
+  kitchen:
+    members: [cover.kitchen_window]
+
+# --- Named conditions ---------------------------------------------------
+# Reusable condition bodies, pulled in elsewhere with `!ref <name>`. The
+# dialect is a subset of Home Assistant's own condition schema (`state`,
+# `numeric_state`, `time`, `template`, `and`/`or`/`not`) plus two
+# target-relative extensions this project adds: `sun_hits_target` (true when
+# the sun is currently inside the blind being decided's own facade sector)
+# and `event_targets_zone` (true when the arrival event names an occupant of
+# the zone being decided). Neither extension exists in stock Home Assistant.
+conditions:
+  house_armed_away:
+    condition: state
+    entity_id: alarm_control_panel.home_alarm
+    state: armed_away
+
+  house_dark:
+    condition: state
+    entity_id: input_boolean.house_dark
+    state: "on"
+
+  sun_up:
+    condition: state
+    entity_id: sun.sun
+    state: above_horizon
+
+  # `default` is mandatory and is what a dead sensor falls back to -- 20 is
+  # deliberately "not a heatwave", so a dead sensor never fakes one.
+  heatwave:
+    condition: numeric_state
+    entity_id: sensor.outdoor_temperature
+    default: 20
+    above: 28
+
+  someone_arrived_here:
+    condition: event_targets_zone
+
+  sun_on_this_facade:
+    condition: sun_hits_target
+
+# --- Helper-backed values ------------------------------------------------
+# A `!ref` in an action's `position`/`tilt` reads a Home Assistant helper at
+# decision time -- truncated to an int, and NOT clamped to 0..100 (see
+# MODELS.md, "Deliberate decisions that look like bugs"). `default` is the
+# fallback used when the helper is missing or unparsable, and is itself
+# checked to be 0..100 at config-parse time, same as a literal axis value.
+values:
+  heatwave_tilt:
+    entity: input_number.heatwave_tilt_target
+    default: 40
+
+# --- Modes ----------------------------------------------------------------
+# Evaluated top to bottom; the first mode whose `when` matches wins. The
+# last mode MUST have no `when` -- it is the fallback, and `validate()`
+# flags a config that gets this wrong (`no_fallback_mode` if none exists at
+# all, `fallback_mode_not_last` if one exists but something follows it).
+modes:
+  - id: away
+    when: !ref house_armed_away
+  - id: night
+    when: !ref house_dark
+  - id: home # fallback: no `when`
+
+# --- Rules ------------------------------------------------------------------
+# Keyed "<mode id>.<zone id>". Within one list, first-match-wins; a rule
+# with no `if` matches everything and so must be last if it is present at
+# all (`validate()` warns about a rule placed after one -- it can never
+# fire). `then` is an action: `position`/`tilt`, each either an integer
+# 0..100, `keep` (touch nothing), or `!ref <value>`. An axis left out of
+# `then` entirely also means `keep` -- the kitchen's rules below never
+# mention `tilt` because the kitchen blind has no tilt axis at all.
+rules:
+  away.living_room:
+    - then: { position: 20, tilt: 0 } # keep the apartment inconspicuous
+  away.bedroom:
+    - then: { position: 20, tilt: 0 }
+  away.office:
+    - then: { position: 20, tilt: 0 }
+  away.kitchen:
+    - then: { position: 20 }
+
+  night.living_room:
+    - then: { position: 0, tilt: 0 }
+  night.bedroom:
+    - then: { position: 0, tilt: 0 }
+  night.office:
+    - then: { position: 0, tilt: 0 }
+  night.kitchen:
+    - then: { position: 0 }
+
+  home.living_room:
+    - if: !ref heatwave
+      then: { position: keep, tilt: !ref heatwave_tilt }
+      name: heatwave shading, leave height alone
+    - if: { condition: and, conditions: [!ref sun_up, !ref sun_on_this_facade] }
+      then: { position: keep, tilt: 20 }
+      name: sun on the balcony door, angle the slats
+    - then: { position: keep, tilt: keep } # otherwise leave it alone
+
+  home.bedroom:
+    - if: !ref someone_arrived_here
+      events: [arrival]
+      then: { position: 100, tilt: 100 }
+      name: open up when its occupant gets home
+    - if: !ref heatwave
+      then: { position: keep, tilt: 40 }
+    - then: { position: keep, tilt: keep }
+
+  home.office:
+    - if: { condition: and, conditions: [!ref sun_up, !ref sun_on_this_facade] }
+      then: { position: keep, tilt: 15 }
+      name: afternoon sun, west-facing
+    - then: { position: keep, tilt: keep }
+
+  home.kitchen:
+    - then: { position: keep }
