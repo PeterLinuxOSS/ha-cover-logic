@@ -129,3 +129,23 @@ def test_world_attributes_snapshot_isolation():
     # World should still report the pre-mutation value
     assert w.attribute("weather.forecast", "wind_speed") == 15.0
     assert w.attribute("weather.forecast", "temp") is None
+
+
+def test_attribute_values_are_deep_copied_not_shared():
+    """A nested attribute value must not stay shared with whoever built the snapshot.
+
+    Home Assistant hands out lists and dicts as attributes (`hvac_modes`,
+    forecast lists) that remain owned by its state machine. A shallow copy of
+    the mapping would leave the snapshot mutable through those objects, which
+    is exactly the guarantee this class exists to provide.
+    """
+    forecast = [{"temperature": 21}]
+    source = {("weather.home", "forecast"): forecast}
+
+    world = World(states={}, attributes=source, now=NOW, event=Event())
+
+    forecast[0]["temperature"] = 99
+    forecast.append({"temperature": 30})
+
+    snapshot = world.attribute("weather.home", "forecast")
+    assert snapshot == [{"temperature": 21}]

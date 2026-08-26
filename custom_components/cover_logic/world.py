@@ -6,6 +6,7 @@ changes underneath while the decision is being acted upon.
 """
 
 from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass, field
 import datetime as dt
 from typing import Any
@@ -49,10 +50,18 @@ class World:
     def __post_init__(self) -> None:
         """Copy the mappings so the snapshot cannot be changed from outside.
 
+        States are strings, so copying the mapping is enough. Attribute values
+        are not: Home Assistant hands out lists and dicts (`hvac_modes`,
+        forecast lists) that stay shared with its state machine, so a shallow
+        copy would leave the snapshot mutable through those objects -- exactly
+        what this class exists to prevent. Only the referenced attributes are
+        ever in here, a handful of entries, so deep-copying costs nothing worth
+        measuring.
+
         See docs/rationale.md -- "Why `World` takes a defensive copy".
         """
         object.__setattr__(self, "states", dict(self.states))
-        object.__setattr__(self, "attributes", dict(self.attributes))
+        object.__setattr__(self, "attributes", deepcopy(dict(self.attributes)))
 
     def state(self, entity_id: str) -> str | None:
         """Return the entity's state, or `None` if it is not in the snapshot."""
