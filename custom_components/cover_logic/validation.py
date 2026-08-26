@@ -357,6 +357,37 @@ def _check_condition_shape(node: dict, where: str) -> list[Problem]:
     return out
 
 
+def check_duplicate_rule_order(orders: dict[str, list[int]]) -> list[Problem]:
+    """Flag more than one rule subentry claiming the same `order` in one key.
+
+    `orders` maps a `"<mode id>.<zone id>"` key to the `order` of every rule
+    subentry filed under it, in whatever order `config_store` happened to
+    collect them. Not part of `validate()`: rules are first-match-wins, so a
+    subentry author's `order` *is* the behaviour, and Home Assistant
+    subentries are a flat list with no native reordering -- but once
+    `config_store.config_from_subentries` sorts a tie into `Config.rules`'s
+    plain tuple, the tie is gone and indistinguishable from a deliberate
+    sequence. This must run over the subentry-side grouping, before that
+    happens, or a duplicate `order` becomes a silent pick the UI never shows
+    as ambiguous. See `config_store.duplicate_rule_order_problems`, the only
+    caller.
+    """
+    out: list[Problem] = []
+    for key, key_orders in orders.items():
+        seen: set[int] = set()
+        for order in key_orders:
+            if order in seen:
+                out.append(
+                    Problem(
+                        ERROR,
+                        "duplicate_rule_order",
+                        f"{key}: more than one rule has order={order}",
+                    )
+                )
+            seen.add(order)
+    return out
+
+
 def _check_condition_shapes(config: Config) -> list[Problem]:
     """Check every condition body's shape: known type, required keys present.
 
