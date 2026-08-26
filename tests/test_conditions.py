@@ -112,6 +112,25 @@ def test_time_window_crossing_midnight():
     assert evaluate_condition(cond, world(now=dt.datetime(2026, 8, 19, 3, 0))) is True
 
 
+def test_time_after_honours_seconds():
+    cond = {"condition": "time", "after": "13:00:30"}
+    assert evaluate_condition(cond, world(now=dt.datetime(2026, 8, 19, 13, 0, 29))) is False
+    assert evaluate_condition(cond, world(now=dt.datetime(2026, 8, 19, 13, 0, 30))) is True
+
+
+def test_time_window_straddling_midnight_honours_seconds():
+    # Reviewer's example: truncating "23:59:30"/"00:00:30" to HH:MM collapses
+    # the window to 23:59-00:00, and the wrap-around branch's second disjunct
+    # (`now < before`) is then never true for any real clock reading, so the
+    # intended in-window minute around midnight evaluates False. Seconds must
+    # be honoured for the window to mean what it says.
+    cond = {"condition": "time", "after": "23:59:30", "before": "00:00:30"}
+    assert evaluate_condition(cond, world(now=dt.datetime(2026, 8, 19, 23, 59, 0))) is False
+    assert evaluate_condition(cond, world(now=dt.datetime(2026, 8, 19, 23, 59, 45))) is True
+    assert evaluate_condition(cond, world(now=dt.datetime(2026, 8, 20, 0, 0, 15))) is True
+    assert evaluate_condition(cond, world(now=dt.datetime(2026, 8, 20, 0, 0, 45))) is False
+
+
 def test_and_or_not():
     w = world({"a": "on"})
     on = {"condition": "state", "entity_id": "a", "state": "on"}

@@ -136,8 +136,17 @@ def _numeric_state(cond: dict, world: World) -> bool:
 
 
 def _parse_hhmm(text: str) -> dt.time:
-    hour, minute = (int(part) for part in text.split(":")[:2])
-    return dt.time(hour=hour, minute=minute)
+    """Parse `HH:MM` or `HH:MM:SS`, honouring seconds when given.
+
+    Home Assistant's own `cv.time` accepts `HH:MM:SS`, and this module's
+    docstring claims to be a subset of the native condition schema -- a time
+    condition copied out of HA's UI must not be silently truncated to the
+    minute. `today_at`'s HH:MM-only default ("00:00") still works: a missing
+    third field defaults to 0 seconds, same as before.
+    """
+    hour_text, minute_text, *rest = text.split(":")
+    second = int(rest[0]) if rest else 0
+    return dt.time(hour=int(hour_text), minute=int(minute_text), second=second)
 
 
 def _time(cond: dict, world: World) -> bool:
