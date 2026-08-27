@@ -190,10 +190,10 @@ def test_blind_reconfigure_updates_the_existing_subentry(subentry_entry, subentr
 
 def test_blind_add_is_not_blocked_by_having_no_zone_yet(subentry_entry, subentry_hass):
     """A first blind, alone, would fail `validate()`'s `blind_without_zone` and
-    `no_fallback_mode` -- both are transient artefacts of building a config
-    one subentry type at a time, not a problem with this blind, and must not
-    block the save while no `zone`/`mode` subentry exists yet. See
-    `config_flow._transient_error_codes`.
+    `no_fallback_mode` -- neither is a problem the blind form's own fields
+    (`entity`, `tolerance`, ...) can address, since it has no `members` or
+    `when` field, so neither blocks a blind save. See
+    `config_flow._CODE_OWNERS`/`_blocks_on`.
     """
     entry = subentry_entry()
     flow = _make_flow(BlindSubentryFlowHandler, subentry_hass(entry), BLIND)
@@ -469,21 +469,148 @@ def test_config_built_through_the_flows_matches_the_equivalent_yaml(subentry_ent
 
 
 # ---------------------------------------------------------------------------
-# `_transient_error_codes`: the exemption tracks subentry state, not a
-# fixed set (finding 1 -- see `config_flow._transient_error_codes`'s
-# docstring for the full reasoning this pair of tests exercises)
+# the regression this fix pass exists for: the *sequence* a human performs,
+# not any single step in isolation. The suite above checks one step at a
+# time (add a blind, add a zone, ...); that is exactly how the ordering
+# deadlock this fix pass corrects (`a143b86`) passed review unnoticed --
+# each step it broke, in isolation, still looked fine on its own.
 # ---------------------------------------------------------------------------
 
 
-def test_no_fallback_mode_blocks_once_a_mode_subentry_exists(subentry_entry, subentry_hass):
+def test_full_build_up_sequence_a_human_would_perform(subentry_entry, subentry_hass):
+    """Walks a complete, realistic build-up in the order a person clicking
+    through the UI would actually produce it, asserting every single save
+    succeeds -- including the one step order that used to deadlock: adding
+    a *second* blind after a zone already exists (step 3). Before this fix,
+    that step failed with `blind_without_zone` and there was no way to
+    recover -- the blind form has no field that could ever satisfy it (see
+    `test_blind_add_is_never_blocked_by_blind_without_zone` for that same
+    defect in isolation, and the task brief for the reproduction that found
+    it). The finished config must still equal exactly what building the same
+    configuration in one shot
+    (`test_config_built_through_the_flows_matches_the_equivalent_yaml`,
+    above) produces, through `config_from_subentries` -- proving the
+    ownership-based exemption changes *when* a save is accepted, not *what*
+    ends up saved.
+    """
+    entry = subentry_entry()
+    hass = subentry_hass(entry)
+
+    # 1. Add the first blind. No zone exists yet -- the uncontroversial case
+    # even the pre-fix exemption handled.
+    blind_a = asyncio.run(
+        _make_flow(BlindSubentryFlowHandler, hass, BLIND).async_step_user(
+            {
+                "entity": "cover.a",
+                "tolerance": 30,
+                "travel_time": 90,
+                "has_tilt": True,
+                "tilt_after_arrival": True,
+            }
+        )
+    )
+    assert blind_a["type"] is FlowResultType.CREATE_ENTRY
+    blind_a_id = entry.add_subentry(BLIND, blind_a["data"], title=blind_a["title"])
+
+    # 2. Add a zone that claims it -- the ordinary "just added the blind,
+    # now give it a zone" step.
+    zone = asyncio.run(
+        _make_flow(ZoneSubentryFlowHandler, hass, ZONE).async_step_user(
+            {"id": "terasa", "members": ["cover.a"], "occupants": ["peter"]}
+        )
+    )
+    assert zone["type"] is FlowResultType.CREATE_ENTRY
+    zone_id = entry.add_subentry(ZONE, zone["data"], title=zone["title"])
+
+    # 3. Add a *second* blind, now that a zone already exists -- the exact
+    # step `a143b86` deadlocked on: `blind_without_zone` used to stay
+    # enforced (dropped only while zero `zone` subentries existed), and a
+    # blind cannot be a zone member before it exists as its own subentry, so
+    # there was no order in which this step and the zone's own `members`
+    # update could both succeed.
+    blind_b = asyncio.run(
+        _make_flow(BlindSubentryFlowHandler, hass, BLIND).async_step_user(
+            {
+                "entity": "cover.b",
+                "tolerance": 45,
+                "travel_time": 60,
+                "has_tilt": True,
+                "tilt_after_arrival": True,
+            }
+        )
+    )
+    assert blind_b["type"] is FlowResultType.CREATE_ENTRY
+    entry.add_subentry(BLIND, blind_b["data"], title=blind_b["title"])
+
+    # 4. Add a `values:` entry -- unrelated to blinds/zones, must not be
+    # blocked by cover.b still sitting outside every zone at this point.
+    value = asyncio.run(
+        _make_flow(ValueSubentryFlowHandler, hass, VALUE).async_step_user(
+            {"id": "kvety_poz", "entity": "input_number.kvety_pozicia_zaluzie", "default": 34}
+        )
+    )
+    assert value["type"] is FlowResultType.CREATE_ENTRY
+    entry.add_subentry(VALUE, value["data"], title=value["title"])
+
+    # 5. Go back and claim cover.b too, by editing the zone from step 2.
+    zone_edit = asyncio.run(
+        _make_flow(ZoneSubentryFlowHandler, hass, ZONE, subentry_id=zone_id).async_step_reconfigure(
+            {"id": "terasa", "members": ["cover.a", "cover.b"], "occupants": ["peter"]}
+        )
+    )
+    assert zone_edit["type"] is FlowResultType.ABORT
+    assert zone_edit["reason"] == "reconfigure_successful"
+
+    # 6. Edit the first blind's own settings -- an ordinary update with
+    # nothing to do with zone membership, exercised last to prove the
+    # earlier steps left the entry in a state further edits still work on.
+    blind_edit = asyncio.run(
+        _make_flow(
+            BlindSubentryFlowHandler, hass, BLIND, subentry_id=blind_a_id
+        ).async_step_reconfigure(
+            {
+                "entity": "cover.a",
+                "facade_azimuth": 270,
+                "tolerance": 30,
+                "travel_time": 90,
+                "has_tilt": True,
+                "tilt_after_arrival": False,
+            }
+        )
+    )
+    assert blind_edit["type"] is FlowResultType.ABORT
+    assert blind_edit["reason"] == "reconfigure_successful"
+
+    built = config_from_subentries(entry)
+    assert built == load_config(_EQUIVALENT_YAML)
+
+
+# ---------------------------------------------------------------------------
+# `_CODE_OWNERS`/`_blocks_on`: a problem blocks a save only if the form being
+# submitted is the one whose fields could fix it (see that pair's own
+# docstring in `config_flow.py`, and the task brief this fix pass answers).
+# This is also the regression coverage for the defect the fix pass exists
+# for: `a143b86` blocked adding a second blind the moment any `zone`
+# subentry existed at all -- an ordering deadlock, since a blind must exist
+# *before* a zone can list it as a member, so the first zone a user ever
+# creates permanently locks out adding another blind. That is exactly the
+# scenario `test_blind_add_is_never_blocked_by_blind_without_zone` below
+# drives.
+# ---------------------------------------------------------------------------
+
+
+def test_no_fallback_mode_never_blocks_a_value_even_once_a_mode_subentry_exists(
+    subentry_entry, subentry_hass
+):
     """No `mode` subentry *flow* exists yet, but `config_store.
     config_from_subentries` already reads a `mode` subentry if one is
     present -- a later task's flow, or any other producer of subentries,
-    would create exactly this state. `no_fallback_mode` must stop being
-    exempt the moment that happens, not stay exempt forever because no flow
-    happened to create it. Seeded directly via `add_subentry`, the same way
-    `tests/test_config_store.py` builds a fake entry with a `mode` subentry
-    -- there is no flow to drive it through yet.
+    would create exactly this state. Seeded directly via `add_subentry`, the
+    same way `tests/test_config_store.py` builds a fake entry with a `mode`
+    subentry, to prove the point either way: a `value` form has no `when`
+    field, so it is not how a user would fix `no_fallback_mode` no matter
+    what else exists in the entry, and must not be blocked by it -- see
+    `config_flow._CODE_OWNERS`.
     """
     entry = subentry_entry()
     entry.add_subentry(
@@ -502,20 +629,20 @@ def test_no_fallback_mode_blocks_once_a_mode_subentry_exists(subentry_entry, sub
         )
     )
 
-    assert result["type"] is FlowResultType.FORM
-    assert result["errors"] == {"base": "invalid_config"}
-    assert "no_fallback_mode" in result["description_placeholders"]["error_detail"]
-    # Rejected, not created: no value subentry exists.
-    assert not any(s.subentry_type == VALUE for s in entry.subentries.values())
+    assert result["type"] is FlowResultType.CREATE_ENTRY
 
 
-def test_blind_without_zone_blocks_once_a_zone_subentry_exists(subentry_entry, subentry_hass):
-    """Unlike `no_fallback_mode`, `blind_without_zone`'s exemption cannot rely
-    on "the subentry type that would resolve it does not exist yet" -- the
-    `zone` type already exists in this very phase. Once at least one `zone`
-    subentry exists, a blind still outside every zone is no longer the
-    "just added it, about to add its zone next" case the exemption protects
-    -- the user already has the tool (this same zone, or another) to fix it.
+def test_blind_add_is_never_blocked_by_blind_without_zone(subentry_entry, subentry_hass):
+    """Reproduces the defect this fix pass exists for. Before the fix,
+    `_transient_error_codes` exempted `blind_without_zone` only while zero
+    `zone` subentries existed -- so the instant a user created their first
+    zone, `blind_without_zone` started blocking every subsequent blind add,
+    permanently: a blind must exist before a zone can list it as a member,
+    so there is no way to satisfy the check for a brand new blind without
+    first being allowed to save it unclaimed. The blind form has no
+    `members` field; it was never the form that could fix this, at any
+    point, regardless of what else exists -- see `config_flow._CODE_OWNERS`,
+    which now says so directly instead of tracking zone existence.
     """
     entry = subentry_entry()
     entry.add_subentry(BLIND, {"entity": "cover.a", "tolerance": 45, "travel_time": 60})
@@ -534,11 +661,37 @@ def test_blind_without_zone_blocks_once_a_zone_subentry_exists(subentry_entry, s
         )
     )
 
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    entry.add_subentry(BLIND, result["data"], title=result["title"])
+    assert len([s for s in entry.subentries.values() if s.subentry_type == BLIND]) == 2
+
+
+def test_zone_edit_that_orphans_a_blind_is_still_blocked(subentry_entry, subentry_hass):
+    """The fix above must not widen into "blind_without_zone never blocks
+    anything": a `zone` form's own `members` field is exactly what decides a
+    blind's zone membership, so a zone edit that drops a blind out of
+    `members` -- genuinely orphaning it -- is a problem that same form
+    caused and can fix (by keeping the member, or adding it to another
+    zone), and must still block. See the task brief's own example of this.
+    """
+    entry = subentry_entry()
+    entry.add_subentry(BLIND, {"entity": "cover.a", "tolerance": 45, "travel_time": 60})
+    entry.add_subentry(BLIND, {"entity": "cover.b", "tolerance": 45, "travel_time": 60})
+    zone_id = entry.add_subentry(
+        ZONE, {"id": "terasa", "members": ["cover.a", "cover.b"], "occupants": []}
+    )
+    flow = _make_flow(ZoneSubentryFlowHandler, subentry_hass(entry), ZONE, subentry_id=zone_id)
+
+    # Drop cover.b out of the zone's members -- it now belongs to no zone.
+    result = asyncio.run(
+        flow.async_step_reconfigure({"id": "terasa", "members": ["cover.a"], "occupants": []})
+    )
+
     assert result["type"] is FlowResultType.FORM
     assert result["errors"] == {"base": "invalid_config"}
     assert "blind_without_zone" in result["description_placeholders"]["error_detail"]
-    # Rejected, not created: only the one blind seeded above exists.
-    assert len([s for s in entry.subentries.values() if s.subentry_type == BLIND]) == 1
+    # Rejected, not applied: the zone still owns both blinds.
+    assert entry.subentries[zone_id].data["members"] == ["cover.a", "cover.b"]
 
 
 # ---------------------------------------------------------------------------

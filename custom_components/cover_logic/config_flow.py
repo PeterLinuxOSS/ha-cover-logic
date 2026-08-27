@@ -38,6 +38,7 @@ from .config_store import (
     _ID_KEY,
     BLIND,
     MODE,
+    RULE,
     VALUE,
     ZONE,
     config_from_subentries,
@@ -149,52 +150,58 @@ class CoverLogicConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 _NEW_SUBENTRY_ID = "__new__"
 
 
-def _transient_error_codes(subentries: dict[str, Any]) -> frozenset[str]:
-    """ERROR-severity `validation.Problem` codes to drop for this candidate's subentry mix.
+# Every ERROR-severity `validation.Problem.code` mapped to the one subentry
+# type whose *own form* is where a user actually resolves it -- not the type
+# that happened to be open when `validate()` noticed it. A blind's form has
+# no `members` field, so saving a blind can never fix `blind_without_zone`
+# no matter what else is true of the candidate; only a `zone` form's
+# `members` can. That is the rule the task brief states directly: "a
+# validation problem should block a form only if that form could fix it."
+# `_blocks_on`, below, is the one place this is read.
+#
+# A code missing from this dict has no owning subentry type *yet*: `mode`,
+# `condition` and `rule` have no flow in this phase (see the module
+# docstring / `SUBENTRY_FLOW_HANDLERS`'s own comment), so a problem only a
+# future flow could fix -- rule ordering, mode-fallback ordering, a
+# condition's own shape -- can never be something a `blind`/`zone`/`value`
+# save either caused or could address. This needs no "which flows exist"
+# check of its own: `_blocking_errors` only ever calls `_blocks_on` with the
+# `subentry_type` of a flow that actually exists (there is no other caller),
+# so a code whose owner has no flow yet simply never matches and is exempt
+# for every save -- automatically, not by a separate "is this phase" test.
+# The day a `mode` flow is added, giving `no_fallback_mode` and
+# `fallback_mode_not_last` their `MODE` entries (already here, ready for it)
+# makes mode saves start enforcing them against themselves, with no change
+# needed here or in `_blocking_errors` -- exactly the "must not silently
+# outlive its justification" property the previous, subentries-mix-based
+# version of this exemption was trying, more awkwardly, to get right.
+_CODE_OWNERS: dict[str, str] = {
+    "zone_member_unknown": ZONE,
+    "blind_in_two_zones": ZONE,
+    "blind_without_zone": ZONE,
+    "no_fallback_mode": MODE,
+    "fallback_mode_not_last": MODE,
+    "unknown_rule_key": RULE,
+    "duplicate_rule_order": RULE,
+    # `unknown_condition_ref`, `bad_condition_shape` and `circular_condition_ref`
+    # can each originate inside a `condition` body, a `mode.when` or a
+    # `rule.if` -- there is no single subentry type that owns fixing them,
+    # so they are left out on purpose rather than guessed at. None of
+    # `mode`/`condition`/`rule` has a flow yet, so this is a no-op today;
+    # whichever of those flows is built first should decide, and add, the
+    # right entry (or entries) for these three then.
+}
 
-    Neither code is exempt forever -- each is exempt only while the subentry
-    type that would let a user actually *fix* it does not exist yet in
-    `subentries`. The moment that type appears, the same problem stops being
-    "haven't gotten there yet" and starts being something the form that just
-    ran could have addressed, so the exemption must lift on that same save,
-    not some later phase. Computed from `subentries` fresh on every call
-    (never cached) so it reflects the *candidate* -- existing subentries plus
-    whatever is about to be saved -- not just what was on disk before this
-    step ran; see `_blocking_errors`, the only caller.
 
-    - `no_fallback_mode` needs at least one `mode` subentry to mean anything:
-      with zero, `config.modes` is empty in literally every configuration
-      buildable in this phase (no `mode` subentry flow exists yet), so the
-      code cannot distinguish "the feature to fix this does not exist yet"
-      from "modes exist but none is a fallback" -- those are the same state,
-      always, until a `mode` flow exists. The instant a `mode` subentry
-      exists -- even the very first one, saved in this very step -- that
-      question becomes real and answerable, so it is enforced from then on.
-    - `blind_without_zone` cannot reuse that reasoning as-is: unlike `mode`,
-      the `zone` subentry type already exists in this phase, so "no zone
-      subentry flow exists yet" is not true today and this code is not
-      unconditionally unanswerable the way `no_fallback_mode` is. What
-      remains true is the *narrower* claim the task brief actually makes:
-      a lone blind with no zone, before any zone exists at all, is the
-      ordinary "just added the blind, about to go add its zone next" case.
-      Once at least one zone subentry exists, an unclaimed blind is no
-      longer that -- the user already has the tool to fix it (add it to
-      that zone, or another) -- so this exemption lifts on a shorter fuse
-      than `no_fallback_mode`'s: as soon as any `zone` subentry exists, not
-      only once every blind has one.
+def _blocks_on(subentry_type: str, code: str) -> bool:
+    """Whether saving a `subentry_type` subentry is how a user would resolve `code`.
 
-    Both are dropped uniformly across all three flows (see
-    `_blocking_errors`) rather than per-type, because both are properties of
-    the *whole* config, not of any one subentry -- the same reason
-    `config_store.config_from_subentries` does not special-case them either.
+    See `_CODE_OWNERS` for the mapping and the reasoning; this is the one
+    place that reads it, so a code missing or misspelled there fails as
+    "never blocks anything" -- caught by a test asserting that code *does*
+    block its owning form -- rather than as a crash.
     """
-    present_types = {sub.subentry_type for sub in subentries.values()}
-    codes = set()
-    if MODE not in present_types:
-        codes.add("no_fallback_mode")
-    if ZONE not in present_types:
-        codes.add("blind_without_zone")
-    return frozenset(codes)
+    return _CODE_OWNERS.get(code) == subentry_type
 
 
 class _SubentryStub:
@@ -289,11 +296,10 @@ def _blocking_errors(
     here so nothing has to change when one is added).
 
     Only `ERROR`-severity `validate()` problems block, matching how
-    `_describe_problems` above treats the YAML path; codes from
-    `_transient_error_codes` are dropped even at `ERROR` severity for the
-    reason given on that function -- computed from this candidate's own
-    subentries, not a fixed set, so the exemption tracks what is actually
-    still unbuildable in this phase rather than outliving it.
+    `_describe_problems` above treats the YAML path -- and even then, only
+    the ones `_blocks_on` says `subentry_type`'s own form can actually
+    resolve; see `_CODE_OWNERS` for which those are and why the rest do not
+    block a save that could not have fixed them anyway.
     """
     candidate_id = data.get(id_key)
     duplicate = _duplicate_errors(entry, subentry_type, subentry_id, id_key, candidate_id)
@@ -306,12 +312,11 @@ def _blocking_errors(
     except ConfigError as err:
         return [str(err)]
 
-    exempt = _transient_error_codes(candidate.subentries)
     problems = validate(config) + duplicate_rule_order_problems(candidate)
     return [
         f"{problem.code}: {problem.message}"
         for problem in problems
-        if problem.severity == ERROR and problem.code not in exempt
+        if problem.severity == ERROR and _blocks_on(subentry_type, problem.code)
     ]
 
 
