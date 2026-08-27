@@ -91,3 +91,29 @@ def test_parity_on_the_whole_space(config):
     assert len(all_scenarios) == 92_160, len(all_scenarios)
     problems = compare(config, all_scenarios)
     assert not problems, "".join(problems)
+
+
+# `Stav.dvere` (the terrace door sensor) defaults to "on" (open) in every one
+# of the 92 160 scenarios above -- deliberately, so that base space stays
+# bit-for-bit unchanged (see /config/tests/test_zaluzie_matica.py's own
+# comment next to `DVERE_VZORKA`). That means the three tests above hold the
+# door reading constant and never exercise the door-closed branch this
+# fixture's `horucava.terasa` gained on 2026-08-27 -- a gate that never moves
+# an axis proves nothing about it. Mirror the same sample-don't-multiply
+# trade-off the house-side harness already made for itself, rather than
+# silently trusting a branch nothing here ever turns on.
+DOOR_READINGS = ("off", "unavailable", "unknown")
+
+
+def test_parity_with_terrace_door_variants(config):
+    """Force the door sensor through every reading `dvere_zatvorene` can see.
+
+    'off' exercises the new closed branch itself; 'unavailable'/'unknown'
+    exercise the safe-direction requirement (treated as open, not closed).
+    Sampled at the same stride as `test_parity_on_a_sample` for the same
+    reason -- fast feedback, not the exhaustive claim `test_parity_on_the_
+    whole_space` makes.
+    """
+    sample = [s.s(dvere=reading) for s in scenarios()[::97] for reading in DOOR_READINGS]
+    problems = compare(config, sample)
+    assert not problems, "".join(problems)

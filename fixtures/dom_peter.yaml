@@ -86,6 +86,15 @@ conditions:
       - {condition: state, entity_id: input_boolean.cover_down, state: "off"}
       - {condition: time, after: "12:30"}
 
+  # 2026-08-27: `terasa` (dverová _1_3) teraz pozná stav terasových dverí.
+  # `off` = zatvorené. `unavailable`/`unknown` sa zámerne NEROVNÁ `"off"`,
+  # takže padajú do "nie sú zatvorené" — rovnaký bezpečný smer (nechať vetvu
+  # bez dverí), aký má configuration.yaml pre mŕtvy/neznámy senzor.
+  dvere_zatvorene:
+    condition: state
+    entity_id: binary_sensor.obyvacka_dvere_senzor
+    state: "off"
+
   kvety_on:     {condition: state, entity_id: input_boolean.kvety_on, state: "on"}
   nie_kvety_on: {condition: state, entity_id: input_boolean.kvety_on, state: "off"}
 
@@ -192,6 +201,18 @@ rules:
     - {events: [arrival], if: !ref vecer,            then: {position: keep, tilt: keep}}
     - {events: [arrival], if: !ref pocasie_otvorene, then: {position: keep, tilt: 100}}
     - {events: [arrival], then: {position: 100, tilt: keep}}
+    # 2026-08-27: dvere zatvorené => tieni presne ako `terasa2` (rovnaký
+    # strana-based výpočet), bez ohľadu na vecer/pocasie_otvorene/hocikto/
+    # vstali — tie riešia LEN vytiahnutie hore, a to nehrozí, keď je cieľ
+    # dole. `dvere_zatvorene` musí byť prvá podmienka v reťazci (je to
+    # najvonkajšia `if` v šablóne) a `pocasie_otvorene` musí predchádzať
+    # `sun_hits_target` v rámci nej z rovnakého dôvodu ako v `terasa2`
+    # nižšie: `strana` je 'ziadna' pri zamračení, takže slnečná vetva by
+    # inak vyhrala aj vtedy, keď byť nemá. Platí len pre stavovú variantu —
+    # `zp` v šablóne o dverách nič nevie.
+    - {if: [!ref dvere_zatvorene, !ref pocasie_otvorene], then: {position: 0, tilt: 100}}
+    - {if: [!ref dvere_zatvorene, {condition: sun_hits_target}], then: {position: 0, tilt: 50}}
+    - {if: !ref dvere_zatvorene, then: {position: 0, tilt: 100}}
     - {if: !ref vecer,            then: {position: keep, tilt: keep}}
     - {if: !ref pocasie_otvorene, then: {position: keep, tilt: 100}}
     - {if: {condition: sun_hits_target}, then: {position: 0, tilt: 50}}
