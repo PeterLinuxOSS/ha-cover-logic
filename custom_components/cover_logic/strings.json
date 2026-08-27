@@ -115,6 +115,68 @@
       "abort": {
         "reconfigure_successful": "[%key:common::config_flow::abort::reconfigure_successful%]"
       }
+    },
+    "condition": {
+      "entry_type": "Condition",
+      "initiate_flow": {
+        "user": "Add condition"
+      },
+      "step": {
+        "user": {
+          "title": "Add condition",
+          "description": "A named, reusable condition. Reference it by name from a mode's condition or from inside another condition.",
+          "data": {
+            "id": "Condition id",
+            "condition": "Condition"
+          }
+        },
+        "reconfigure": {
+          "title": "Edit condition",
+          "data": {
+            "id": "[%key:component::cover_logic::config_subentries::condition::step::user::data::id%]",
+            "condition": "[%key:component::cover_logic::config_subentries::condition::step::user::data::condition%]"
+          }
+        }
+      },
+      "error": {
+        "invalid_config": "[%key:component::cover_logic::config::error::invalid_config%]"
+      },
+      "abort": {
+        "reconfigure_successful": "[%key:common::config_flow::abort::reconfigure_successful%]"
+      }
+    },
+    "mode": {
+      "entry_type": "Mode",
+      "initiate_flow": {
+        "user": "Add mode"
+      },
+      "step": {
+        "user": {
+          "title": "Add mode",
+          "description": "The first mode whose condition matches decides every zone's rules. The last mode, tried when nothing else matches, must have neither a named nor an inline condition.",
+          "data": {
+            "id": "Mode id",
+            "order": "Order (lower is tried first; the fallback mode must have the highest order)",
+            "condition_ref": "Named condition (leave empty to build one inline, or to make this the fallback mode)",
+            "when": "Inline condition (leave empty if using a named condition, or to make this the fallback mode)"
+          }
+        },
+        "reconfigure": {
+          "title": "Edit mode",
+          "data": {
+            "id": "[%key:component::cover_logic::config_subentries::mode::step::user::data::id%]",
+            "order": "[%key:component::cover_logic::config_subentries::mode::step::user::data::order%]",
+            "condition_ref": "[%key:component::cover_logic::config_subentries::mode::step::user::data::condition_ref%]",
+            "when": "[%key:component::cover_logic::config_subentries::mode::step::user::data::when%]"
+          }
+        }
+      },
+      "error": {
+        "invalid_config": "[%key:component::cover_logic::config::error::invalid_config%]"
+      },
+      "abort": {
+        "reconfigure_successful": "[%key:common::config_flow::abort::reconfigure_successful%]"
+      }
     }
   }
 }

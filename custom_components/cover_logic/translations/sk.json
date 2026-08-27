@@ -115,6 +115,68 @@
       "abort": {
         "reconfigure_successful": "[%key:common::config_flow::abort::reconfigure_successful%]"
       }
+    },
+    "condition": {
+      "entry_type": "Podmienka",
+      "initiate_flow": {
+        "user": "Pridať podmienku"
+      },
+      "step": {
+        "user": {
+          "title": "Pridať podmienku",
+          "description": "Pomenovaná, znovupoužiteľná podmienka. Odkážte na ňu podľa mena z podmienky režimu alebo spomedzi inej podmienky.",
+          "data": {
+            "id": "Identifikátor podmienky",
+            "condition": "Podmienka"
+          }
+        },
+        "reconfigure": {
+          "title": "Upraviť podmienku",
+          "data": {
+            "id": "[%key:component::cover_logic::config_subentries::condition::step::user::data::id%]",
+            "condition": "[%key:component::cover_logic::config_subentries::condition::step::user::data::condition%]"
+          }
+        }
+      },
+      "error": {
+        "invalid_config": "[%key:component::cover_logic::config::error::invalid_config%]"
+      },
+      "abort": {
+        "reconfigure_successful": "[%key:common::config_flow::abort::reconfigure_successful%]"
+      }
+    },
+    "mode": {
+      "entry_type": "Režim",
+      "initiate_flow": {
+        "user": "Pridať režim"
+      },
+      "step": {
+        "user": {
+          "title": "Pridať režim",
+          "description": "O pravidlách každej zóny rozhoduje prvý režim, ktorého podmienka sa splní. Posledný režim, skúšaný keď nesedí nič iné, nesmie mať ani pomenovanú, ani vloženú podmienku.",
+          "data": {
+            "id": "Identifikátor režimu",
+            "order": "Poradie (nižšie sa skúša skôr; záložný režim musí mať najvyššie poradie)",
+            "condition_ref": "Pomenovaná podmienka (nechajte prázdne pre vloženú podmienku, alebo aby bol tento režim záložný)",
+            "when": "Vložená podmienka (nechajte prázdne pri použití pomenovanej podmienky, alebo aby bol tento režim záložný)"
+          }
+        },
+        "reconfigure": {
+          "title": "Upraviť režim",
+          "data": {
+            "id": "[%key:component::cover_logic::config_subentries::mode::step::user::data::id%]",
+            "order": "[%key:component::cover_logic::config_subentries::mode::step::user::data::order%]",
+            "condition_ref": "[%key:component::cover_logic::config_subentries::mode::step::user::data::condition_ref%]",
+            "when": "[%key:component::cover_logic::config_subentries::mode::step::user::data::when%]"
+          }
+        }
+      },
+      "error": {
+        "invalid_config": "[%key:component::cover_logic::config::error::invalid_config%]"
+      },
+      "abort": {
+        "reconfigure_successful": "[%key:common::config_flow::abort::reconfigure_successful%]"
+      }
     }
   }
 }

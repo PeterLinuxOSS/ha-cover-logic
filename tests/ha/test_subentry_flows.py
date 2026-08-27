@@ -1,4 +1,4 @@
-"""Tests for the `blind`/`zone`/`value` subentry flows in `config_flow.py`.
+"""Tests for the `blind`/`zone`/`value`/`condition`/`mode` subentry flows in `config_flow.py`.
 
 Imports Home Assistant, so this module only collects under the Python 3.14
 venv -- see `test_config_flow.py`'s own note.
@@ -25,10 +25,13 @@ pytest.importorskip("homeassistant")
 from homeassistant.data_entry_flow import FlowResultType
 import voluptuous as vol
 
+from cover_logic.conditions import evaluate_condition
 from cover_logic.config_flow import (
     SUBENTRY_FLOW_HANDLERS,
     BlindSubentryFlowHandler,
+    ConditionSubentryFlowHandler,
     CoverLogicConfigFlow,
+    ModeSubentryFlowHandler,
     ValueSubentryFlowHandler,
     ZoneSubentryFlowHandler,
 )
@@ -39,8 +42,19 @@ from cover_logic.config_schema import (
     _parse_values,
     load_config,
 )
-from cover_logic.config_store import _ID_KEY, BLIND, MODE, VALUE, ZONE, config_from_subentries
+from cover_logic.config_store import (
+    _ID_KEY,
+    BLIND,
+    CONDITION,
+    MODE,
+    VALUE,
+    ZONE,
+    config_from_subentries,
+    duplicate_rule_order_problems,
+)
 from cover_logic.model import Blind, Ref
+from cover_logic.validation import ERROR, validate
+from cover_logic.world import World
 
 _ENTRY_ID = "entry1"
 
@@ -74,11 +88,11 @@ def _schema_keys(result):
 # ---------------------------------------------------------------------------
 
 
-def test_supported_subentry_types_includes_blind_zone_value():
+def test_supported_subentry_types_includes_blind_zone_value_condition_mode():
     types = CoverLogicConfigFlow.async_get_supported_subentry_types(None)
 
     assert types is SUBENTRY_FLOW_HANDLERS
-    assert set(types) == {BLIND, ZONE, VALUE}
+    assert set(types) == {BLIND, ZONE, VALUE, CONDITION, MODE}
 
 
 def test_blind_add_shows_a_form_with_the_expected_fields(subentry_entry, subentry_hass):
@@ -746,3 +760,641 @@ def test_value_minimal_submission_coerces_to_the_parser_default(subentry_entry, 
     assert _parse_values({"kvety_poz": body}) == {
         "kvety_poz": Ref(entity="input_number.a", default=0)
     }
+
+
+# ---------------------------------------------------------------------------
+# condition
+# ---------------------------------------------------------------------------
+
+
+def test_condition_add_shows_a_form_with_the_expected_fields(subentry_entry, subentry_hass):
+    entry = subentry_entry()
+    flow = _make_flow(ConditionSubentryFlowHandler, subentry_hass(entry), CONDITION)
+
+    result = asyncio.run(flow.async_step_user(None))
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "user"
+    assert _schema_keys(result) == {"id", "condition"}
+
+
+def test_condition_add_creates_a_single_condition_subentry(subentry_entry, subentry_hass):
+    """One selected condition is stored verbatim, not wrapped -- see
+    `config_flow._flatten_condition_list`'s own docstring for why: the
+    merged body a saved condition's `data` becomes (everything but `id`) must
+    already look like one condition node, matching the fixture
+    `tests/ha/conftest.py`'s `CONFIG_TEXT` and `tests/test_config_store.py`
+    both already use for a `condition` subentry.
+    """
+    entry = subentry_entry()
+    flow = _make_flow(ConditionSubentryFlowHandler, subentry_hass(entry), CONDITION)
+
+    result = asyncio.run(
+        flow.async_step_user(
+            {
+                "id": "slnko",
+                "condition": [
+                    {"condition": "state", "entity_id": "sun.sun", "state": "above_horizon"}
+                ],
+            }
+        )
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["title"] == "slnko"
+    assert result["data"] == {
+        "id": "slnko",
+        "condition": "state",
+        "entity_id": "sun.sun",
+        "state": "above_horizon",
+    }
+
+
+def test_condition_add_multiple_conditions_becomes_an_explicit_and(subentry_entry, subentry_hass):
+    entry = subentry_entry()
+    flow = _make_flow(ConditionSubentryFlowHandler, subentry_hass(entry), CONDITION)
+
+    result = asyncio.run(
+        flow.async_step_user(
+            {
+                "id": "obe",
+                "condition": [
+                    {"condition": "state", "entity_id": "input_boolean.a", "state": "on"},
+                    {"condition": "state", "entity_id": "input_boolean.b", "state": "on"},
+                ],
+            }
+        )
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"] == {
+        "id": "obe",
+        "condition": "and",
+        "conditions": [
+            {"condition": "state", "entity_id": "input_boolean.a", "state": "on"},
+            {"condition": "state", "entity_id": "input_boolean.b", "state": "on"},
+        ],
+    }
+
+
+def test_condition_reconfigure_prefills_the_selector_from_saved_data(subentry_entry, subentry_hass):
+    entry = subentry_entry()
+    subentry_id = entry.add_subentry(
+        CONDITION,
+        {"id": "slnko", "condition": "state", "entity_id": "sun.sun", "state": "above_horizon"},
+    )
+    flow = _make_flow(
+        ConditionSubentryFlowHandler, subentry_hass(entry), CONDITION, subentry_id=subentry_id
+    )
+
+    shown = asyncio.run(flow.async_step_reconfigure(None))
+
+    suggested = {
+        key.schema: key.description["suggested_value"]
+        for key in shown["data_schema"].schema
+        if isinstance(key, vol.Marker) and key.description
+    }
+    assert suggested == {
+        "id": "slnko",
+        "condition": [{"condition": "state", "entity_id": "sun.sun", "state": "above_horizon"}],
+    }
+
+
+def test_condition_add_rejects_a_duplicate_id(subentry_entry, subentry_hass):
+    entry = subentry_entry()
+    entry.add_subentry(
+        CONDITION,
+        {"id": "slnko", "condition": "state", "entity_id": "sun.sun", "state": "above_horizon"},
+    )
+    flow = _make_flow(ConditionSubentryFlowHandler, subentry_hass(entry), CONDITION)
+
+    result = asyncio.run(
+        flow.async_step_user(
+            {"id": "slnko", "condition": [{"condition": "state", "entity_id": "x", "state": "off"}]}
+        )
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "invalid_config"}
+    assert "already configured" in result["description_placeholders"]["error_detail"]
+
+
+def test_condition_add_blocked_by_ref_to_unknown_condition(subentry_entry, subentry_hass):
+    entry = subentry_entry()
+    flow = _make_flow(ConditionSubentryFlowHandler, subentry_hass(entry), CONDITION)
+
+    result = asyncio.run(
+        flow.async_step_user({"id": "b", "condition": [{"condition": "ref", "name": "neexistuje"}]})
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "invalid_config"}
+    assert "unknown_condition_ref" in result["description_placeholders"]["error_detail"]
+
+
+def test_condition_add_blocked_by_bad_condition_shape(subentry_entry, subentry_hass):
+    entry = subentry_entry()
+    flow = _make_flow(ConditionSubentryFlowHandler, subentry_hass(entry), CONDITION)
+
+    # A `state` condition missing its required `state` key -- hand-built
+    # rather than run through the real `ConditionSelector`, which would
+    # never let this particular shape through; the point here is that
+    # `_blocking_errors` still catches it if it somehow arrived, not that the
+    # selector is bypassable.
+    result = asyncio.run(
+        flow.async_step_user({"id": "b", "condition": [{"condition": "state", "entity_id": "x"}]})
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "invalid_config"}
+    assert "bad_condition_shape" in result["description_placeholders"]["error_detail"]
+
+
+def test_condition_add_blocked_by_a_circular_ref(subentry_entry, subentry_hass):
+    entry = subentry_entry()
+    entry.add_subentry(CONDITION, {"id": "a", "condition": "ref", "name": "b"})
+    flow = _make_flow(ConditionSubentryFlowHandler, subentry_hass(entry), CONDITION)
+
+    result = asyncio.run(
+        flow.async_step_user({"id": "b", "condition": [{"condition": "ref", "name": "a"}]})
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "invalid_config"}
+    assert "circular_condition_ref" in result["description_placeholders"]["error_detail"]
+
+
+# ---------------------------------------------------------------------------
+# condition: the native selector's own entity_id-list coercion (finding not
+# in the task brief -- discovered while building this flow, see the task
+# report's own section on it). `ConditionSelector` normalises a `state`/
+# `numeric_state` condition's `entity_id` to a list via
+# `cv.entity_ids_or_uuids`, even for one entity picked; `world.state`/
+# `world.attribute` key their snapshot by a bare string and would raise
+# `TypeError: unhashable type: 'list'` on a list, a crash `validate()` cannot
+# see coming (it checks required keys, never a value's type). These two
+# drive the *real* `ConditionSelector`, not a hand-built dict -- a hand-built
+# one would hide the coercion this guards against entirely.
+# ---------------------------------------------------------------------------
+
+
+def test_condition_single_entity_via_real_selector_unwraps_the_entity_id_list(
+    subentry_entry, subentry_hass
+):
+    entry = subentry_entry()
+    flow = _make_flow(ConditionSubentryFlowHandler, subentry_hass(entry), CONDITION)
+
+    shown = asyncio.run(flow.async_step_user(None))
+    coerced = shown["data_schema"](
+        {
+            "id": "dnu",
+            "condition": [{"condition": "state", "entity_id": "input_boolean.a", "state": "on"}],
+        }
+    )
+    result = asyncio.run(flow.async_step_user(coerced))
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    # Not `["input_boolean.a"]` -- see the section docstring above.
+    assert result["data"]["entity_id"] == "input_boolean.a"
+    assert "match" not in result["data"]
+
+    body = {k: v for k, v in result["data"].items() if k != _ID_KEY}
+    assert evaluate_condition(body, World(states={"input_boolean.a": "on"})) is True
+    assert evaluate_condition(body, World(states={"input_boolean.a": "off"})) is False
+
+
+def test_condition_multi_entity_via_real_selector_expands_to_an_and(subentry_entry, subentry_hass):
+    entry = subentry_entry()
+    flow = _make_flow(ConditionSubentryFlowHandler, subentry_hass(entry), CONDITION)
+
+    shown = asyncio.run(flow.async_step_user(None))
+    coerced = shown["data_schema"](
+        {
+            "id": "obe",
+            "condition": [
+                {
+                    "condition": "state",
+                    "entity_id": ["input_boolean.a", "input_boolean.b"],
+                    "state": "on",
+                }
+            ],
+        }
+    )
+    result = asyncio.run(flow.async_step_user(coerced))
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"] == {
+        "id": "obe",
+        "condition": "and",
+        "conditions": [
+            {"condition": "state", "entity_id": "input_boolean.a", "state": "on"},
+            {"condition": "state", "entity_id": "input_boolean.b", "state": "on"},
+        ],
+    }
+
+    body = {k: v for k, v in result["data"].items() if k != _ID_KEY}
+    assert (
+        evaluate_condition(body, World(states={"input_boolean.a": "on", "input_boolean.b": "on"}))
+        is True
+    )
+    assert (
+        evaluate_condition(body, World(states={"input_boolean.a": "on", "input_boolean.b": "off"}))
+        is False
+    )
+
+
+# ---------------------------------------------------------------------------
+# mode
+# ---------------------------------------------------------------------------
+
+
+def test_mode_add_shows_a_form_with_the_expected_fields(subentry_entry, subentry_hass):
+    entry = subentry_entry()
+    flow = _make_flow(ModeSubentryFlowHandler, subentry_hass(entry), MODE)
+
+    result = asyncio.run(flow.async_step_user(None))
+
+    assert result["type"] is FlowResultType.FORM
+    assert _schema_keys(result) == {"id", "order", "condition_ref", "when"}
+
+
+def test_mode_condition_ref_options_are_the_configured_conditions(subentry_entry, subentry_hass):
+    entry = subentry_entry()
+    entry.add_subentry(
+        CONDITION,
+        {"id": "slnko", "condition": "state", "entity_id": "sun.sun", "state": "above_horizon"},
+    )
+    flow = _make_flow(ModeSubentryFlowHandler, subentry_hass(entry), MODE)
+
+    result = asyncio.run(flow.async_step_user(None))
+
+    ref_selector = next(
+        val for key, val in result["data_schema"].schema.items() if key.schema == "condition_ref"
+    )
+    assert ref_selector.config["options"] == ["slnko"]
+
+
+def test_mode_fallback_add_creates_a_subentry_with_no_when_key(subentry_entry, subentry_hass):
+    entry = subentry_entry()
+    flow = _make_flow(ModeSubentryFlowHandler, subentry_hass(entry), MODE)
+
+    result = asyncio.run(flow.async_step_user({"id": "bezny", "order": 0}))
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"] == {"id": "bezny", "order": 0}
+
+
+def test_mode_ref_add_creates_a_subentry_with_the_parsed_ref_shape(subentry_entry, subentry_hass):
+    """`when` becomes `{"condition": "ref", "name": ...}`, not this project's own
+    `{"ref": ...}` subentry marker -- see `ModeSubentryFlowHandler._to_data`'s
+    own docstring for why the marker (which `config_store._to_reftag` turns
+    into an eagerly-checked `RefTag`) is deliberately avoided here.
+
+    A fallback mode is seeded first: with zero modes existing, a lone
+    conditioned mode would itself be blocked by `no_fallback_mode` before
+    this test ever got to check the `when` shape -- see
+    `test_mode_add_first_mode_with_a_condition_is_blocked_until_a_fallback_exists`.
+    """
+    entry = subentry_entry()
+    entry.add_subentry(
+        CONDITION,
+        {"id": "slnko", "condition": "state", "entity_id": "sun.sun", "state": "above_horizon"},
+    )
+    entry.add_subentry(MODE, {"id": "bezny", "order": 100})
+    flow = _make_flow(ModeSubentryFlowHandler, subentry_hass(entry), MODE)
+
+    result = asyncio.run(
+        flow.async_step_user({"id": "slnecno", "order": 0, "condition_ref": "slnko"})
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"] == {
+        "id": "slnecno",
+        "order": 0,
+        "when": {"condition": "ref", "name": "slnko"},
+    }
+
+
+def test_mode_inline_add_creates_a_subentry_with_a_bare_list(subentry_entry, subentry_hass):
+    entry = subentry_entry()
+    entry.add_subentry(MODE, {"id": "bezny", "order": 100})
+    flow = _make_flow(ModeSubentryFlowHandler, subentry_hass(entry), MODE)
+
+    result = asyncio.run(
+        flow.async_step_user(
+            {
+                "id": "slnecno",
+                "order": 0,
+                "when": [{"condition": "state", "entity_id": "sun.sun", "state": "above_horizon"}],
+            }
+        )
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"] == {
+        "id": "slnecno",
+        "order": 0,
+        "when": [{"condition": "state", "entity_id": "sun.sun", "state": "above_horizon"}],
+    }
+
+
+def test_mode_inline_via_real_selector_also_unwraps_the_entity_id_list(
+    subentry_entry, subentry_hass
+):
+    """Same fix as `condition`'s, exercised through `mode`'s own inline field --
+    `_normalize_condition_tree` is shared, not reimplemented, but nothing
+    stops the two call sites from drifting if one forgets to call it.
+    """
+    entry = subentry_entry()
+    entry.add_subentry(MODE, {"id": "bezny", "order": 100})
+    flow = _make_flow(ModeSubentryFlowHandler, subentry_hass(entry), MODE)
+
+    shown = asyncio.run(flow.async_step_user(None))
+    coerced = shown["data_schema"](
+        {
+            "id": "slnecno",
+            "order": 0,
+            "when": [{"condition": "state", "entity_id": "sun.sun", "state": "above_horizon"}],
+        }
+    )
+    result = asyncio.run(flow.async_step_user(coerced))
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"]["when"] == [
+        {"condition": "state", "entity_id": "sun.sun", "state": "above_horizon"}
+    ]
+
+
+def test_mode_rejects_both_a_named_and_an_inline_condition(subentry_entry, subentry_hass):
+    entry = subentry_entry()
+    entry.add_subentry(
+        CONDITION,
+        {"id": "slnko", "condition": "state", "entity_id": "sun.sun", "state": "above_horizon"},
+    )
+    flow = _make_flow(ModeSubentryFlowHandler, subentry_hass(entry), MODE)
+
+    result = asyncio.run(
+        flow.async_step_user(
+            {
+                "id": "m",
+                "order": 0,
+                "condition_ref": "slnko",
+                "when": [{"condition": "state", "entity_id": "input_boolean.a", "state": "on"}],
+            }
+        )
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "invalid_config"}
+    assert "not both" in result["description_placeholders"]["error_detail"]
+
+
+def test_mode_reconfigure_prefills_ref_inline_and_fallback_shapes(subentry_entry, subentry_hass):
+    entry = subentry_entry()
+    hass = subentry_hass(entry)
+    entry.add_subentry(
+        CONDITION,
+        {"id": "slnko", "condition": "state", "entity_id": "sun.sun", "state": "above_horizon"},
+    )
+    ref_id = entry.add_subentry(
+        MODE, {"id": "a", "order": 0, "when": {"condition": "ref", "name": "slnko"}}
+    )
+    inline_id = entry.add_subentry(
+        MODE,
+        {
+            "id": "b",
+            "order": 1,
+            "when": {"condition": "state", "entity_id": "input_boolean.x", "state": "on"},
+        },
+    )
+    fallback_id = entry.add_subentry(MODE, {"id": "c", "order": 2})
+
+    def suggested_of(subentry_id):
+        shown = asyncio.run(
+            _make_flow(
+                ModeSubentryFlowHandler, hass, MODE, subentry_id=subentry_id
+            ).async_step_reconfigure(None)
+        )
+        return {
+            key.schema: key.description["suggested_value"]
+            for key in shown["data_schema"].schema
+            if isinstance(key, vol.Marker) and key.description
+        }
+
+    ref_suggested = suggested_of(ref_id)
+    assert ref_suggested["condition_ref"] == "slnko"
+    assert ref_suggested["when"] == []
+
+    inline_suggested = suggested_of(inline_id)
+    assert inline_suggested["condition_ref"] is None
+    assert inline_suggested["when"] == [
+        {"condition": "state", "entity_id": "input_boolean.x", "state": "on"}
+    ]
+
+    fallback_suggested = suggested_of(fallback_id)
+    assert fallback_suggested["condition_ref"] is None
+    assert fallback_suggested["when"] == []
+
+
+def test_mode_add_first_mode_with_a_condition_is_blocked_until_a_fallback_exists(
+    subentry_entry, subentry_hass
+):
+    """The very first `mode` a user saves must be the fallback: with zero
+    modes yet, one carrying a condition leaves `no_fallback_mode` unresolved.
+    Unlike the blind/zone deadlock the previous task's fix pass exists for,
+    there is always a way out -- add the fallback (no condition) first, or
+    at any point give it the highest `order` -- so this is a deliberate
+    ordering constraint `validate()` already enforces, not a defect. See the
+    task report's own note on this.
+    """
+    entry = subentry_entry()
+    flow = _make_flow(ModeSubentryFlowHandler, subentry_hass(entry), MODE)
+
+    result = asyncio.run(
+        flow.async_step_user(
+            {
+                "id": "slnecno",
+                "order": 0,
+                "when": [{"condition": "state", "entity_id": "sun.sun", "state": "above_horizon"}],
+            }
+        )
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert "no_fallback_mode" in result["description_placeholders"]["error_detail"]
+
+
+def test_mode_add_blocked_by_ordering_that_displaces_the_fallback(subentry_entry, subentry_hass):
+    entry = subentry_entry()
+    entry.add_subentry(MODE, {"id": "bezny", "order": 0})  # the only mode, so currently last
+    flow = _make_flow(ModeSubentryFlowHandler, subentry_hass(entry), MODE)
+
+    result = asyncio.run(
+        flow.async_step_user(
+            {
+                "id": "slnecno",
+                "order": 1,  # higher than the fallback's -- would sort after it
+                "when": [{"condition": "state", "entity_id": "sun.sun", "state": "above_horizon"}],
+            }
+        )
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "invalid_config"}
+    assert "fallback_mode_not_last" in result["description_placeholders"]["error_detail"]
+
+
+def test_mode_add_blocked_by_ref_to_unknown_condition(subentry_entry, subentry_hass):
+    entry = subentry_entry()
+    flow = _make_flow(ModeSubentryFlowHandler, subentry_hass(entry), MODE)
+
+    result = asyncio.run(
+        flow.async_step_user({"id": "slnecno", "order": 0, "condition_ref": "neexistuje"})
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "invalid_config"}
+    assert "unknown_condition_ref" in result["description_placeholders"]["error_detail"]
+
+
+def test_unknown_condition_ref_never_blocks_an_unrelated_blind_add(subentry_entry, subentry_hass):
+    """A dangling ref left behind by, e.g., deleting the `condition` subentry
+    it named (see the task report's "dangling ref" discussion -- Home
+    Assistant's own subentry removal has no hook this project can veto it
+    with) must not stop an unrelated blind add: a blind form has no
+    condition field of any kind and cannot possibly be how a user fixes it.
+    """
+    entry = subentry_entry()
+    entry.add_subentry(
+        MODE, {"id": "m", "order": 0, "when": {"condition": "ref", "name": "neexistuje"}}
+    )
+    flow = _make_flow(BlindSubentryFlowHandler, subentry_hass(entry), BLIND)
+
+    result = asyncio.run(
+        flow.async_step_user(
+            {
+                "entity": "cover.a",
+                "tolerance": 45,
+                "travel_time": 60,
+                "has_tilt": True,
+                "tilt_after_arrival": True,
+            }
+        )
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+
+
+# ---------------------------------------------------------------------------
+# the build-up sequence a human performs, extended to `condition`/`mode` --
+# same rationale as `test_full_build_up_sequence_a_human_would_perform`
+# above (which stops at blind/zone/value, the previous task's scope): every
+# step here is asserted to succeed on its own, in the order a person would
+# actually click through it, not just checked as one config assembled in a
+# single shot.
+# ---------------------------------------------------------------------------
+
+
+def test_full_build_up_sequence_condition_and_mode(subentry_entry, subentry_hass):
+    entry = subentry_entry()
+    hass = subentry_hass(entry)
+
+    # 1. A blind and a zone -- the minimum a mode/condition pair needs to
+    # decide anything at all.
+    blind = asyncio.run(
+        _make_flow(BlindSubentryFlowHandler, hass, BLIND).async_step_user(
+            {
+                "entity": "cover.a",
+                "tolerance": 45,
+                "travel_time": 60,
+                "has_tilt": True,
+                "tilt_after_arrival": True,
+            }
+        )
+    )
+    assert blind["type"] is FlowResultType.CREATE_ENTRY
+    entry.add_subentry(BLIND, blind["data"], title=blind["title"])
+
+    zone = asyncio.run(
+        _make_flow(ZoneSubentryFlowHandler, hass, ZONE).async_step_user(
+            {"id": "terasa", "members": ["cover.a"], "occupants": []}
+        )
+    )
+    assert zone["type"] is FlowResultType.CREATE_ENTRY
+    entry.add_subentry(ZONE, zone["data"], title=zone["title"])
+
+    # 2. A named condition.
+    cond_a = asyncio.run(
+        _make_flow(ConditionSubentryFlowHandler, hass, CONDITION).async_step_user(
+            {
+                "id": "slnko",
+                "condition": [
+                    {"condition": "state", "entity_id": "sun.sun", "state": "above_horizon"}
+                ],
+            }
+        )
+    )
+    assert cond_a["type"] is FlowResultType.CREATE_ENTRY
+    entry.add_subentry(CONDITION, cond_a["data"], title=cond_a["title"])
+
+    # 3. A second condition that refs the first. No dedicated "reference a
+    # condition" field exists on this form the way `mode` has one (see
+    # `ConditionSubentryFlowHandler`'s own docstring) -- but the native
+    # selector accepts `condition: ref` directly wherever any other
+    # condition dict is accepted (finding 1: HA validates an unrecognised
+    # `condition:` value with `extra=ALLOW_EXTRA`, not a closed enum), so
+    # composing one named condition out of another is already possible with
+    # no extra code, the same way a user would type it in the selector's own
+    # YAML-editing mode.
+    cond_b = asyncio.run(
+        _make_flow(ConditionSubentryFlowHandler, hass, CONDITION).async_step_user(
+            {
+                "id": "slnko_a_doma",
+                "condition": [
+                    {
+                        "condition": "and",
+                        "conditions": [
+                            {"condition": "ref", "name": "slnko"},
+                            {
+                                "condition": "state",
+                                "entity_id": "input_boolean.doma",
+                                "state": "on",
+                            },
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+    assert cond_b["type"] is FlowResultType.CREATE_ENTRY
+    entry.add_subentry(CONDITION, cond_b["data"], title=cond_b["title"])
+
+    # 4. The fallback mode, added first with the highest `order` so nothing
+    # added below it can ever displace it from last place.
+    fallback = asyncio.run(
+        _make_flow(ModeSubentryFlowHandler, hass, MODE).async_step_user(
+            {"id": "bezny", "order": 100}
+        )
+    )
+    assert fallback["type"] is FlowResultType.CREATE_ENTRY
+    entry.add_subentry(MODE, fallback["data"], title=fallback["title"])
+
+    # 5. A second mode, referencing the second (composed) condition by name,
+    # at a lower `order` so it is tried first.
+    conditional = asyncio.run(
+        _make_flow(ModeSubentryFlowHandler, hass, MODE).async_step_user(
+            {"id": "slnecno", "order": 0, "condition_ref": "slnko_a_doma"}
+        )
+    )
+    assert conditional["type"] is FlowResultType.CREATE_ENTRY
+    assert conditional["data"]["when"] == {"condition": "ref", "name": "slnko_a_doma"}
+    entry.add_subentry(MODE, conditional["data"], title=conditional["title"])
+
+    # The finished entry loads cleanly: no ERROR-severity problem, modes in
+    # `order` order with the fallback last.
+    built = config_from_subentries(entry)
+    assert [m.id for m in built.modes] == ["slnecno", "bezny"]
+    assert built.modes[0].when == {"condition": "ref", "name": "slnko_a_doma"}
+    assert built.modes[1].when is None
+    problems = validate(built) + duplicate_rule_order_problems(entry)
+    assert [p for p in problems if p.severity == ERROR] == []
