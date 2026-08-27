@@ -18,7 +18,11 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from cover_logic.config_schema import load_config
-from cover_logic.config_store import config_from_subentries, duplicate_rule_order_problems
+from cover_logic.config_store import (
+    config_from_subentries,
+    duplicate_rule_order_problems,
+    rule_owner_ids,
+)
 from cover_logic.validation import ERROR, validate
 
 
@@ -240,6 +244,75 @@ def test_duplicate_order_in_one_mode_zone_is_reported() -> None:
     assert problems[0].severity == ERROR
     assert problems[0].code == "duplicate_rule_order"
     assert "m.z" in problems[0].message
+
+
+def test_duplicate_order_names_both_tied_rules_and_nobody_else() -> None:
+    """The tie is attributed to the two rules that are actually tied, so
+    `config_flow._blocks_on` can refuse to block a save of the third,
+    untied rule -- or of a rule in a different pair entirely. Without
+    `owners`, the only thing knowable about this problem is "some rule
+    somewhere", which blocks every rule save in the entry.
+    """
+    entry = make_entry(
+        [
+            ("blind", {"entity": "cover.a"}),
+            ("zone", {"id": "z", "members": ["cover.a"]}),
+            ("mode", {"id": "m", "order": 0}),
+            ("rule", {"mode": "m", "zone": "z", "order": 0, "then": {"position": 0}}),
+            ("rule", {"mode": "m", "zone": "z", "order": 0, "then": {"position": 100}}),
+            ("rule", {"mode": "m", "zone": "z", "order": 5, "then": {"position": 50}}),
+        ]
+    )
+
+    problems = duplicate_rule_order_problems(entry)
+
+    assert len(problems) == 1
+    # The two `order: 0` rules sort ahead of the `order: 5` one, so they are
+    # index 0 and 1; the untied rule at index 2 is deliberately not an owner.
+    assert problems[0].owners == frozenset({("rule", "m.z#0"), ("rule", "m.z#1")})
+
+
+def test_rule_owner_ids_match_the_ids_validation_attributes_problems_to() -> None:
+    """The contract `config_flow` depends on and that nothing else pins down.
+
+    `validation` names a rule by its position in the already-`order`-sorted
+    tuple (`validation._rule_owner`), because a `Config` no longer carries
+    either subentry ids or `order`. `rule_owner_ids` is the only bridge from
+    a real Home Assistant subentry id back to that name. If the two ever
+    disagree -- a different sort, a different tie-break, a different string
+    -- `config_flow._blocks_on` would silently compare a problem against the
+    wrong rule, blocking an innocent save or waving a broken one through,
+    with nothing else in the suite noticing.
+
+    Driven from a genuinely scrambled insertion order so agreeing by
+    accident (both walking `entry.subentries` unsorted) is not possible.
+    """
+    entry = make_entry(
+        [
+            ("blind", {"entity": "cover.a"}),
+            ("zone", {"id": "z", "members": ["cover.a"]}),
+            # `m` is never declared as a mode, so every rule below is stranded
+            # under an unknown key -- the one ERROR `validate()` attributes to
+            # rules rather than to conditions.
+            ("mode", {"id": "other", "order": 0}),
+            ("rule", {"mode": "m", "zone": "z", "order": 20, "then": {"position": 20}}),
+            ("rule", {"mode": "m", "zone": "z", "order": 0, "then": {"position": 0}}),
+            ("rule", {"mode": "m", "zone": "z", "order": 10, "then": {"position": 10}}),
+        ]
+    )
+
+    # Sorted by `order`, the three rules are s4 (0), s5 (10), s3 (20).
+    assert rule_owner_ids(entry) == {"s3": "m.z#2", "s4": "m.z#0", "s5": "m.z#1"}
+
+    stranded = [p for p in validate(config_from_subentries(entry)) if p.code == "unknown_rule_key"]
+    assert len(stranded) == 1
+    assert stranded[0].owners == frozenset(
+        ("rule", owner_id) for owner_id in rule_owner_ids(entry).values()
+    )
+
+    # And the names really do point at the rules they claim to: index 1 is
+    # the `order: 10` rule, which is the one that sets position 10.
+    assert config_from_subentries(entry).rules["m.z"][1].then.position == 10
 
 
 def test_no_duplicate_order_across_different_mode_zone_keys() -> None:

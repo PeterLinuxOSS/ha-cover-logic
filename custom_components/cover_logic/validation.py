@@ -40,6 +40,22 @@ class Problem:
     owners: frozenset[tuple[str, str]] = frozenset()
 
 
+def _rule_owner(key: str, index: int) -> tuple[str, str]:
+    """The `(subentry_type, id)` naming one rule: its `(mode, zone)` key and its position.
+
+    A rule subentry has no id field of its own -- its identity is
+    `(mode, zone, order)` -- and `Config.rules` no longer carries `order` by
+    the time this module sees it, so position within the already-`order`-sorted
+    tuple is what is left to name it by. That is not a compromise invented
+    here: `engine._apply_rules` labels the rule it fired with exactly this
+    string, so a `Problem` and a decision trace name the same rule the same
+    way. `config_store.rule_owner_ids` produces the matching side, mapping a
+    real subentry id to this same string, and `tests/test_config_store.py`
+    pins the two together.
+    """
+    return ("rule", f"{key}#{index}")
+
+
 def validate(config: Config) -> list[Problem]:
     """Run every static check and return all problems found, if any."""
     problems: list[Problem] = []
@@ -119,12 +135,22 @@ def _check_modes(config: Config) -> list[Problem]:
 def _check_rule_keys(config: Config) -> list[Problem]:
     out: list[Problem] = []
     mode_ids = {m.id for m in config.modes}
-    for key in config.rules:
+    for key, rules in config.rules.items():
         mode, _, zone = key.partition(".")
         if mode not in mode_ids or zone not in config.zones:
+            # Every rule filed under this key carries the offending
+            # `mode`/`zone` pair in its own subentry data, and each one's own
+            # form is where it is repointed at a pair that exists -- so all
+            # of them own this, the same way every name on a reference cycle
+            # owns that cycle. Without this, a rule left stranded by deleting
+            # its mode would block *adding a rule to an unrelated, healthy
+            # pair*, a form with no way to reach the stranded one.
             out.append(
                 Problem(
-                    ERROR, "unknown_rule_key", f"rule key {key!r} names an unknown mode or zone"
+                    ERROR,
+                    "unknown_rule_key",
+                    f"rule key {key!r} names an unknown mode or zone",
+                    owners=frozenset(_rule_owner(key, index) for index in range(len(rules))),
                 )
             )
     return out
@@ -292,10 +318,9 @@ def _condition_sites(
     The owner is `(subentry_type, id)` -- `id` matching exactly what that
     type's own form would submit as `data[id_key]`, so `config_flow._blocks_
     on` can compare it directly against the subentry actually being saved.
-    A rule's owner id (`f"{key}#{index}"`) is provisional: no `rule` subentry
-    flow exists yet to define its real `id_key`, and nothing currently calls
-    `_blocks_on` with `subentry_type="rule"` to compare it against -- see
-    `config_flow._CODE_OWNERS`'s own note on this.
+    A rule has no such field, so it is named `f"{key}#{index}"` instead --
+    see `_rule_owner` for why that shape, and `config_store.rule_owner_ids`
+    for the mapping the `rule` flow uses to answer with the same string.
     """
     for cond_name, body in config.conditions.items():
         yield body, f"condition {cond_name!r}", ("condition", cond_name)
@@ -303,7 +328,7 @@ def _condition_sites(
         yield mode.when, f"mode {mode.id!r}", ("mode", mode.id)
     for key, rules in config.rules.items():
         for index, rule in enumerate(rules):
-            yield rule.when, f"rule {key}#{index}", ("rule", f"{key}#{index}")
+            yield rule.when, f"rule {key}#{index}", _rule_owner(key, index)
 
 
 def _get_referenced_conditions(cond_name: str, registry: dict[str, dict]) -> set[str]:
@@ -412,14 +437,20 @@ def _check_condition_shape(node: dict, where: str, owner: tuple[str, str]) -> li
     return out
 
 
-def check_duplicate_rule_order(orders: dict[str, list[int]]) -> list[Problem]:
+def check_duplicate_rule_order(orders: dict[str, list[tuple[str, int]]]) -> list[Problem]:
     """Flag more than one rule subentry claiming the same `order` in one key.
 
-    `orders` maps a `"<mode id>.<zone id>"` key to the `order` of every rule
-    subentry filed under it, in whatever order `config_store` happened to
-    collect them. Not part of `validate()`: rules are first-match-wins, so a
-    subentry author's `order` *is* the behaviour, and Home Assistant
-    subentries are a flat list with no native reordering -- but once
+    `orders` maps a `"<mode id>.<zone id>"` key to a `(owner id, order)` pair
+    per rule subentry filed under it -- the owner id being the `_rule_owner`
+    string naming that specific rule, so the resulting `Problem` can say
+    *which* rules are tied rather than only that some are. Without that, a
+    tie left behind anywhere would block every rule save (`config_flow.
+    _blocks_on` would have nothing finer than the type to go on), including
+    adding a rule to an unrelated pair that has no tie at all.
+
+    Not part of `validate()`: rules are first-match-wins, so a subentry
+    author's `order` *is* the behaviour, and Home Assistant subentries are a
+    flat list with no native reordering -- but once
     `config_store.config_from_subentries` sorts a tie into `Config.rules`'s
     plain tuple, the tie is gone and indistinguishable from a deliberate
     sequence. This must run over the subentry-side grouping, before that
@@ -428,18 +459,24 @@ def check_duplicate_rule_order(orders: dict[str, list[int]]) -> list[Problem]:
     caller.
     """
     out: list[Problem] = []
-    for key, key_orders in orders.items():
-        seen: set[int] = set()
-        for order in key_orders:
-            if order in seen:
-                out.append(
-                    Problem(
-                        ERROR,
-                        "duplicate_rule_order",
-                        f"{key}: more than one rule has order={order}",
-                    )
-                )
-            seen.add(order)
+    for key, items in orders.items():
+        by_order: dict[int, list[str]] = {}
+        for owner_id, order in items:
+            by_order.setdefault(order, []).append(owner_id)
+        # One problem per tied `order`, not one per extra rule on it: three
+        # rules sharing an order are a single ambiguity to resolve, and every
+        # one of them is an owner because editing any of them is a way to
+        # resolve it.
+        out.extend(
+            Problem(
+                ERROR,
+                "duplicate_rule_order",
+                f"{key}: more than one rule has order={order}",
+                owners=frozenset(("rule", owner_id) for owner_id in owner_ids),
+            )
+            for order, owner_ids in by_order.items()
+            if len(owner_ids) > 1
+        )
     return out
 
 

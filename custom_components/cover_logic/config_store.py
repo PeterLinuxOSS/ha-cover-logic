@@ -241,6 +241,52 @@ def config_from_subentries(entry: Any) -> Config:
     )
 
 
+def _grouped_rule_subentries(entry: Any) -> dict[str, list[tuple[str, int]]]:
+    """Every rule subentry as `(subentry id, order)`, grouped and sorted like `_build_rules`.
+
+    Deliberately mirrors `_rule_groups`/`_build_rules` step for step -- same
+    `entry.subentries` iteration order, same `sorted` on the same key -- so
+    the position a rule ends up at here is the position it ends up at in
+    `Config.rules`. Anything less than that equivalence would make
+    `rule_owner_ids` name a *different* rule than the one `validate()` is
+    talking about, which is worse than not naming one at all.
+    """
+    groups: dict[str, list[tuple[str, int]]] = {}
+    for subentry_id, subentry in entry.subentries.items():
+        if subentry.subentry_type != RULE:
+            continue
+        data = dict(subentry.data)
+        mode = _require(data, "mode", "rule subentry")
+        zone = _require(data, "zone", "rule subentry")
+        order = _order(data, "rule subentry")
+        groups.setdefault(f"{mode}.{zone}", []).append((subentry_id, order))
+    for items in groups.values():
+        items.sort(key=lambda pair: pair[1])
+    return groups
+
+
+def rule_owner_ids(entry: Any) -> dict[str, str]:
+    """Map each rule subentry's id to the `"<mode>.<zone>#<index>"` string naming it.
+
+    That string is how `validation` attributes a rule's problems (see
+    `validation._rule_owner`) and how `engine._apply_rules` labels a decision,
+    but neither can be handed a Home Assistant subentry id -- both work off a
+    `Config`, where subentry ids no longer exist. This is the one place the
+    two identities are tied together, so `config_flow` can ask "is the
+    problem `validate()` just reported about the very subentry being saved?"
+    without re-deriving the sort a second time.
+
+    Raises `ConfigError` for the same reasons `config_from_subentries` does
+    (a rule subentry missing `mode`, `zone` or a valid `order`); a caller that
+    cannot tolerate that should call it only after the config has parsed.
+    """
+    return {
+        subentry_id: f"{key}#{index}"
+        for key, items in _grouped_rule_subentries(entry).items()
+        for index, (subentry_id, _order_value) in enumerate(items)
+    }
+
+
 def duplicate_rule_order_problems(entry: Any) -> list[Problem]:
     """Problems visible only at the subentry layer: two rules sharing an `order`.
 
@@ -252,10 +298,9 @@ def duplicate_rule_order_problems(entry: Any) -> list[Problem]:
     duplicate_rule_order`'s own docstring), so this must run over
     `entry.subentries` directly, before that information is lost.
     """
-    orders: dict[str, list[int]] = {}
-    for data in _of_type(entry, RULE):
-        mode = _require(data, "mode", "rule subentry")
-        zone = _require(data, "zone", "rule subentry")
-        order = _order(data, "rule subentry")
-        orders.setdefault(f"{mode}.{zone}", []).append(order)
-    return check_duplicate_rule_order(orders)
+    return check_duplicate_rule_order(
+        {
+            key: [(f"{key}#{index}", order) for index, (_sid, order) in enumerate(items)]
+            for key, items in _grouped_rule_subentries(entry).items()
+        }
+    )

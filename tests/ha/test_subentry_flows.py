@@ -17,6 +17,8 @@ finished flow at a time.
 """
 
 import asyncio
+import json
+from pathlib import Path
 
 import pytest
 
@@ -25,6 +27,7 @@ pytest.importorskip("homeassistant")
 from homeassistant.data_entry_flow import FlowResultType
 import voluptuous as vol
 
+import cover_logic
 from cover_logic.conditions import evaluate_condition
 from cover_logic.config_flow import (
     SUBENTRY_FLOW_HANDLERS,
@@ -32,11 +35,13 @@ from cover_logic.config_flow import (
     ConditionSubentryFlowHandler,
     CoverLogicConfigFlow,
     ModeSubentryFlowHandler,
+    RuleSubentryFlowHandler,
     ValueSubentryFlowHandler,
     ZoneSubentryFlowHandler,
 )
 from cover_logic.config_schema import (
     _BLIND_KEYS,
+    _RULE_KEYS,
     _VALUE_KEYS,
     _ZONE_KEYS,
     _parse_values,
@@ -47,12 +52,16 @@ from cover_logic.config_store import (
     BLIND,
     CONDITION,
     MODE,
+    RULE,
+    SUBENTRY_TYPES,
     VALUE,
     ZONE,
+    _rule_body,
     config_from_subentries,
     duplicate_rule_order_problems,
+    rule_owner_ids,
 )
-from cover_logic.model import Blind, Ref
+from cover_logic.model import KEEP, Blind, Ref
 from cover_logic.validation import ERROR, validate
 from cover_logic.world import World
 
@@ -88,11 +97,18 @@ def _schema_keys(result):
 # ---------------------------------------------------------------------------
 
 
-def test_supported_subentry_types_includes_blind_zone_value_condition_mode():
+def test_every_subentry_type_the_store_reads_has_a_flow():
+    """Not a hand-written list: `config_store.SUBENTRY_TYPES` is what
+    `config_from_subentries` will actually read out of a saved entry, so a
+    type present there and missing here is a type a user can never create
+    through the UI at all -- the exact gap that existed for `rule` until this
+    task.
+    """
     types = CoverLogicConfigFlow.async_get_supported_subentry_types(None)
 
     assert types is SUBENTRY_FLOW_HANDLERS
-    assert set(types) == {BLIND, ZONE, VALUE, CONDITION, MODE}
+    assert set(types) == SUBENTRY_TYPES
+    assert set(types) == {BLIND, ZONE, VALUE, CONDITION, MODE, RULE}
 
 
 def test_blind_add_shows_a_form_with_the_expected_fields(subentry_entry, subentry_hass):
@@ -408,9 +424,10 @@ def test_value_add_rejects_a_duplicate_id(subentry_entry, subentry_hass):
 # Equivalent to the configuration built through the flows below: two blinds
 # (one with every optional field set to a non-default value, one bare), a
 # zone owning both, and one `values:` entry. No `modes:`/`rules:` on either
-# side -- neither the `mode` nor `rule` subentry flow exists yet (a later
-# task), so both `Config`s legitimately have `modes=()`/`rules={}`; this
-# compares what *does* exist today, not the whole eventual shape.
+# side -- this fixture exercises the blind/zone/value flows only, so both
+# `Config`s legitimately have `modes=()`/`rules={}`. The full vocabulary,
+# rules included, is built through the flows in
+# `test_full_build_up_sequence_through_rules` at the end of this module.
 _EQUIVALENT_YAML = """
 blinds:
   - entity: cover.a
@@ -1629,3 +1646,1010 @@ def test_full_build_up_sequence_condition_and_mode(subentry_entry, subentry_hass
     assert built.modes[1].when is None
     problems = validate(built) + duplicate_rule_order_problems(entry)
     assert [p for p in problems if p.severity == ERROR] == []
+
+
+# ---------------------------------------------------------------------------
+# rule
+#
+# The one type where order is meaning: `engine._apply_rules` takes the first
+# rule whose events and condition match, so a rule's `order` relative to its
+# neighbours in the same `(mode, zone)` pair *is* what the house does. Adding
+# is two steps -- pick the pair, then fill in the rule with `order` already
+# defaulted to "append here" -- so these tests drive both, in sequence,
+# through `_add_rule` below rather than calling the second step directly.
+# ---------------------------------------------------------------------------
+
+
+def _rule_scaffold(entry, *, values=(), conditions=()):
+    """Seed the minimum a rule needs to exist: a blind, a zone, a fallback mode."""
+    entry.add_subentry(BLIND, {"entity": "cover.a", "tolerance": 45, "travel_time": 60})
+    entry.add_subentry(ZONE, {"id": "terasa", "members": ["cover.a"], "occupants": []})
+    entry.add_subentry(MODE, {"id": "bezny", "order": 0})
+    for value_id in values:
+        entry.add_subentry(
+            VALUE, {"id": value_id, "entity": f"input_number.{value_id}", "default": 34}
+        )
+    for condition_id in conditions:
+        entry.add_subentry(
+            CONDITION,
+            {
+                "id": condition_id,
+                "condition": "state",
+                "entity_id": "sun.sun",
+                "state": "above_horizon",
+            },
+        )
+    return entry
+
+
+def _start_rule(hass, entry, mode, zone):
+    """Run step one of the add flow and return `(flow, the step-two form)`."""
+    flow = _make_flow(RuleSubentryFlowHandler, hass, RULE)
+    shown = asyncio.run(flow.async_step_user({"mode": mode, "zone": zone}))
+    assert shown["type"] is FlowResultType.FORM
+    assert shown["step_id"] == "rule"
+    return flow, shown
+
+
+def _add_rule(hass, entry, submission, *, save=True):
+    """Drive both add steps and, unless told otherwise, attach the result to `entry`."""
+    flow, _shown = _start_rule(hass, entry, submission["mode"], submission["zone"])
+    result = asyncio.run(flow.async_step_rule(submission))
+    if save and result["type"] is FlowResultType.CREATE_ENTRY:
+        entry.add_subentry(RULE, result["data"], title=result["title"])
+    return result
+
+
+def _suggested(shown):
+    """The values a shown form is pre-filled with."""
+    return {
+        key.schema: key.description["suggested_value"]
+        for key in shown["data_schema"].schema
+        if isinstance(key, vol.Marker) and key.description
+    }
+
+
+def test_rule_step_one_offers_only_configured_modes_and_zones(subentry_entry, subentry_hass):
+    """Never free text: a rule filed under a pair that does not exist is
+    `unknown_rule_key`, and there is no reason to let the UI produce one.
+    """
+    entry = _rule_scaffold(subentry_entry())
+    entry.add_subentry(MODE, {"id": "noc", "order": 10})
+    entry.add_subentry(ZONE, {"id": "spalna", "members": [], "occupants": []})
+    flow = _make_flow(RuleSubentryFlowHandler, subentry_hass(entry), RULE)
+
+    shown = asyncio.run(flow.async_step_user(None))
+
+    assert shown["type"] is FlowResultType.FORM
+    assert shown["step_id"] == "user"
+    assert _schema_keys(shown) == {"mode", "zone"}
+    options = {
+        key.schema: val.config["options"] for key, val in shown["data_schema"].schema.items()
+    }
+    assert options == {"mode": ["bezny", "noc"], "zone": ["spalna", "terasa"]}
+
+
+def test_rule_step_two_shows_every_field(subentry_entry, subentry_hass):
+    entry = _rule_scaffold(subentry_entry())
+    _flow, shown = _start_rule(subentry_hass(entry), entry, "bezny", "terasa")
+
+    assert _schema_keys(shown) == {
+        "mode",
+        "zone",
+        "order",
+        "if_ref",
+        "if",
+        "position",
+        "tilt",
+        "events",
+        "name",
+    }
+
+
+def test_rule_order_defaults_to_the_highest_in_that_pair_plus_ten(subentry_entry, subentry_hass):
+    """The brief's "appending needs no thought". Also the reason adding is two
+    steps at all: the default cannot be computed until the pair is known, and
+    the pair is what step one asks for.
+    """
+    entry = _rule_scaffold(subentry_entry())
+    entry.add_subentry(MODE, {"id": "noc", "order": 10})
+    hass = subentry_hass(entry)
+
+    # Nothing in this pair yet -- start at 0, not at 10.
+    _flow, first = _start_rule(hass, entry, "bezny", "terasa")
+    assert _suggested(first)["order"] == 0
+
+    entry.add_subentry(
+        RULE, {"mode": "bezny", "zone": "terasa", "order": 0, "then": {"position": "keep"}}
+    )
+    entry.add_subentry(
+        RULE, {"mode": "bezny", "zone": "terasa", "order": 30, "then": {"position": "keep"}}
+    )
+    _flow, second = _start_rule(hass, entry, "bezny", "terasa")
+    assert _suggested(second)["order"] == 40
+
+    # Highest *in that pair*, not in the entry: a different mode starts over.
+    _flow, other = _start_rule(hass, entry, "noc", "terasa")
+    assert _suggested(other)["order"] == 0
+
+
+def test_rule_step_two_prefills_both_axes_with_keep(subentry_entry, subentry_hass):
+    """`keep` is the do-nothing action, so it is the only safe default for a
+    form that decides where a physical blind goes.
+    """
+    entry = _rule_scaffold(subentry_entry())
+    _flow, shown = _start_rule(subentry_hass(entry), entry, "bezny", "terasa")
+
+    suggested = _suggested(shown)
+    assert suggested["position"] == "keep"
+    assert suggested["tilt"] == "keep"
+
+
+def test_rule_writes_only_keys_config_store_reads(subentry_entry, subentry_hass):
+    """The drift guard the other types have, in the shape a rule needs it.
+
+    A rule's form fields are deliberately *not* its data keys (`if_ref`
+    folds into `if`, `position`/`tilt` fold into `then`), so the blind/zone
+    check -- "the form's field set equals the reader's key set" -- cannot be
+    reused. What must hold instead is that every key `_to_data` emits is one
+    `config_store` actually reads: `mode`/`zone`/`order` for the grouping,
+    and nothing outside `_RULE_KEYS` for the body, since `_rule_body` drops
+    anything else on the floor without a word.
+    """
+    entry = _rule_scaffold(subentry_entry(), values=["poz"], conditions=["slnko"])
+
+    result = _add_rule(
+        subentry_hass(entry),
+        entry,
+        {
+            "mode": "bezny",
+            "zone": "terasa",
+            "order": 0,
+            "if_ref": "slnko",
+            "position": "poz",
+            "tilt": "100",
+            "events": ["arrival"],
+            "name": "tienenie",
+        },
+        save=False,
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    body = set(result["data"]) - {"mode", "zone", "order"}
+    assert body <= _RULE_KEYS
+    # Nothing written is silently dropped on the way to `_parse_rule`.
+    assert set(_rule_body(result["data"])) == body
+
+
+def test_rule_axes_accept_a_number_keep_and_a_value_ref(subentry_entry, subentry_hass):
+    """The brief's hard requirement: numbers only would make a large share of
+    the live configuration unexpressible (`fixtures/dom_peter.yaml` uses all
+    three forms, often within one rule). Asserted against the loaded `Config`,
+    not just the saved dict, so "it wrote something" is not mistaken for "it
+    means the right thing".
+    """
+    entry = _rule_scaffold(subentry_entry(), values=["kvety_poz"])
+    hass = subentry_hass(entry)
+
+    ref_and_number = _add_rule(
+        hass,
+        entry,
+        {
+            "mode": "bezny",
+            "zone": "terasa",
+            "order": 0,
+            "position": "kvety_poz",
+            "tilt": "100",
+        },
+    )
+    assert ref_and_number["type"] is FlowResultType.CREATE_ENTRY
+    assert ref_and_number["data"]["then"] == {"position": {"ref": "kvety_poz"}, "tilt": 100}
+
+    keeps = _add_rule(
+        hass,
+        entry,
+        {"mode": "bezny", "zone": "terasa", "order": 10, "position": "keep", "tilt": "keep"},
+    )
+    assert keeps["type"] is FlowResultType.CREATE_ENTRY
+    assert keeps["data"]["then"] == {"position": "keep", "tilt": "keep"}
+
+    rules = config_from_subentries(entry).rules["bezny.terasa"]
+    assert rules[0].then.position == Ref(entity="input_number.kvety_poz", default=34)
+    assert rules[0].then.tilt == 100
+    assert rules[1].then.position is KEEP
+    assert rules[1].then.tilt is KEEP
+
+
+def test_rule_axis_that_names_nothing_is_blocked_not_guessed(subentry_entry, subentry_hass):
+    """A typed axis that is neither `keep`, a configured value, nor a number
+    must fail loudly. `_axis_to_data` passes it through untouched precisely so
+    `config_schema._parse_axis` raises the same `ConfigError` hand-written
+    YAML would get -- the alternative, quietly falling back to `keep`, would
+    mean a blind silently not moving with nothing to look at.
+    """
+    entry = _rule_scaffold(subentry_entry())
+
+    result = _add_rule(
+        subentry_hass(entry),
+        entry,
+        {"mode": "bezny", "zone": "terasa", "order": 0, "position": "kvety_poz", "tilt": "keep"},
+        save=False,
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "invalid_config"}
+    assert "action axis" in result["description_placeholders"]["error_detail"]
+
+
+def test_rule_out_of_range_axis_is_blocked(subentry_entry, subentry_hass):
+    entry = _rule_scaffold(subentry_entry())
+
+    result = _add_rule(
+        subentry_hass(entry),
+        entry,
+        {"mode": "bezny", "zone": "terasa", "order": 0, "position": "150", "tilt": "keep"},
+        save=False,
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert "0..100" in result["description_placeholders"]["error_detail"]
+
+
+def test_rule_with_no_events_omits_the_key_rather_than_writing_an_empty_list(
+    subentry_entry, subentry_hass
+):
+    """Not cosmetic. `Rule.events = None` means "any event"; an empty
+    `frozenset` makes `engine._apply_rules`'s `world.event.kind not in
+    rule.events` true for every event, so the rule can never fire. Writing
+    `events: []` for "the user picked nothing" would turn every rule added
+    through the UI into a dead one.
+    """
+    entry = _rule_scaffold(subentry_entry())
+
+    result = _add_rule(
+        subentry_hass(entry),
+        entry,
+        {
+            "mode": "bezny",
+            "zone": "terasa",
+            "order": 0,
+            "position": "keep",
+            "tilt": "keep",
+            "events": [],
+            "name": "",
+        },
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert "events" not in result["data"]
+    assert "name" not in result["data"]
+    assert config_from_subentries(entry).rules["bezny.terasa"][0].events is None
+
+
+def test_rule_with_events_scopes_the_rule_to_them(subentry_entry, subentry_hass):
+    entry = _rule_scaffold(subentry_entry())
+
+    result = _add_rule(
+        subentry_hass(entry),
+        entry,
+        {
+            "mode": "bezny",
+            "zone": "terasa",
+            "order": 0,
+            "position": "keep",
+            "tilt": "keep",
+            "events": ["arrival"],
+        },
+    )
+
+    assert result["data"]["events"] == ["arrival"]
+    assert config_from_subentries(entry).rules["bezny.terasa"][0].events == frozenset({"arrival"})
+
+
+def test_rule_title_shows_order_pair_and_action(subentry_entry, subentry_hass):
+    """The brief: the subentry list must read without opening rows. `order`
+    leads because Home Assistant lists subentries by title, so a title-sorted
+    list is very nearly the order the engine tries the rules in.
+    """
+    entry = _rule_scaffold(subentry_entry(), values=["kvety_poz"])
+    hass = subentry_hass(entry)
+
+    plain = _add_rule(
+        hass,
+        entry,
+        {"mode": "bezny", "zone": "terasa", "order": 0, "position": "40", "tilt": "keep"},
+    )
+    assert plain["title"] == "0 bezny.terasa -> 40/keep"
+
+    named = _add_rule(
+        hass,
+        entry,
+        {
+            "mode": "bezny",
+            "zone": "terasa",
+            "order": 10,
+            "position": "kvety_poz",
+            "tilt": "100",
+            "name": "tienenie",
+        },
+    )
+    assert named["title"] == "10 bezny.terasa tienenie -> kvety_poz/100"
+
+
+def test_rule_if_ref_writes_the_parsed_ref_shape(subentry_entry, subentry_hass):
+    """Same reasoning as `mode`'s: `{"ref": ...}` would become a `RefTag` whose
+    target `_parse_condition` checks eagerly, so deleting the named condition
+    would raise `ConfigError` and block every save of every type instead of
+    producing one attributable `unknown_condition_ref`.
+    """
+    entry = _rule_scaffold(subentry_entry(), conditions=["slnko"])
+
+    result = _add_rule(
+        subentry_hass(entry),
+        entry,
+        {
+            "mode": "bezny",
+            "zone": "terasa",
+            "order": 0,
+            "if_ref": "slnko",
+            "position": "keep",
+            "tilt": "0",
+        },
+    )
+
+    assert result["data"]["if"] == {"condition": "ref", "name": "slnko"}
+    assert config_from_subentries(entry).rules["bezny.terasa"][0].when == {
+        "condition": "ref",
+        "name": "slnko",
+    }
+
+
+def test_rule_rejects_both_a_named_and_an_inline_condition(subentry_entry, subentry_hass):
+    entry = _rule_scaffold(subentry_entry(), conditions=["slnko"])
+
+    result = _add_rule(
+        subentry_hass(entry),
+        entry,
+        {
+            "mode": "bezny",
+            "zone": "terasa",
+            "order": 0,
+            "if_ref": "slnko",
+            "if": [{"condition": "state", "entity_id": "input_boolean.a", "state": "on"}],
+            "position": "keep",
+            "tilt": "keep",
+        },
+        save=False,
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert "not both" in result["description_placeholders"]["error_detail"]
+
+
+def test_rule_inline_condition_via_the_real_selector_unwraps_the_entity_id_list(
+    subentry_entry, subentry_hass
+):
+    """`_normalize_condition_tree` is shared with `condition`/`mode`, but a
+    third call site is a third chance to forget to call it -- and forgetting
+    is not caught by `validate()`, it is a `TypeError: unhashable type:
+    'list'` the first time the engine runs the rule. Drives the *real*
+    `ConditionSelector`, since a hand-built dict never shows the coercion.
+    """
+    entry = _rule_scaffold(subentry_entry())
+    hass = subentry_hass(entry)
+
+    flow, shown = _start_rule(hass, entry, "bezny", "terasa")
+    coerced = shown["data_schema"](
+        {
+            "mode": "bezny",
+            "zone": "terasa",
+            "order": 0,
+            "if": [{"condition": "state", "entity_id": "input_boolean.a", "state": "on"}],
+            "position": "keep",
+            "tilt": "0",
+        }
+    )
+    result = asyncio.run(flow.async_step_rule(coerced))
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"]["if"] == [
+        {"condition": "state", "entity_id": "input_boolean.a", "state": "on"}
+    ]
+    entry.add_subentry(RULE, result["data"], title=result["title"])
+    rule = config_from_subentries(entry).rules["bezny.terasa"][0]
+    assert evaluate_condition(rule.when, World(states={"input_boolean.a": "on"})) is True
+    assert evaluate_condition(rule.when, World(states={"input_boolean.a": "off"})) is False
+
+
+def test_rule_reconfigure_prefills_every_field_and_can_move_the_rule(subentry_entry, subentry_hass):
+    entry = _rule_scaffold(subentry_entry(), values=["kvety_poz"], conditions=["slnko"])
+    entry.add_subentry(
+        RULE, {"mode": "bezny", "zone": "terasa", "order": 0, "then": {"position": "keep"}}
+    )
+    subentry_id = entry.add_subentry(
+        RULE,
+        {
+            "mode": "bezny",
+            "zone": "terasa",
+            "order": 10,
+            "if": {"condition": "ref", "name": "slnko"},
+            "then": {"position": {"ref": "kvety_poz"}, "tilt": 100},
+            "events": ["arrival"],
+            "name": "tienenie",
+        },
+    )
+    flow = _make_flow(RuleSubentryFlowHandler, subentry_hass(entry), RULE, subentry_id=subentry_id)
+
+    shown = asyncio.run(flow.async_step_reconfigure(None))
+    assert shown["step_id"] == "reconfigure"
+    assert _suggested(shown) == {
+        "mode": "bezny",
+        "zone": "terasa",
+        "order": 10,
+        "if_ref": "slnko",
+        "if": [],
+        "position": "kvety_poz",
+        "tilt": "100",
+        "events": ["arrival"],
+        "name": "tienenie",
+    }
+
+    # Move it ahead of the other rule -- the edit that only means anything
+    # because order is semantics.
+    result = asyncio.run(
+        flow.async_step_reconfigure(
+            {
+                "mode": "bezny",
+                "zone": "terasa",
+                "order": -10,
+                "if_ref": "slnko",
+                "position": "kvety_poz",
+                "tilt": "100",
+                "events": ["arrival"],
+                "name": "tienenie",
+            }
+        )
+    )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    assert [r.name for r in config_from_subentries(entry).rules["bezny.terasa"]] == [
+        "tienenie",
+        "",
+    ]
+
+
+def test_rule_reconfigure_round_trips_an_inline_condition(subentry_entry, subentry_hass):
+    """The prefill must be a real inverse of what was saved: opening a rule's
+    form and pressing submit without touching anything must write the same
+    bytes back. A lossy round-trip here would quietly rewrite a rule's
+    condition, action or event scope every time it was merely looked at.
+
+    Resubmits the form's own *suggested values* -- what the browser would
+    send back untouched -- rather than calling `_to_form_values` directly, so
+    the prefill path being exercised is the one a user actually goes through.
+    """
+    entry = _rule_scaffold(subentry_entry())
+    hass = subentry_hass(entry)
+    added = _add_rule(
+        hass,
+        entry,
+        {
+            "mode": "bezny",
+            "zone": "terasa",
+            "order": 0,
+            "if": [{"condition": "state", "entity_id": "input_boolean.a", "state": "on"}],
+            "position": "40",
+            "tilt": "keep",
+            "events": ["arrival"],
+            "name": "n",
+        },
+    )
+    subentry_id = next(sid for sid, sub in entry.subentries.items() if sub.subentry_type == RULE)
+    flow = _make_flow(RuleSubentryFlowHandler, hass, RULE, subentry_id=subentry_id)
+
+    shown = asyncio.run(flow.async_step_reconfigure(None))
+    untouched = {key: value for key, value in _suggested(shown).items() if value is not None}
+    resubmitted = asyncio.run(flow.async_step_reconfigure(untouched))
+
+    assert resubmitted["type"] is FlowResultType.ABORT
+    assert entry.subentries[subentry_id].data == added["data"]
+
+
+# ---------------------------------------------------------------------------
+# rule: attribution. `duplicate_rule_order` and `unknown_rule_key` are the two
+# ERROR codes a rule owns, and both name one `(mode, zone)` pair. Before this
+# task they were mapped to the whole `rule` *type* (`_CODE_OWNERS`), so either
+# one, left anywhere in the entry, blocked every rule save -- the same defect
+# class that made adding a second blind impossible in task 2 and blocked
+# unrelated condition saves in task 3. `Problem.owners` now names the specific
+# rules, matched by the `"<mode>.<zone>#<index>"` identity
+# `config_store.rule_owner_ids` maps a real subentry id onto.
+# ---------------------------------------------------------------------------
+
+
+def test_rule_duplicate_order_in_the_same_pair_is_blocked(subentry_entry, subentry_hass):
+    """Attribution must not overcorrect into "a tie never blocks". Two rules in
+    one pair claiming one `order` is genuinely ambiguous -- and unrecoverable
+    once sorted into a tuple -- so the save that creates it must fail.
+    """
+    entry = _rule_scaffold(subentry_entry())
+    entry.add_subentry(
+        RULE, {"mode": "bezny", "zone": "terasa", "order": 10, "then": {"position": "keep"}}
+    )
+
+    result = _add_rule(
+        subentry_hass(entry),
+        entry,
+        {"mode": "bezny", "zone": "terasa", "order": 10, "position": "0", "tilt": "keep"},
+        save=False,
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "invalid_config"}
+    assert "duplicate_rule_order" in result["description_placeholders"]["error_detail"]
+
+
+def test_a_tie_in_one_pair_does_not_block_adding_a_rule_to_another(subentry_entry, subentry_hass):
+    """The defect class. A tie can arrive without this flow -- a YAML import,
+    a hand-edited `.storage` -- and the form for a *different* pair has no
+    field that could resolve it. Blocking it there leaves the user staring at
+    an error about rules they are not editing.
+    """
+    entry = _rule_scaffold(subentry_entry())
+    entry.add_subentry(MODE, {"id": "noc", "order": 10})
+    entry.add_subentry(
+        RULE, {"mode": "bezny", "zone": "terasa", "order": 10, "then": {"position": "keep"}}
+    )
+    entry.add_subentry(
+        RULE, {"mode": "bezny", "zone": "terasa", "order": 10, "then": {"position": 0}}
+    )
+
+    result = _add_rule(
+        subentry_hass(entry),
+        entry,
+        {"mode": "noc", "zone": "terasa", "order": 0, "position": "0", "tilt": "0"},
+        save=False,
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+
+
+def test_a_tie_elsewhere_does_not_block_fixing_one_of_the_tied_rules(subentry_entry, subentry_hass):
+    """The other half of the escape: the rules that *are* tied must still be
+    editable, or attribution would have replaced one dead end with another.
+    """
+    entry = _rule_scaffold(subentry_entry())
+    entry.add_subentry(
+        RULE, {"mode": "bezny", "zone": "terasa", "order": 10, "then": {"position": "keep"}}
+    )
+    tied_id = entry.add_subentry(
+        RULE, {"mode": "bezny", "zone": "terasa", "order": 10, "then": {"position": 0}}
+    )
+    flow = _make_flow(RuleSubentryFlowHandler, subentry_hass(entry), RULE, subentry_id=tied_id)
+
+    result = asyncio.run(
+        flow.async_step_reconfigure(
+            {"mode": "bezny", "zone": "terasa", "order": 20, "position": "0", "tilt": "keep"}
+        )
+    )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert duplicate_rule_order_problems(entry) == []
+
+
+def test_a_rule_stranded_by_a_deleted_mode_does_not_block_an_unrelated_rule_add(
+    subentry_entry, subentry_hass
+):
+    """`unknown_rule_key`, same defect class. Home Assistant offers no veto on
+    subentry removal, so deleting a mode strands every rule filed under it --
+    and before attribution that stranded rule blocked adding any rule at all,
+    including to the healthy pairs the user still has.
+    """
+    entry = _rule_scaffold(subentry_entry())
+    entry.add_subentry(
+        RULE, {"mode": "zmazany", "zone": "terasa", "order": 0, "then": {"position": "keep"}}
+    )
+
+    result = _add_rule(
+        subentry_hass(entry),
+        entry,
+        {"mode": "bezny", "zone": "terasa", "order": 0, "position": "keep", "tilt": "keep"},
+        save=False,
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+
+
+def test_a_stranded_rule_still_blocks_its_own_save(subentry_entry, subentry_hass):
+    """And the stranded rule itself is still refused, so attribution has not
+    turned `unknown_rule_key` into a check that never fires.
+    """
+    entry = _rule_scaffold(subentry_entry())
+    stranded_id = entry.add_subentry(
+        RULE, {"mode": "zmazany", "zone": "terasa", "order": 0, "then": {"position": "keep"}}
+    )
+    flow = _make_flow(RuleSubentryFlowHandler, subentry_hass(entry), RULE, subentry_id=stranded_id)
+
+    # Re-submitting it unchanged, as a user would after reopening the form
+    # without fixing the mode. The mode select offers only `bezny`, so this
+    # shape is only reachable by leaving the stale value in place -- which is
+    # exactly what a reconfigure form prefilled from broken data does.
+    result = asyncio.run(
+        flow.async_step_reconfigure(
+            {"mode": "zmazany", "zone": "terasa", "order": 0, "position": "keep", "tilt": "keep"}
+        )
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert "unknown_rule_key" in result["description_placeholders"]["error_detail"]
+
+
+def test_a_rules_own_dangling_condition_ref_blocks_only_that_rule(subentry_entry, subentry_hass):
+    """The `_condition_sites` rule-id assumption, exercised end to end.
+
+    `validation._condition_sites` attributes a condition-body problem inside
+    a rule's `if` to `("rule", "<mode>.<zone>#<index>")`. Nothing before this
+    task ever compared that string against a real subentry, so it was a
+    guess. Here `r1`'s dangling ref must block `r1` and nothing else: if the
+    identity did not line up, the first assertion would fail (the problem
+    would match nobody) or the second would (it would match everybody).
+    """
+    entry = _rule_scaffold(subentry_entry())
+    innocent_id = entry.add_subentry(
+        RULE, {"mode": "bezny", "zone": "terasa", "order": 0, "then": {"position": "keep"}}
+    )
+    guilty_id = entry.add_subentry(
+        RULE,
+        {
+            "mode": "bezny",
+            "zone": "terasa",
+            "order": 10,
+            "if": {"condition": "ref", "name": "neexistuje"},
+            "then": {"position": 0},
+        },
+    )
+    hass = subentry_hass(entry)
+
+    # The guilty rule's own form is blocked, and the message names it by the
+    # very index `rule_owner_ids` assigns it.
+    assert rule_owner_ids(entry)[guilty_id] == "bezny.terasa#1"
+    guilty = asyncio.run(
+        _make_flow(
+            RuleSubentryFlowHandler, hass, RULE, subentry_id=guilty_id
+        ).async_step_reconfigure(
+            {
+                "mode": "bezny",
+                "zone": "terasa",
+                "order": 10,
+                "if": [{"condition": "ref", "name": "neexistuje"}],
+                "position": "0",
+                "tilt": "keep",
+            }
+        )
+    )
+    assert guilty["type"] is FlowResultType.FORM
+    assert (
+        "rule bezny.terasa#1 refers to unknown condition 'neexistuje'"
+        in guilty["description_placeholders"]["error_detail"]
+    )
+
+    # The innocent neighbour, in the same pair and the same type, is not.
+    innocent = asyncio.run(
+        _make_flow(
+            RuleSubentryFlowHandler, hass, RULE, subentry_id=innocent_id
+        ).async_step_reconfigure(
+            {"mode": "bezny", "zone": "terasa", "order": 0, "position": "100", "tilt": "keep"}
+        )
+    )
+    assert innocent["type"] is FlowResultType.ABORT
+
+    # Neither is an unrelated blind.
+    blind = asyncio.run(
+        _make_flow(BlindSubentryFlowHandler, hass, BLIND).async_step_user(
+            {
+                "entity": "cover.b",
+                "tolerance": 45,
+                "travel_time": 60,
+                "has_tilt": True,
+                "tilt_after_arrival": True,
+            }
+        )
+    )
+    assert blind["type"] is FlowResultType.CREATE_ENTRY
+
+
+def test_deleting_a_value_a_rule_refs_does_not_lock_every_other_form(subentry_entry, subentry_hass):
+    """A value ref is the one ref this project cannot defer: `_parse_axis`
+    resolves it eagerly and raises `ConfigError` if it is missing, so an
+    entry whose rule points at a deleted `value` does not merely fail
+    `validate()` -- it fails to parse at all, before there is anything to
+    attribute. Home Assistant has no veto on subentry removal, so this state
+    is reachable by clicking delete on a value.
+
+    Blocking every form on it would be the worst version of this project's
+    recurring defect: not one form refusing a fix, but all of them. The
+    entry is already refusing to load, so the way out has to stay open --
+    both by editing the offending rule and by carrying on elsewhere.
+    """
+    entry = _rule_scaffold(subentry_entry(), values=["kvety_poz"])
+    hass = subentry_hass(entry)
+    rule = _add_rule(
+        hass,
+        entry,
+        {"mode": "bezny", "zone": "terasa", "order": 0, "position": "kvety_poz", "tilt": "keep"},
+    )
+    assert rule["type"] is FlowResultType.CREATE_ENTRY
+    rule_id = next(sid for sid, sub in entry.subentries.items() if sub.subentry_type == RULE)
+
+    # The user deletes the value, as HA's built-in subentry UI lets them.
+    value_id = next(sid for sid, sub in entry.subentries.items() if sub.subentry_type == VALUE)
+    del entry.subentries[value_id]
+
+    # An unrelated blind add still works.
+    blind = asyncio.run(
+        _make_flow(BlindSubentryFlowHandler, hass, BLIND).async_step_user(
+            {
+                "entity": "cover.b",
+                "tolerance": 45,
+                "travel_time": 60,
+                "has_tilt": True,
+                "tilt_after_arrival": True,
+            }
+        )
+    )
+    assert blind["type"] is FlowResultType.CREATE_ENTRY
+
+    # And the actual repair -- pointing the rule's axis somewhere real --
+    # goes through, leaving an entry that parses again.
+    repair = asyncio.run(
+        _make_flow(RuleSubentryFlowHandler, hass, RULE, subentry_id=rule_id).async_step_reconfigure(
+            {"mode": "bezny", "zone": "terasa", "order": 0, "position": "60", "tilt": "keep"}
+        )
+    )
+    assert repair["type"] is FlowResultType.ABORT
+    assert config_from_subentries(entry).rules["bezny.terasa"][0].then.position == 60
+
+
+def test_a_save_that_itself_breaks_a_healthy_entry_is_still_blocked(subentry_entry, subentry_hass):
+    """The exemption above must be exactly "the entry was already broken", not
+    "parse failures never block". A healthy entry plus one bad save is the
+    case the check exists for.
+    """
+    entry = _rule_scaffold(subentry_entry())
+
+    result = _add_rule(
+        subentry_hass(entry),
+        entry,
+        {"mode": "bezny", "zone": "terasa", "order": 0, "position": "nic_take", "tilt": "keep"},
+        save=False,
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "invalid_config"}
+
+
+# ---------------------------------------------------------------------------
+# The ordered build-up a human actually performs, now all the way to rules.
+#
+# Every earlier task's defect survived review because each test drove one step
+# in isolation; the sequence is what catches an ordering trap. This one goes
+# blinds -> zone -> value -> conditions -> modes -> several rules in one pair
+# at different orders -> a rule using `keep` -> a rule whose position is a
+# value ref, asserting each save succeeds, and finishes by loading the whole
+# entry and checking the rules come out in `order` order.
+# ---------------------------------------------------------------------------
+
+
+def test_full_build_up_sequence_through_rules(subentry_entry, subentry_hass):
+    entry = subentry_entry()
+    hass = subentry_hass(entry)
+
+    def blind(entity):
+        result = asyncio.run(
+            _make_flow(BlindSubentryFlowHandler, hass, BLIND).async_step_user(
+                {
+                    "entity": entity,
+                    "tolerance": 45,
+                    "travel_time": 60,
+                    "has_tilt": True,
+                    "tilt_after_arrival": True,
+                }
+            )
+        )
+        assert result["type"] is FlowResultType.CREATE_ENTRY, entity
+        entry.add_subentry(BLIND, result["data"], title=result["title"])
+
+    # 1. Two blinds, then the zone that owns them -- the order task 2's fix
+    # pass exists for.
+    blind("cover.a")
+    blind("cover.b")
+
+    zone = asyncio.run(
+        _make_flow(ZoneSubentryFlowHandler, hass, ZONE).async_step_user(
+            {"id": "terasa", "members": ["cover.a", "cover.b"], "occupants": ["peter"]}
+        )
+    )
+    assert zone["type"] is FlowResultType.CREATE_ENTRY
+    entry.add_subentry(ZONE, zone["data"], title=zone["title"])
+
+    # 2. A value, so a rule can point an axis at a helper rather than a literal.
+    value = asyncio.run(
+        _make_flow(ValueSubentryFlowHandler, hass, VALUE).async_step_user(
+            {"id": "kvety_poz", "entity": "input_number.kvety_pozicia_zaluzie", "default": 34}
+        )
+    )
+    assert value["type"] is FlowResultType.CREATE_ENTRY
+    entry.add_subentry(VALUE, value["data"], title=value["title"])
+
+    # 3. A named condition.
+    cond = asyncio.run(
+        _make_flow(ConditionSubentryFlowHandler, hass, CONDITION).async_step_user(
+            {
+                "id": "slnko",
+                "condition": [
+                    {"condition": "state", "entity_id": "sun.sun", "state": "above_horizon"}
+                ],
+            }
+        )
+    )
+    assert cond["type"] is FlowResultType.CREATE_ENTRY
+    entry.add_subentry(CONDITION, cond["data"], title=cond["title"])
+
+    # 4. The fallback mode first, at the highest order, then the conditional
+    # one below it -- the sequence `fallback_mode_not_last` forces.
+    for submission in (
+        {"id": "bezny", "order": 100},
+        {"id": "slnecno", "order": 0, "condition_ref": "slnko"},
+    ):
+        mode = asyncio.run(
+            _make_flow(ModeSubentryFlowHandler, hass, MODE).async_step_user(submission)
+        )
+        assert mode["type"] is FlowResultType.CREATE_ENTRY, submission["id"]
+        entry.add_subentry(MODE, mode["data"], title=mode["title"])
+
+    # 5. Three rules in the same pair, added in the order a person would think
+    # of them -- and each one taking the `order` the form suggested, never a
+    # number worked out by hand.
+    for submission in (
+        {"if_ref": "slnko", "position": "kvety_poz", "tilt": "0", "name": "tienenie"},
+        {"position": "keep", "tilt": "keep", "events": ["arrival"], "name": "prichod"},
+        {"position": "100", "tilt": "100", "name": "inak"},
+    ):
+        flow, shown = _start_rule(hass, entry, "slnecno", "terasa")
+        suggested_order = _suggested(shown)["order"]
+        result = asyncio.run(
+            flow.async_step_rule(
+                {"mode": "slnecno", "zone": "terasa", "order": suggested_order, **submission}
+            )
+        )
+        assert result["type"] is FlowResultType.CREATE_ENTRY, submission["name"]
+        entry.add_subentry(RULE, result["data"], title=result["title"])
+
+    assert [
+        sub.data["order"] for sub in entry.subentries.values() if sub.subentry_type == RULE
+    ] == [0, 10, 20]
+
+    # 6. A catch-all for the other mode, so no (mode, zone) pair is empty.
+    catch_all = _add_rule(
+        hass,
+        entry,
+        {"mode": "bezny", "zone": "terasa", "order": 0, "position": "keep", "tilt": "keep"},
+    )
+    assert catch_all["type"] is FlowResultType.CREATE_ENTRY
+
+    # 7. A rule slipped *between* two existing ones -- the whole reason the
+    # suggested order steps by ten rather than by one.
+    between = _add_rule(
+        hass,
+        entry,
+        {
+            "mode": "slnecno",
+            "zone": "terasa",
+            "order": 5,
+            "position": "0",
+            "tilt": "keep",
+            "name": "medzi",
+        },
+    )
+    assert between["type"] is FlowResultType.CREATE_ENTRY
+
+    # The finished entry loads, is free of ERRORs, and the rules come out in
+    # `order` order -- including the one inserted between two neighbours.
+    built = config_from_subentries(entry)
+    assert [rule.name for rule in built.rules["slnecno.terasa"]] == [
+        "tienenie",
+        "medzi",
+        "prichod",
+        "inak",
+    ]
+    assert built.rules["slnecno.terasa"][0].then.position == Ref(
+        entity="input_number.kvety_pozicia_zaluzie", default=34
+    )
+    assert built.rules["slnecno.terasa"][2].then.position is KEEP
+    assert built.rules["slnecno.terasa"][2].events == frozenset({"arrival"})
+    problems = validate(built) + duplicate_rule_order_problems(entry)
+    assert [p for p in problems if p.severity == ERROR] == []
+
+
+# ---------------------------------------------------------------------------
+# Translations, checked against the flows rather than by reading the diff.
+#
+# `tests/test_translations.py` proves the three JSON files agree with each
+# other. What it cannot know is what the *flows* actually render: a step or a
+# field with no key at all is consistent across all three files and still
+# shows the user a raw identifier. These two close that half.
+# ---------------------------------------------------------------------------
+
+_STRINGS = json.loads(
+    (Path(cover_logic.__file__).parent / "strings.json").read_text(encoding="utf-8")
+)
+
+
+def _step_names(handler):
+    """Every step id `handler` can dispatch, the way Home Assistant finds them."""
+    return {
+        name.removeprefix("async_step_") for name in dir(handler) if name.startswith("async_step_")
+    }
+
+
+@pytest.mark.parametrize("subentry_type", sorted(SUBENTRY_FLOW_HANDLERS))
+def test_every_subentry_type_has_its_own_strings(subentry_type):
+    section = _STRINGS["config_subentries"][subentry_type]
+
+    assert section["entry_type"]
+    assert section["initiate_flow"]["user"]
+    # Every flow surfaces failures the same way (`errors["base"]`) and ends a
+    # reconfigure with the same abort reason, so both keys are needed by all.
+    assert section["error"]["invalid_config"]
+    assert section["abort"]["reconfigure_successful"]
+
+
+@pytest.mark.parametrize("subentry_type", sorted(SUBENTRY_FLOW_HANDLERS))
+def test_every_step_a_flow_can_dispatch_has_a_title(subentry_type):
+    """A step id with no strings entry renders with no title and no
+    description -- the failure `rule`'s two-step add made newly possible,
+    since every other flow has only ever shown `user`/`reconfigure`.
+    """
+    handler = SUBENTRY_FLOW_HANDLERS[subentry_type]
+    steps = _STRINGS["config_subentries"][subentry_type]["step"]
+
+    for step_name in _step_names(handler):
+        assert step_name in steps, f"{subentry_type}: step {step_name!r} has no strings"
+        assert steps[step_name]["title"]
+
+
+def test_every_field_of_every_rendered_form_has_a_label(subentry_entry, subentry_hass):
+    """Renders each add form for real and checks each field it declares, rather
+    than trusting a hand-kept list of field names to have stayed in step with
+    the schemas.
+    """
+    entry = _rule_scaffold(subentry_entry(), values=["kvety_poz"], conditions=["slnko"])
+    hass = subentry_hass(entry)
+
+    rendered = []
+    for subentry_type, handler in sorted(SUBENTRY_FLOW_HANDLERS.items()):
+        rendered.append(
+            (
+                subentry_type,
+                asyncio.run(_make_flow(handler, hass, subentry_type).async_step_user(None)),
+            )
+        )
+    # `rule`'s second step is only reachable after step one, so it is rendered
+    # separately -- and it is the step with the most fields of any in the
+    # integration, so leaving it out would gut this test.
+    rendered.append((RULE, _start_rule(hass, entry, "bezny", "terasa")[1]))
+
+    # `.get` rather than `[...]`: a step missing entirely is a real failure
+    # mode too, and it should be reported as one more missing label rather
+    # than as a `KeyError` traceback that buries which step it was.
+    missing = [
+        f"{subentry_type}::{shown['step_id']}::{field}"
+        for subentry_type, shown in rendered
+        for field in _schema_keys(shown)
+        if field
+        not in _STRINGS["config_subentries"][subentry_type]["step"]
+        .get(shown["step_id"], {})
+        .get("data", {})
+    ]
+    assert missing == []

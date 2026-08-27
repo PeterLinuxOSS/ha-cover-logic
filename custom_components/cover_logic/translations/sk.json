@@ -185,6 +185,70 @@
       "abort": {
         "reconfigure_successful": "[%key:common::config_flow::abort::reconfigure_successful%]"
       }
+    },
+    "rule": {
+      "entry_type": "Pravidlo",
+      "initiate_flow": {
+        "user": "Pridať pravidlo"
+      },
+      "step": {
+        "user": {
+          "title": "Pridať pravidlo",
+          "description": "Do ktorého zoznamu pravidiel toto pravidlo patrí? Každá dvojica režim–zóna má vlastný zoznam, ktorý sa skúša od najnižšieho poradia, kým niektoré pravidlo nesadne.",
+          "data": {
+            "mode": "Režim",
+            "zone": "Zóna"
+          }
+        },
+        "rule": {
+          "title": "Pridať pravidlo",
+          "description": "O tom, kam pôjdu žalúzie zóny, rozhodne prvé pravidlo v tomto zozname, ktorému sedia udalosti aj podmienka; na ďalšie sa už nepozerá. Pravidlo bez podmienky preto patrí na koniec.",
+          "data": {
+            "mode": "Režim",
+            "zone": "Zóna",
+            "order": "Poradie",
+            "if_ref": "Pomenovaná podmienka (nechajte prázdne pre vloženú podmienku, alebo pre pravidlo, ktoré sedí vždy)",
+            "if": "Vložená podmienka (nechajte prázdne pri použití pomenovanej podmienky, alebo pre pravidlo, ktoré sedí vždy)",
+            "position": "Pozícia",
+            "tilt": "Lamely",
+            "events": "Len pre tieto udalosti",
+            "name": "Názov (zobrazí sa v zázname rozhodnutia)"
+          },
+          "data_description": {
+            "order": "Nižšie sa skúša skôr. Predvyplní sa o desať vyššie než posledné pravidlo v tomto zozname, aby sa medzi ne dalo neskôr vložiť ďalšie. Dve pravidlá v jednom zozname nemôžu mať rovnaké poradie.",
+            "position": "Zvoľte „keep“, ak sa má os nechať tak, zvoľte nastavenú hodnotu, ak sa má číslo prečítať z pomocníka pri rozhodovaní, alebo napíšte číslo od 0 do 100.",
+            "tilt": "Zvoľte „keep“, ak sa má os nechať tak, zvoľte nastavenú hodnotu, ak sa má číslo prečítať z pomocníka pri rozhodovaní, alebo napíšte číslo od 0 do 100.",
+            "events": "Nechajte prázdne, ak má pravidlo platiť pre každú udalosť."
+          }
+        },
+        "reconfigure": {
+          "title": "Upraviť pravidlo",
+          "description": "O tom, kam pôjdu žalúzie zóny, rozhodne prvé pravidlo v tomto zozname, ktorému sedia udalosti aj podmienka; na ďalšie sa už nepozerá. Pravidlo bez podmienky preto patrí na koniec.",
+          "data": {
+            "mode": "[%key:component::cover_logic::config_subentries::rule::step::user::data::mode%]",
+            "zone": "[%key:component::cover_logic::config_subentries::rule::step::user::data::zone%]",
+            "order": "[%key:component::cover_logic::config_subentries::rule::step::user::data::order%]",
+            "if_ref": "[%key:component::cover_logic::config_subentries::rule::step::user::data::if_ref%]",
+            "if": "[%key:component::cover_logic::config_subentries::rule::step::user::data::if%]",
+            "position": "[%key:component::cover_logic::config_subentries::rule::step::user::data::position%]",
+            "tilt": "[%key:component::cover_logic::config_subentries::rule::step::user::data::tilt%]",
+            "events": "[%key:component::cover_logic::config_subentries::rule::step::user::data::events%]",
+            "name": "[%key:component::cover_logic::config_subentries::rule::step::user::data::name%]"
+          },
+          "data_description": {
+            "order": "[%key:component::cover_logic::config_subentries::rule::step::user::data_description::order%]",
+            "position": "[%key:component::cover_logic::config_subentries::rule::step::user::data_description::position%]",
+            "tilt": "[%key:component::cover_logic::config_subentries::rule::step::user::data_description::tilt%]",
+            "events": "[%key:component::cover_logic::config_subentries::rule::step::user::data_description::events%]"
+          }
+        }
+      },
+      "error": {
+        "invalid_config": "[%key:component::cover_logic::config::error::invalid_config%]"
+      },
+      "abort": {
+        "reconfigure_successful": "[%key:common::config_flow::abort::reconfigure_successful%]"
+      }
     }
   }
 }

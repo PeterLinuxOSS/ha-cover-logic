@@ -10,13 +10,12 @@ only surface later as `async_setup_entry` raising `ConfigEntryNotReady` on
 every start.
 
 Everything below that is phase 4: subentry flows that let a user build the
-same configuration by clicking, one `blind`/`zone`/`value`/`condition`/`mode`
-row at a time, instead of hand-writing YAML. `config_store.py` is the
-reviewed, tested *reader* of those subentries -- it already decides exactly
-which keys it reads out of each type's `data` and which are required; these
-flows exist only to *produce* data in that exact shape, never to invent a
-spelling of their own. `rule` is not built yet (see
-`SUBENTRY_FLOW_HANDLERS`'s own comment for how it slots in later).
+same configuration by clicking, one `blind`/`zone`/`value`/`condition`/
+`mode`/`rule` row at a time, instead of hand-writing YAML.
+`config_store.py` is the reviewed, tested *reader* of those subentries -- it
+already decides exactly which keys it reads out of each type's `data` and
+which are required; these flows exist only to *produce* data in that exact
+shape, never to invent a spelling of their own.
 
 Unlike `__init__.py`, this module has no reason to defer its Home Assistant
 imports: it is never imported by `cover_logic/__init__.py` itself (only
@@ -44,8 +43,9 @@ from .config_store import (
     ZONE,
     config_from_subentries,
     duplicate_rule_order_problems,
+    rule_owner_ids,
 )
-from .const import CONF_CONFIG_PATH, DEFAULT_CONFIG_PATH, DOMAIN
+from .const import CONF_CONFIG_PATH, DEFAULT_CONFIG_PATH, DOMAIN, EVENT_ARRIVAL, EVENT_STATE_CHANGE
 from .validation import ERROR, Problem, validate
 
 _LOGGER = logging.getLogger(__name__)
@@ -123,25 +123,13 @@ class CoverLogicConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def async_get_supported_subentry_types(
         cls, config_entry: config_entries.ConfigEntry
     ) -> dict[str, type[config_entries.ConfigSubentryFlow]]:
-        """Return the subentry flows this integration supports.
-
-        Just returns `SUBENTRY_FLOW_HANDLERS` -- see that dict's own comment
-        for why adding `condition`, `mode` and `rule` later is a one-line
-        addition there, not a change here.
-        """
+        """Return the subentry flows this integration supports."""
         return SUBENTRY_FLOW_HANDLERS
 
 
 # ---------------------------------------------------------------------------
-# Subentry flows: `blind`, `zone`, `value`, `condition`, `mode`.
-#
-# `config_store.SUBENTRY_TYPES` also lists `rule` -- it has both ordering
-# (`order`, shared with `mode`) and nested structure (an `if`/`then` body
-# each of its own), so it is a separate task, not built here (see the task
-# brief). Nothing here assumes it will never exist: `SUBENTRY_FLOW_HANDLERS`
-# is a plain dict keyed by subentry type, so adding it later is adding one
-# more entry and one more `_SubentryFlowBase` subclass, not a rewrite of
-# what already works.
+# Subentry flows, one per member of `config_store.SUBENTRY_TYPES`: `blind`,
+# `zone`, `value`, `condition`, `mode`, `rule`.
 # ---------------------------------------------------------------------------
 
 # Not a real Home Assistant subentry id (those are ULIDs) -- used only as the
@@ -159,53 +147,47 @@ _NEW_SUBENTRY_ID = "__new__"
 # validation problem should block a form only if that form could fix it."
 # `_blocks_on`, below, is the one place this is read.
 #
-# Every code here has exactly one owning *type* -- a `blind`/`zone`/`value`
-# form is the only place its own fields live, so knowing the type is enough
-# to know it is the one form that could fix it. `unknown_condition_ref`,
-# `bad_condition_shape` and `circular_condition_ref` are deliberately absent:
-# a condition body lives, verbatim, in three different *places* of the same
-# three types -- a `condition` subentry's own fields, a `mode`'s `when`, and
-# (once built) a `rule`'s `if` -- so knowing only the type is not enough:
-# a dangling ref inside one `mode` must not block saving an unrelated
-# `condition`, or an unrelated second `mode`, even though both are the same
-# type as the one actually at fault. Those three codes are resolved by
-# `Problem.owners` instead, which names the specific subentry, not just its
-# type -- see `_blocks_on`.
+# Every code left in this dict has exactly one owning *type*, and every
+# subentry of that type is interchangeable for fixing it: `blind_without_zone`
+# is fixed by putting the blind in *some* zone, and
+# `no_fallback_mode`/`fallback_mode_not_last` are statements about the mode
+# list as a whole, which any single mode's `order` (or its condition being
+# cleared) can settle. Knowing the type is therefore enough.
 #
-# A code missing from this dict (and not one of the three above) has no
-# owning subentry type *yet*: `rule` has no flow in this phase (see the
-# module docstring / `SUBENTRY_FLOW_HANDLERS`'s own comment), so a problem
-# only that future flow could fix -- rule ordering -- can never be something
-# a `blind`/`zone`/`value`/`condition`/`mode` save either caused or could
-# address. This needs no "which flows exist" check of its own:
-# `_blocking_errors` only ever calls `_blocks_on` with the `subentry_type` of
-# a flow that actually exists (there is no other caller), so a code whose
-# owner has no flow yet simply never matches and is exempt for every save --
-# automatically, not by a separate "is this phase" test. `unknown_rule_key`
-# and `duplicate_rule_order` already name `RULE` for exactly this reason (the
-# `mode`/`condition` precedent this pattern was proven on: `no_fallback_mode`
-# and `fallback_mode_not_last` named `MODE` while no `mode` flow existed
-# yet). The day a `rule` flow is added, this dict needs no change at all for
-# `unknown_rule_key`/`duplicate_rule_order`; `rule`'s share of the three
-# attributed codes needs none either -- `validation._condition_sites` already
-# yields a `("rule", ...)` owner for every rule `if`, ready the day a rule
-# subentry with a real `id_key` exists to match it against.
+# Codes where it is *not* enough live in `_ATTRIBUTED_CODES` instead, and are
+# matched against `Problem.owners` -- the specific subentry, not just its
+# type. Two families need that:
+#
+# - A condition body lives, verbatim, in three different *places* of the same
+#   three types -- a `condition` subentry's own fields, a `mode`'s `when`, a
+#   `rule`'s `if` -- so a dangling ref inside one `mode` must not block saving
+#   an unrelated `condition`, or an unrelated second `mode`.
+# - A rule's own two codes name one `(mode, zone)` pair each. A tie in
+#   `bezny.terasa`, or a rule stranded by deleting the mode it named, is not
+#   something *adding a rule to a different pair* either caused or can fix;
+#   before attribution, either one blocked every rule save in the entry.
 _CODE_OWNERS: dict[str, frozenset[str]] = {
     "zone_member_unknown": frozenset({ZONE}),
     "blind_in_two_zones": frozenset({ZONE}),
     "blind_without_zone": frozenset({ZONE}),
     "no_fallback_mode": frozenset({MODE}),
     "fallback_mode_not_last": frozenset({MODE}),
-    "unknown_rule_key": frozenset({RULE}),
-    "duplicate_rule_order": frozenset({RULE}),
 }
 
-# The three codes a condition body can trigger from any of several places --
-# see `_CODE_OWNERS`'s own comment for why type membership is not enough for
-# these. `_blocks_on` checks `Problem.owners` for these instead of
-# `_CODE_OWNERS`.
+# The codes whose owning type is not enough to say which save could fix them
+# -- see `_CODE_OWNERS`'s own comment. `_blocks_on` checks `Problem.owners`
+# for these instead of `_CODE_OWNERS`. A rule's identity in `owners` is the
+# `"<mode>.<zone>#<index>"` string `validation._rule_owner` builds, which
+# `config_store.rule_owner_ids` maps a real subentry id onto -- see
+# `RuleSubentryFlowHandler._candidate_id`.
 _ATTRIBUTED_CODES = frozenset(
-    {"unknown_condition_ref", "bad_condition_shape", "circular_condition_ref"}
+    {
+        "unknown_condition_ref",
+        "bad_condition_shape",
+        "circular_condition_ref",
+        "unknown_rule_key",
+        "duplicate_rule_order",
+    }
 )
 
 
@@ -312,48 +294,13 @@ def _duplicate_errors(
     return []
 
 
-def _blocking_errors(
-    entry: Any, subentry_type: str, subentry_id: str, id_key: str, data: dict[str, Any]
-) -> list[str]:
-    """Problems that must block saving `data` as this subentry, or `[]` if none.
-
-    Runs the pipeline `config_store`'s own docstrings describe as, together,
-    one source's complete set of checks: `_duplicate_errors` (a collapse
-    `validate()` cannot see, see its own docstring), then
-    `config_from_subentries` (structural), then `validate()` (semantic),
-    then `duplicate_rule_order_problems` (the one thing `validate()` cannot
-    see once subentries collapse into a `Config` -- see that function's own
-    docstring; a no-op today since no `rule` subentry flow exists yet, kept
-    here so nothing has to change when one is added).
-
-    Only `ERROR`-severity `validate()` problems block, matching how
-    `_describe_problems` above treats the YAML path -- and even then, only
-    the ones `_blocks_on` says this exact `(subentry_type, candidate_id)`
-    save can actually resolve; see `_CODE_OWNERS`/`_ATTRIBUTED_CODES` for how
-    that is decided and why the rest do not block a save that could not have
-    fixed them anyway. `candidate_id` doubles as the identity `_blocks_on`
-    compares an attributed `Problem.owners` entry against -- it is the same
-    value `config_from_subentries` uses as the condition/mode's own name, so
-    a problem `validate()` attributes to, say, `("mode", "m1")` matches this
-    save only when `data[id_key]` is also `"m1"`.
-    """
-    candidate_id = data.get(id_key)
-    duplicate = _duplicate_errors(entry, subentry_type, subentry_id, id_key, candidate_id)
-    if duplicate:
-        return duplicate
-
-    candidate = _candidate_entry(entry, subentry_type, subentry_id, data)
+def _parses(entry: Any) -> bool:
+    """Whether `entry` as it stands today can be read into a `Config` at all."""
     try:
-        config = config_from_subentries(candidate)
-    except ConfigError as err:
-        return [str(err)]
-
-    problems = validate(config) + duplicate_rule_order_problems(candidate)
-    return [
-        f"{problem.code}: {problem.message}"
-        for problem in problems
-        if problem.severity == ERROR and _blocks_on(subentry_type, candidate_id, problem)
-    ]
+        config_from_subentries(entry)
+    except ConfigError:
+        return False
+    return True
 
 
 class _SubentryFlowBase(config_entries.ConfigSubentryFlow):
@@ -364,29 +311,40 @@ class _SubentryFlowBase(config_entries.ConfigSubentryFlow):
     - `subentry_type`: one of `config_store.BLIND`/`ZONE`/`VALUE`.
     - `id_key`: the field in that type's `data` that must be unique among
       its own type (`"entity"` for a blind, `"id"` for a zone or value) --
-      see `_duplicate_errors`.
+      see `_duplicate_errors`. `None` for a type with no such field at all
+      (`rule`, whose identity is `(mode, zone, order)`), which skips the
+      uniqueness check; such a type must override `_candidate_id` and
+      `_title` instead.
     - `_build_schema(entry)`: the `vol.Schema` for this type's form, given
       the entry (so `zone`'s member multi-select can read the currently
       configured blinds off it).
 
-    A subclass may also override two more, both identity by default:
+    A subclass may also override these, all no-ops by default:
 
     - `_to_data(user_input)`: reshape a raw, schema-coerced submission into
       the exact `dict` `config_store` expects for this type's `data`.
       `blind`/`zone`/`value` submit already in that shape, so they never
-      override this; `condition`/`mode` do -- see their own classes for why
-      a native HA selector's output is not, quite, that shape yet.
+      override this; `condition`/`mode`/`rule` do -- see their own classes
+      for why a native HA selector's output is not, quite, that shape yet.
     - `_to_form_values(data)`: the inverse, for prefilling a reconfigure form
       from a saved subentry's `data`.
+    - `_initial_values(entry)`: what to prefill an *add* form with, for a
+      type where sensible defaults depend on the rest of the entry
+      (`rule`'s `order`). `None` -- prefill nothing -- for everyone else.
+    - `_candidate_id(candidate, subentry_id, data)`: the identity an
+      attributed `Problem.owners` entry is compared against. `data[id_key]`
+      by default, which is exactly what `config_from_subentries` uses as a
+      condition's or mode's own name.
 
     And one hook with no default, always empty:
 
     - `_local_problems(user_input)`: checks that must run *before*
       `_to_data` can even be called -- a submission that is ambiguous in a
       way `_to_data` would otherwise have to silently pick a winner for
-      (`mode`'s "named or inline condition, not both"). Returning anything
-      here skips `_to_data` and `_blocking_errors` entirely for this
-      attempt, the same as a `_blocking_errors` result would.
+      (`mode`'s and `rule`'s "named or inline condition, not both").
+      Returning anything here skips `_to_data` and `_blocking_errors`
+      entirely for this attempt, the same as a `_blocking_errors` result
+      would.
 
     Removal needs no code here at all: a subentry is deleted by Home
     Assistant's own built-in subentry UI, which never calls into this class
@@ -395,7 +353,7 @@ class _SubentryFlowBase(config_entries.ConfigSubentryFlow):
     """
 
     subentry_type: str
-    id_key: str
+    id_key: str | None
 
     def _build_schema(self, entry: Any) -> vol.Schema:
         """Return this type's form schema. Overridden per subclass."""
@@ -412,13 +370,78 @@ class _SubentryFlowBase(config_entries.ConfigSubentryFlow):
         """Invert `_to_data`, to prefill a reconfigure form. Identity by default."""
         return data
 
+    def _initial_values(self, entry: Any) -> dict[str, Any] | None:
+        """Prefill values for a fresh add form. Nothing by default."""
+        return None
+
     def _local_problems(self, user_input: dict[str, Any]) -> list[str]:
         """Flow-only checks that must block before `_to_data` runs at all. None by default."""
         return []
 
+    def _candidate_id(self, candidate: Any, subentry_id: str, data: dict[str, Any]) -> Any:
+        """The identity `_blocks_on` matches an attributed `Problem.owners` entry against.
+
+        `candidate` is the entry as it would be *after* this save, since a
+        type whose identity is positional (`rule`) can only work it out
+        relative to its finished neighbours.
+        """
+        return data.get(self.id_key)
+
     def _title(self, data: dict[str, Any]) -> str:
         """Return the subentry's display title: the value at `id_key`."""
         return str(data[self.id_key])
+
+    def _blocking_errors(self, entry: Any, subentry_id: str, data: dict[str, Any]) -> list[str]:
+        """Problems that must block saving `data` as this subentry, or `[]` if none.
+
+        Runs the pipeline `config_store`'s own docstrings describe as,
+        together, one source's complete set of checks: `_duplicate_errors`
+        (a collapse `validate()` cannot see, see its own docstring), then
+        `config_from_subentries` (structural), then `validate()` (semantic),
+        then `duplicate_rule_order_problems` (the one thing `validate()`
+        cannot see once subentries collapse into a `Config` -- see that
+        function's own docstring).
+
+        Only `ERROR`-severity problems block, matching how
+        `_describe_problems` above treats the YAML path -- and even then,
+        only the ones `_blocks_on` says this exact
+        `(subentry_type, candidate_id)` save can actually resolve; see
+        `_CODE_OWNERS`/`_ATTRIBUTED_CODES` for how that is decided and why
+        the rest do not block a save that could not have fixed them anyway.
+
+        A `ConfigError` gets the same treatment in spirit, by a cruder
+        route: it is raised before there is a `Config` to attribute anything
+        against, so the only question askable about it is whether *this save*
+        is what broke the entry. If the entry already fails to parse without
+        this save, the answer is no, and blocking would lock the user out of
+        every form at once -- the integration is already refusing to load, so
+        the way out has to stay open. (This is reachable: a `value` subentry
+        deleted out from under a rule that refs it makes
+        `config_schema._parse_axis` raise, and Home Assistant offers no veto
+        hook on subentry removal.) The save that *introduces* a parse failure
+        into a healthy entry still blocks, which is the case that matters.
+        """
+        candidate_id = data.get(self.id_key) if self.id_key is not None else None
+        if self.id_key is not None:
+            duplicate = _duplicate_errors(
+                entry, self.subentry_type, subentry_id, self.id_key, candidate_id
+            )
+            if duplicate:
+                return duplicate
+
+        candidate = _candidate_entry(entry, self.subentry_type, subentry_id, data)
+        try:
+            config = config_from_subentries(candidate)
+        except ConfigError as err:
+            return [] if not _parses(entry) else [str(err)]
+
+        problems = validate(config) + duplicate_rule_order_problems(candidate)
+        candidate_id = self._candidate_id(candidate, subentry_id, data)
+        return [
+            f"{problem.code}: {problem.message}"
+            for problem in problems
+            if problem.severity == ERROR and _blocks_on(self.subentry_type, candidate_id, problem)
+        ]
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -447,9 +470,7 @@ class _SubentryFlowBase(config_entries.ConfigSubentryFlow):
             data: dict[str, Any] | None = None
             if not problems:
                 data = self._to_data(user_input)
-                problems = _blocking_errors(
-                    entry, self.subentry_type, subentry_id, self.id_key, data
-                )
+                problems = self._blocking_errors(entry, subentry_id, data)
             if not problems:
                 title = self._title(data)
                 if subentry is None:
@@ -465,7 +486,7 @@ class _SubentryFlowBase(config_entries.ConfigSubentryFlow):
         current = (
             user_input
             if user_input is not None
-            else (self._to_form_values(subentry.data) if subentry else None)
+            else (self._to_form_values(subentry.data) if subentry else self._initial_values(entry))
         )
         schema = self.add_suggested_values_to_schema(self._build_schema(entry), current)
         return self.async_show_form(
@@ -935,14 +956,362 @@ class ModeSubentryFlowHandler(_SubentryFlowBase):
         }
 
 
+# ---------------------------------------------------------------------------
+# `rule`: one row of a first-match-wins list, filed under a `(mode, zone)`
+# pair and placed within it by `order`.
+#
+# The one type where order is meaning rather than presentation:
+# `engine._apply_rules` returns the *first* rule whose events and condition
+# match, so moving a rule past another changes what the house does. Home
+# Assistant subentries are an unordered flat list, which is why `order` is an
+# explicit field rather than something inferred from the UI -- see
+# `config_store.py`'s own "Ordering" docstring section.
+# ---------------------------------------------------------------------------
+
+_RULE_MODE_FIELD = "mode"
+_RULE_ZONE_FIELD = "zone"
+_RULE_ORDER_FIELD = "order"
+_RULE_REF_FIELD = "if_ref"
+_RULE_INLINE_FIELD = "if"
+_RULE_POSITION_FIELD = "position"
+_RULE_TILT_FIELD = "tilt"
+_RULE_EVENTS_FIELD = "events"
+_RULE_NAME_FIELD = "name"
+
+# The gap left between one rule's `order` and the next when appending, so a
+# rule can later be slipped between two existing ones without renumbering
+# either -- the reason to default to "highest + 10" rather than "highest + 1".
+_ORDER_GAP = 10
+
+# What a user picks (or types) on an action axis. `config_schema._parse_axis`
+# accepts three things per axis -- `"keep"`, an integer 0..100, and a
+# `RefTag` naming a `values:` entry -- and dropping any of them would make a
+# large share of the live configuration unexpressible through the UI
+# (`fixtures/dom_peter.yaml` uses all three, often in the same rule). One
+# combo box per axis carries all three instead of three fields per axis:
+# `"keep"` and every configured value id are offered as options, and
+# `custom_value` lets a number be typed. `_axis_to_data` decides which of the
+# three a submission meant.
+_AXIS_KEEP = "keep"
+
+
+def _configured_ids(entry: Any, subentry_type: str) -> list[str]:
+    """Sorted `id` of every subentry of `subentry_type` currently on `entry`."""
+    return sorted(
+        sub.data[_ID_KEY]
+        for sub in entry.subentries.values()
+        if sub.subentry_type == subentry_type and _ID_KEY in sub.data
+    )
+
+
+def _axis_to_data(raw: Any, value_ids: list[str]) -> Any:
+    """Turn one axis combo box submission into what `config_store` reads.
+
+    A configured value id beats a numeric reading of the same text, because
+    the id was offered in the dropdown and picking it from there has to mean
+    what the list said it meant. (Reachable only by naming a value something
+    like `"40"`; `_reject_dot` does not stop that.)
+
+    Anything that is neither `"keep"`, a known value id, nor a number is
+    passed through untouched, so `config_schema._parse_axis` raises the same
+    `ConfigError` it would for hand-written YAML and `_blocking_errors`
+    surfaces it -- rather than this function quietly picking a position for
+    a blind on the user's behalf.
+    """
+    if raw == _AXIS_KEEP:
+        return _AXIS_KEEP
+    if raw in value_ids:
+        return {"ref": raw}
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return raw
+
+
+def _axis_to_form(value: Any) -> str:
+    """Invert `_axis_to_data`, for prefilling a reconfigure form and for titles."""
+    if isinstance(value, dict) and set(value) == {"ref"}:
+        return str(value["ref"])
+    if value is None:
+        return _AXIS_KEEP
+    return str(value)
+
+
+def _next_order(entry: Any, mode: str, zone: str) -> int:
+    """The `order` that appends to the end of this `(mode, zone)` list.
+
+    Reads `entry.subentries` rather than a built `Config`, which no longer
+    carries `order` at all. A malformed existing `order` is skipped instead
+    of raised on: this only computes a suggestion for a form field, and a
+    rule broken badly enough to fail `int()` is a problem
+    `config_from_subentries` reports properly on save.
+    """
+    orders = []
+    for sub in entry.subentries.values():
+        if sub.subentry_type != RULE:
+            continue
+        if sub.data.get(_RULE_MODE_FIELD) != mode or sub.data.get(_RULE_ZONE_FIELD) != zone:
+            continue
+        try:
+            orders.append(int(sub.data[_RULE_ORDER_FIELD]))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return max(orders) + _ORDER_GAP if orders else 0
+
+
+class RuleSubentryFlowHandler(_SubentryFlowBase):
+    """Add, edit or remove one `rule` subentry.
+
+    Adding is two steps, for one reason: the brief's "default `order` =
+    highest existing in that pair + 10, so appending needs no thought" cannot
+    be honoured by a single form, because the default depends on the
+    `(mode, zone)` pair the same form is still asking for. Step one picks the
+    pair; step two is the whole rule, with `order` already filled in and both
+    action axes defaulted to `keep`. Both fields stay editable in step two
+    (they must, or an edit could never move a rule between pairs) -- changing
+    the pair there leaves the suggested `order` computed for the old one,
+    which is visible in the field and, if it collides, blocked by
+    `duplicate_rule_order` rather than silently applied.
+
+    `mode` and `zone` are `SelectSelector`s over what is actually configured,
+    never free text, so a rule cannot be filed under a pair that does not
+    exist. That also means modes and zones must exist before any rule can be
+    added, which is not a deadlock of the kind
+    `test_full_build_up_sequence_a_human_would_perform` guards against: a
+    rule is *about* a mode and a zone, so there is nothing to add first and
+    fix later, and no save is being refused -- the form simply has nothing to
+    offer yet.
+
+    The condition is `if_ref` (a named `condition` subentry) or `if` (built
+    inline with the native selector), exactly as `mode` splits `condition_ref`
+    from `when` and for the same reason -- see `ModeSubentryFlowHandler`. That
+    split is also this flow's whole answer to `numeric_state`: HA's own
+    `numeric_state` schema rejects the `default` key this project requires, so
+    the `condition` flow carries a `numeric_state_default` field beside its
+    selector, and a rule reaches a `numeric_state` by naming such a condition
+    rather than by growing a second copy of that workaround. An inline
+    `numeric_state` typed directly into `if` still blocks with
+    `bad_condition_shape`, loudly, the same as `mode`'s inline `when` does.
+    """
+
+    subentry_type = RULE
+    # A rule has no id field: its identity is `(mode, zone, order)`, so the
+    # `_duplicate_errors` uniqueness check does not apply to it -- two rules
+    # in one pair claiming one `order` is `duplicate_rule_order`'s job, and
+    # unlike a blind entity or a zone id, a collision there does not silently
+    # overwrite anything, it is caught before the tuple is built.
+    id_key = None
+
+    # Set by step one, read by `_initial_values` for step two's prefill.
+    # `None` on a reconfigure flow, which never runs step one at all.
+    _pick: dict[str, Any] | None = None
+
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.SubentryFlowResult:
+        """Step one of adding a rule: which `(mode, zone)` list does it belong to."""
+        entry = self._get_entry()
+        if user_input is not None:
+            self._pick = dict(user_input)
+            return await self._step(None, step_id="rule")
+
+        return self.async_show_form(
+            step_id="user",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(_RULE_MODE_FIELD): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=_configured_ids(entry, MODE), sort=True
+                        )
+                    ),
+                    vol.Required(_RULE_ZONE_FIELD): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=_configured_ids(entry, ZONE), sort=True
+                        )
+                    ),
+                }
+            ),
+        )
+
+    async def async_step_rule(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.SubentryFlowResult:
+        """Step two of adding a rule: the rule itself."""
+        return await self._step(user_input, step_id="rule")
+
+    def _build_schema(self, entry: Any) -> vol.Schema:
+        """Build the form from what the entry currently has: modes, zones, conditions, values."""
+        axis_options = [_AXIS_KEEP, *_configured_ids(entry, VALUE)]
+
+        def axis() -> selector.SelectSelector:
+            # `sort=False`: `keep` belongs at the top as the do-nothing
+            # default, not alphabetised in among the value ids.
+            return selector.SelectSelector(
+                selector.SelectSelectorConfig(options=axis_options, custom_value=True, sort=False)
+            )
+
+        return vol.Schema(
+            {
+                vol.Required(_RULE_MODE_FIELD): selector.SelectSelector(
+                    selector.SelectSelectorConfig(options=_configured_ids(entry, MODE), sort=True)
+                ),
+                vol.Required(_RULE_ZONE_FIELD): selector.SelectSelector(
+                    selector.SelectSelectorConfig(options=_configured_ids(entry, ZONE), sort=True)
+                ),
+                vol.Required(_RULE_ORDER_FIELD): selector.NumberSelector(
+                    selector.NumberSelectorConfig(step=1, mode=_BOX)
+                ),
+                vol.Optional(_RULE_REF_FIELD): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=_configured_ids(entry, CONDITION), sort=True
+                    )
+                ),
+                vol.Optional(_RULE_INLINE_FIELD, default=list): selector.ConditionSelector(),
+                vol.Required(_RULE_POSITION_FIELD, default=_AXIS_KEEP): axis(),
+                vol.Required(_RULE_TILT_FIELD, default=_AXIS_KEEP): axis(),
+                vol.Optional(_RULE_EVENTS_FIELD, default=list): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=[EVENT_ARRIVAL, EVENT_STATE_CHANGE], multiple=True, sort=True
+                    )
+                ),
+                vol.Optional(_RULE_NAME_FIELD, default=""): selector.TextSelector(),
+            }
+        )
+
+    def _initial_values(self, entry: Any) -> dict[str, Any] | None:
+        """Prefill step two from step one's pick, with `order` appending to that list."""
+        if self._pick is None:
+            return None
+        mode = self._pick[_RULE_MODE_FIELD]
+        zone = self._pick[_RULE_ZONE_FIELD]
+        return {
+            _RULE_MODE_FIELD: mode,
+            _RULE_ZONE_FIELD: zone,
+            _RULE_ORDER_FIELD: _next_order(entry, mode, zone),
+            _RULE_POSITION_FIELD: _AXIS_KEEP,
+            _RULE_TILT_FIELD: _AXIS_KEEP,
+        }
+
+    def _local_problems(self, user_input: dict[str, Any]) -> list[str]:
+        """Reject a submission that fills both the named and the inline condition."""
+        if user_input.get(_RULE_REF_FIELD) and user_input.get(_RULE_INLINE_FIELD):
+            return ["rule: choose either a named condition or an inline condition, not both"]
+        return []
+
+    def _to_data(self, user_input: dict[str, Any]) -> dict[str, Any]:
+        """Reshape the submission into the keys `config_store._rule_groups`/`_rule_body` read.
+
+        `then` is always written, because `config_schema._parse_rule` requires
+        it; an axis left at `keep` is written as `"keep"` rather than omitted,
+        so a saved rule reads the same way the YAML fixtures do.
+
+        `events` and `name` are omitted when empty rather than written as
+        `[]`/`""`. For `name` that is cosmetic (`_parse_rule` defaults it to
+        `""` either way), but for `events` it is the difference between two
+        behaviours: `Rule.events = None` means "any event", while an empty
+        `frozenset` means `engine._apply_rules`'s `world.event.kind not in
+        rule.events` is true for every event and the rule can never fire.
+
+        `if_ref` is written as `{"condition": "ref", "name": ...}` -- the
+        already-parsed shape -- not as `{"ref": ...}`; see
+        `ModeSubentryFlowHandler._to_data` for the full reasoning. In short,
+        `config_store._to_reftag` would turn the marker into a `RefTag` whose
+        target `_parse_condition` checks eagerly, raising `ConfigError` and
+        so blocking every save of every type the moment the named condition
+        is deleted, instead of one attributable `unknown_condition_ref`.
+        """
+        value_ids = _configured_ids(self._get_entry(), VALUE)
+        data: dict[str, Any] = {
+            _RULE_MODE_FIELD: user_input[_RULE_MODE_FIELD],
+            _RULE_ZONE_FIELD: user_input[_RULE_ZONE_FIELD],
+            _RULE_ORDER_FIELD: int(user_input[_RULE_ORDER_FIELD]),
+            "then": {
+                _RULE_POSITION_FIELD: _axis_to_data(
+                    user_input.get(_RULE_POSITION_FIELD, _AXIS_KEEP), value_ids
+                ),
+                _RULE_TILT_FIELD: _axis_to_data(
+                    user_input.get(_RULE_TILT_FIELD, _AXIS_KEEP), value_ids
+                ),
+            },
+        }
+
+        ref = user_input.get(_RULE_REF_FIELD)
+        inline = _normalize_condition_tree(user_input.get(_RULE_INLINE_FIELD))
+        if ref:
+            data[_RULE_INLINE_FIELD] = {"condition": "ref", "name": ref}
+        elif inline:
+            data[_RULE_INLINE_FIELD] = inline
+
+        events = user_input.get(_RULE_EVENTS_FIELD)
+        if events:
+            data[_RULE_EVENTS_FIELD] = list(events)
+        name = user_input.get(_RULE_NAME_FIELD)
+        if name:
+            data[_RULE_NAME_FIELD] = name
+        return data
+
+    def _to_form_values(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Invert `_to_data`, to prefill a reconfigure form."""
+        when = data.get(_RULE_INLINE_FIELD)
+        is_ref = isinstance(when, dict) and when.get("condition") == "ref" and "name" in when
+        if is_ref or when is None:
+            inline: Any = []
+        elif isinstance(when, list):
+            inline = when
+        else:
+            # A single bare condition dict -- the shape a hand-seeded or
+            # migrated subentry can carry, still valid input to
+            # `config_store`, so still worth prefilling correctly.
+            inline = [when]
+
+        then = data.get("then") or {}
+        return {
+            _RULE_MODE_FIELD: data.get(_RULE_MODE_FIELD),
+            _RULE_ZONE_FIELD: data.get(_RULE_ZONE_FIELD),
+            _RULE_ORDER_FIELD: data.get(_RULE_ORDER_FIELD),
+            _RULE_REF_FIELD: when["name"] if is_ref else None,
+            _RULE_INLINE_FIELD: inline,
+            _RULE_POSITION_FIELD: _axis_to_form(then.get(_RULE_POSITION_FIELD)),
+            _RULE_TILT_FIELD: _axis_to_form(then.get(_RULE_TILT_FIELD)),
+            _RULE_EVENTS_FIELD: list(data.get(_RULE_EVENTS_FIELD) or []),
+            _RULE_NAME_FIELD: data.get(_RULE_NAME_FIELD, ""),
+        }
+
+    def _candidate_id(self, candidate: Any, subentry_id: str, data: dict[str, Any]) -> Any:
+        """This rule's position in its finished `(mode, zone)` list, as `validate()` names it.
+
+        Only ever called once `config_from_subentries(candidate)` has already
+        succeeded, so `rule_owner_ids` cannot raise here -- every rule
+        subentry is known to have a readable `mode`/`zone`/`order` by then.
+        """
+        return rule_owner_ids(candidate).get(subentry_id)
+
+    def _title(self, data: dict[str, Any]) -> str:
+        """Show order, pair and action, so the subentry list reads without opening rows.
+
+        Ordering is this type's whole point and Home Assistant lists
+        subentries by title, so the `order` leads -- a list sorted by title
+        is then in very nearly the order the engine tries the rules in.
+        """
+        then = data.get("then") or {}
+        action = (
+            f"{_axis_to_form(then.get(_RULE_POSITION_FIELD))}"
+            f"/{_axis_to_form(then.get(_RULE_TILT_FIELD))}"
+        )
+        label = f"{data[_RULE_ORDER_FIELD]} {data[_RULE_MODE_FIELD]}.{data[_RULE_ZONE_FIELD]}"
+        name = data.get(_RULE_NAME_FIELD)
+        if name:
+            label = f"{label} {name}"
+        return f"{label} -> {action}"
+
+
 # Registered by subentry type. `async_get_supported_subentry_types` above
-# just returns this -- adding `rule` later means adding one more entry here
-# (and one more `_SubentryFlowBase` subclass), not touching the classmethod
-# that reads it.
+# just returns this.
 SUBENTRY_FLOW_HANDLERS: dict[str, type[config_entries.ConfigSubentryFlow]] = {
     BLIND: BlindSubentryFlowHandler,
     ZONE: ZoneSubentryFlowHandler,
     VALUE: ValueSubentryFlowHandler,
     CONDITION: ConditionSubentryFlowHandler,
     MODE: ModeSubentryFlowHandler,
+    RULE: RuleSubentryFlowHandler,
 }

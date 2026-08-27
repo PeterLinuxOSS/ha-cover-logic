@@ -185,6 +185,70 @@
       "abort": {
         "reconfigure_successful": "[%key:common::config_flow::abort::reconfigure_successful%]"
       }
+    },
+    "rule": {
+      "entry_type": "Rule",
+      "initiate_flow": {
+        "user": "Add rule"
+      },
+      "step": {
+        "user": {
+          "title": "Add rule",
+          "description": "Which rule list does this rule join? Each mode-and-zone pair has its own list, tried from the lowest order down until a rule matches.",
+          "data": {
+            "mode": "Mode",
+            "zone": "Zone"
+          }
+        },
+        "rule": {
+          "title": "Add rule",
+          "description": "The first rule in this list whose events and condition both match decides where the zone's blinds go, and no later rule is looked at. A rule with no condition therefore belongs last.",
+          "data": {
+            "mode": "Mode",
+            "zone": "Zone",
+            "order": "Order",
+            "if_ref": "Named condition (leave empty to build one inline, or for a rule that always matches)",
+            "if": "Inline condition (leave empty if using a named condition, or for a rule that always matches)",
+            "position": "Position",
+            "tilt": "Tilt (slats)",
+            "events": "Only for these events",
+            "name": "Name (shown in the decision trace)"
+          },
+          "data_description": {
+            "order": "Lower is tried first. Suggested as ten past the last rule in this list, leaving room to slip a rule in between two later on. Two rules in one list cannot share an order.",
+            "position": "Pick 'keep' to leave this axis alone, pick a configured value to read the number from that helper at decision time, or type a number from 0 to 100.",
+            "tilt": "Pick 'keep' to leave this axis alone, pick a configured value to read the number from that helper at decision time, or type a number from 0 to 100.",
+            "events": "Leave empty to apply to every event."
+          }
+        },
+        "reconfigure": {
+          "title": "Edit rule",
+          "description": "The first rule in this list whose events and condition both match decides where the zone's blinds go, and no later rule is looked at. A rule with no condition therefore belongs last.",
+          "data": {
+            "mode": "[%key:component::cover_logic::config_subentries::rule::step::user::data::mode%]",
+            "zone": "[%key:component::cover_logic::config_subentries::rule::step::user::data::zone%]",
+            "order": "[%key:component::cover_logic::config_subentries::rule::step::user::data::order%]",
+            "if_ref": "[%key:component::cover_logic::config_subentries::rule::step::user::data::if_ref%]",
+            "if": "[%key:component::cover_logic::config_subentries::rule::step::user::data::if%]",
+            "position": "[%key:component::cover_logic::config_subentries::rule::step::user::data::position%]",
+            "tilt": "[%key:component::cover_logic::config_subentries::rule::step::user::data::tilt%]",
+            "events": "[%key:component::cover_logic::config_subentries::rule::step::user::data::events%]",
+            "name": "[%key:component::cover_logic::config_subentries::rule::step::user::data::name%]"
+          },
+          "data_description": {
+            "order": "[%key:component::cover_logic::config_subentries::rule::step::user::data_description::order%]",
+            "position": "[%key:component::cover_logic::config_subentries::rule::step::user::data_description::position%]",
+            "tilt": "[%key:component::cover_logic::config_subentries::rule::step::user::data_description::tilt%]",
+            "events": "[%key:component::cover_logic::config_subentries::rule::step::user::data_description::events%]"
+          }
+        }
+      },
+      "error": {
+        "invalid_config": "[%key:component::cover_logic::config::error::invalid_config%]"
+      },
+      "abort": {
+        "reconfigure_successful": "[%key:common::config_flow::abort::reconfigure_successful%]"
+      }
     }
   }
 }
