@@ -500,3 +500,132 @@ def test_bad_condition_shape_message_names_the_offending_condition():
     assert len(problems) == 1
     assert "vzdy" in problems[0].message
     assert "sate" in problems[0].message
+
+
+# ---------------------------------------------------------------------------
+# `Problem.owners`: which specific subentry a `condition`-body problem is
+# attributable to, not just which subentry *type*. This is the pure-Python
+# half of the fix for the "coarse type-level owner blocks an unrelated save"
+# defect -- `config_flow._blocks_on` (HA-only, driven in
+# `tests/ha/test_subentry_flows.py`) is the reader; these prove the producer
+# side, runnable without `homeassistant` at all. A condition body can
+# originate in three different *places* sharing the same three types
+# (`condition`/`mode`/`rule`, see `_CODE_OWNERS`'s own comment in
+# `config_flow.py`), so knowing the type alone is not enough to say which
+# specific subentry save could fix it -- `owners` names the exact one(s).
+# ---------------------------------------------------------------------------
+
+
+def test_unknown_ref_owner_is_the_condition_that_holds_it():
+    text = """
+blinds:
+  - {entity: cover.a}
+zones:
+  z: {members: [cover.a]}
+modes:
+  - {id: den}
+conditions:
+  a: {condition: ref, name: neexistuje}
+values: {}
+rules:
+  den.z:
+    - {then: {position: 0}}
+"""
+    problems = [p for p in validate(load_config(text)) if p.code == "unknown_condition_ref"]
+    assert len(problems) == 1
+    assert problems[0].owners == frozenset({("condition", "a")})
+
+
+def test_unknown_ref_owner_is_the_mode_that_holds_it_not_an_unrelated_one():
+    """Two modes exist; only `slnecno`'s `when` has the dangling ref. Its
+    owner must name `slnecno` specifically, not `bezny` too -- otherwise a
+    save of the unrelated mode would be blocked by a problem it cannot fix.
+    """
+    text = """
+blinds:
+  - {entity: cover.a}
+zones:
+  z: {members: [cover.a]}
+modes:
+  - {id: slnecno, when: {condition: ref, name: neexistuje}}
+  - {id: bezny}
+conditions: {}
+values: {}
+rules:
+  slnecno.z:
+    - {then: {position: 0}}
+  bezny.z:
+    - {then: {position: 0}}
+"""
+    problems = [p for p in validate(load_config(text)) if p.code == "unknown_condition_ref"]
+    assert len(problems) == 1
+    assert problems[0].owners == frozenset({("mode", "slnecno")})
+
+
+def test_unknown_ref_owner_is_the_rule_that_holds_it():
+    text = """
+blinds:
+  - {entity: cover.a}
+zones:
+  z: {members: [cover.a]}
+modes:
+  - {id: den}
+conditions: {}
+values: {}
+rules:
+  den.z:
+    - {if: {condition: ref, name: neexistuje}, then: {position: 100}}
+    - {then: {position: 0}}
+"""
+    problems = [p for p in validate(load_config(text)) if p.code == "unknown_condition_ref"]
+    assert len(problems) == 1
+    assert problems[0].owners == frozenset({("rule", "den.z#0")})
+
+
+def test_bad_condition_shape_owner_is_the_holding_condition_at_any_nesting_depth():
+    """The malformed node is nested inside an `and`, not the condition's own
+    top-level shape -- `owners` must still point at the whole subentry that
+    holds it (`_check_condition_shape` is called per-node, but every node
+    under one site shares that site's single owner).
+    """
+    text = """
+blinds:
+  - {entity: cover.a}
+zones:
+  z: {members: [cover.a]}
+modes:
+  - {id: den}
+conditions:
+  a: {condition: and, conditions: [{condition: sate, entity_id: x, state: "on"}]}
+values: {}
+rules:
+  den.z:
+    - {then: {position: 0}}
+"""
+    problems = [p for p in validate(load_config(text)) if p.code == "bad_condition_shape"]
+    assert len(problems) == 1
+    assert problems[0].owners == frozenset({("condition", "a")})
+
+
+def test_circular_condition_ref_owner_names_every_member_of_the_cycle():
+    """Any single member of a cycle can break it by editing its own outgoing
+    ref -- so every name on the cycle is an owner, not just one of them.
+    """
+    text = """
+blinds:
+  - {entity: cover.a}
+zones:
+  z: {members: [cover.a]}
+modes:
+  - {id: den}
+conditions:
+  cond_a: {condition: ref, name: cond_b}
+  cond_b: {condition: ref, name: cond_a}
+values: {}
+rules:
+  den.z:
+    - {then: {position: 0}}
+"""
+    problems = [p for p in validate(load_config(text)) if p.code == "circular_condition_ref"]
+    assert len(problems) == 1
+    assert problems[0].owners == frozenset({("condition", "cond_a"), ("condition", "cond_b")})

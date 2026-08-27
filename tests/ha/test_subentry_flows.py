@@ -775,7 +775,7 @@ def test_condition_add_shows_a_form_with_the_expected_fields(subentry_entry, sub
 
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "user"
-    assert _schema_keys(result) == {"id", "condition"}
+    assert _schema_keys(result) == {"id", "condition", "numeric_state_default"}
 
 
 def test_condition_add_creates_a_single_condition_subentry(subentry_entry, subentry_hass):
@@ -857,6 +857,7 @@ def test_condition_reconfigure_prefills_the_selector_from_saved_data(subentry_en
     assert suggested == {
         "id": "slnko",
         "condition": [{"condition": "state", "entity_id": "sun.sun", "state": "above_horizon"}],
+        "numeric_state_default": None,
     }
 
 
@@ -1001,6 +1002,128 @@ def test_condition_multi_entity_via_real_selector_expands_to_an_and(subentry_ent
         evaluate_condition(body, World(states={"input_boolean.a": "on", "input_boolean.b": "off"}))
         is False
     )
+
+
+# ---------------------------------------------------------------------------
+# condition: `numeric_state`'s `default` (this fix pass's finding 2). HA's
+# own `numeric_state` schema has no `default` key and rejects one as an
+# unrecognised extra (unlike the `ALLOW_EXTRA` path this project's own three
+# custom kinds get -- `numeric_state` is a kind HA already knows, so its
+# schema is closed), so the field lives outside the selector --
+# `_NUMERIC_STATE_DEFAULT_FIELD`, a plain `NumberSelector` -- and `_to_data`
+# merges it into the flattened body's `default` key afterwards. These drive
+# the *real* selector for the condition itself, the same way the
+# entity-id-list tests above do, so "HA rejects `default` inside the
+# selector" is exercised for real, not just asserted in a comment.
+# ---------------------------------------------------------------------------
+
+
+def test_condition_numeric_state_via_real_selector_needs_the_separate_default_field(
+    subentry_entry, subentry_hass
+):
+    """The live house's own shape: one single-node `numeric_state` condition,
+    `below` a threshold, with a fallback for when the sensor is unavailable.
+    Previously undoable through the UI at all (task 3's own report) -- now
+    buildable with the selector plus the new field, and the saved body
+    evaluates exactly like a hand-written YAML `numeric_state` would.
+    """
+    entry = subentry_entry()
+    flow = _make_flow(ConditionSubentryFlowHandler, subentry_hass(entry), CONDITION)
+
+    shown = asyncio.run(flow.async_step_user(None))
+    coerced = shown["data_schema"](
+        {
+            "id": "vietor",
+            "condition": [
+                {"condition": "numeric_state", "entity_id": "sensor.vietor", "below": 40}
+            ],
+            "numeric_state_default": 999,
+        }
+    )
+    result = asyncio.run(flow.async_step_user(coerced))
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"] == {
+        "id": "vietor",
+        "condition": "numeric_state",
+        "entity_id": "sensor.vietor",
+        "below": 40.0,
+        "default": 999.0,
+    }
+
+    body = {k: v for k, v in result["data"].items() if k != _ID_KEY}
+    # Below the threshold: True. Sensor missing entirely: falls back to
+    # `default`, which is *not* below 40 -- "a dead sensor must fall on the
+    # safe side" (docs/rationale.md, "Why `numeric_state` requires an
+    # explicit `default`"), exercised here through the UI-built body, not
+    # just a hand-written YAML fixture.
+    assert evaluate_condition(body, World(states={"sensor.vietor": "10"})) is True
+    assert evaluate_condition(body, World(states={})) is False
+
+
+def test_condition_numeric_state_without_the_default_field_is_blocked(
+    subentry_entry, subentry_hass
+):
+    """No fallback supplied -- `_to_data` must not invent one. The save is
+    blocked by the pre-existing `bad_condition_shape` (`numeric_state`
+    missing `default`), the same loud failure a hand-written YAML config
+    without `default` already gets from `validate()` -- the gap this field
+    closes is "no way to supply it", not "silently permitted without it".
+    """
+    entry = subentry_entry()
+    flow = _make_flow(ConditionSubentryFlowHandler, subentry_hass(entry), CONDITION)
+
+    shown = asyncio.run(flow.async_step_user(None))
+    coerced = shown["data_schema"](
+        {
+            "id": "vietor",
+            "condition": [
+                {"condition": "numeric_state", "entity_id": "sensor.vietor", "below": 40}
+            ],
+        }
+    )
+    result = asyncio.run(flow.async_step_user(coerced))
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "invalid_config"}
+    assert "bad_condition_shape" in result["description_placeholders"]["error_detail"]
+    assert "default" in result["description_placeholders"]["error_detail"]
+
+
+def test_condition_numeric_state_reconfigure_prefills_default_separately_from_the_selector(
+    subentry_entry, subentry_hass
+):
+    """The inverse of `_to_data`: a saved `numeric_state`'s `default` is
+    pulled back out into its own field, not left in the body handed to the
+    selector -- HA's schema would reject a prefill that included it.
+    """
+    entry = subentry_entry()
+    subentry_id = entry.add_subentry(
+        CONDITION,
+        {
+            "id": "vietor",
+            "condition": "numeric_state",
+            "entity_id": "sensor.vietor",
+            "below": 40,
+            "default": 999,
+        },
+    )
+    flow = _make_flow(
+        ConditionSubentryFlowHandler, subentry_hass(entry), CONDITION, subentry_id=subentry_id
+    )
+
+    shown = asyncio.run(flow.async_step_reconfigure(None))
+
+    suggested = {
+        key.schema: key.description["suggested_value"]
+        for key in shown["data_schema"].schema
+        if isinstance(key, vol.Marker) and key.description
+    }
+    assert suggested == {
+        "id": "vietor",
+        "condition": [{"condition": "numeric_state", "entity_id": "sensor.vietor", "below": 40}],
+        "numeric_state_default": 999,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1283,6 +1406,114 @@ def test_unknown_condition_ref_never_blocks_an_unrelated_blind_add(subentry_entr
     )
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
+
+
+# ---------------------------------------------------------------------------
+# Attribution (this fix pass's finding 1): `unknown_condition_ref`/
+# `bad_condition_shape`/`circular_condition_ref` used to map to the whole
+# *set* of types `{condition, mode, rule}` (`_CODE_OWNERS`), so a dangling
+# ref anywhere among them blocked every save of any of those three types --
+# not just the one that could fix it. `_blocks_on` now checks `Problem.
+# owners`, the specific `(subentry_type, id)` `validate()` already names in
+# its own message (`"mode 'm1' refers to unknown condition 'c1'"`), instead
+# of the type alone. `test_unknown_condition_ref_never_blocks_an_unrelated_
+# blind_add` above already proves the blind case (never blocked, before or
+# after this fix, since `blind` was never in the coarse set to begin with);
+# these three are the regression coverage for the same-type case the coarse
+# set actually got wrong.
+# ---------------------------------------------------------------------------
+
+
+def test_unknown_condition_ref_in_one_mode_never_blocks_saving_an_unrelated_condition(
+    subentry_entry, subentry_hass
+):
+    """`m1`'s dangling ref to `c1` must not block adding an unrelated,
+    unconnected `condition` -- a new `condition` subentry has nothing to do
+    with `m1`'s own `when` and cannot possibly be how a user fixes it.
+    """
+    entry = subentry_entry()
+    entry.add_subentry(BLIND, {"entity": "cover.a", "tolerance": 45, "travel_time": 60})
+    entry.add_subentry(ZONE, {"id": "z", "members": ["cover.a"], "occupants": []})
+    entry.add_subentry(MODE, {"id": "m1", "order": 0, "when": {"condition": "ref", "name": "c1"}})
+    entry.add_subentry(MODE, {"id": "fallback", "order": 10})
+    flow = _make_flow(ConditionSubentryFlowHandler, subentry_hass(entry), CONDITION)
+
+    result = asyncio.run(
+        flow.async_step_user(
+            {
+                "id": "c2",
+                "condition": [
+                    {"condition": "state", "entity_id": "input_boolean.x", "state": "on"}
+                ],
+            }
+        )
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+
+
+def test_unknown_condition_ref_in_one_mode_never_blocks_saving_an_unrelated_mode(
+    subentry_entry, subentry_hass
+):
+    """Same scenario, saving an unrelated `mode` instead of a `condition`:
+    `m1`'s own dangling ref is `m1`'s problem, fixable only from `m1`'s own
+    reconfigure form -- not something a brand new `m3`, with no condition of
+    its own yet, could have caused or could resolve. Before this fix,
+    `_CODE_OWNERS`'s coarse `{condition, mode, rule}` set blocked this save
+    too, purely because `m3` is also a `mode`.
+    """
+    entry = subentry_entry()
+    entry.add_subentry(BLIND, {"entity": "cover.a", "tolerance": 45, "travel_time": 60})
+    entry.add_subentry(ZONE, {"id": "z", "members": ["cover.a"], "occupants": []})
+    entry.add_subentry(MODE, {"id": "m1", "order": 0, "when": {"condition": "ref", "name": "c1"}})
+    entry.add_subentry(MODE, {"id": "fallback", "order": 10})
+    flow = _make_flow(ModeSubentryFlowHandler, subentry_hass(entry), MODE)
+
+    # `m3` needs its own condition -- not the point under test here, but a
+    # fallback-less `m3` sitting before `order: 10`'s `fallback` would itself
+    # trigger the unrelated `fallback_mode_not_last` (correctly, since a
+    # mode's own `order` really is what that check is about) and muddy what
+    # this test is isolating.
+    result = asyncio.run(
+        flow.async_step_user(
+            {
+                "id": "m3",
+                "order": 5,
+                "when": [{"condition": "state", "entity_id": "input_boolean.y", "state": "on"}],
+            }
+        )
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+
+
+def test_a_modes_own_dangling_ref_still_blocks_that_same_mode_alongside_an_unrelated_one(
+    subentry_entry, subentry_hass
+):
+    """The other half: attribution must not overcorrect into "a dangling ref
+    never blocks a mode again". `m3`'s own `when` refs a nonexistent
+    condition -- its own form's field caused this, and is exactly where a
+    user would fix it -- so it must still block, even while the unrelated
+    `m1` has a dangling ref of its own sitting right next to it. The error
+    detail must name `m3`, confirming the block is attributed to the save
+    actually being made, not merely "some `unknown_condition_ref` exists
+    somewhere" the way the coarse type check would have let through.
+    """
+    entry = subentry_entry()
+    entry.add_subentry(BLIND, {"entity": "cover.a", "tolerance": 45, "travel_time": 60})
+    entry.add_subentry(ZONE, {"id": "z", "members": ["cover.a"], "occupants": []})
+    entry.add_subentry(MODE, {"id": "m1", "order": 0, "when": {"condition": "ref", "name": "c1"}})
+    entry.add_subentry(MODE, {"id": "fallback", "order": 10})
+    flow = _make_flow(ModeSubentryFlowHandler, subentry_hass(entry), MODE)
+
+    result = asyncio.run(flow.async_step_user({"id": "m3", "order": 5, "condition_ref": "c2"}))
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "invalid_config"}
+    assert (
+        "mode 'm3' refers to unknown condition 'c2'"
+        in (result["description_placeholders"]["error_detail"])
+    )
 
 
 # ---------------------------------------------------------------------------

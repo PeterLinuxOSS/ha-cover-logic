@@ -127,14 +127,22 @@
           "description": "Pomenovaná, znovupoužiteľná podmienka. Odkážte na ňu podľa mena z podmienky režimu alebo spomedzi inej podmienky.",
           "data": {
             "id": "Identifikátor podmienky",
-            "condition": "Podmienka"
+            "condition": "Podmienka",
+            "numeric_state_default": "Záložná hodnota pre číselné porovnanie"
+          },
+          "data_description": {
+            "numeric_state_default": "Použije sa len vtedy, keď je podmienka vyššie jedno číselné porovnanie (numeric_state). Je to hodnota, s ktorou sa počíta, keď je porovnávaná entita nedostupná alebo nečíselná -- teda rozhoduje, ktorým smerom sa podmienka vyhodnotí v tomto prípade; zvoľte ju tak, aby mŕtvy senzor zlyhal na bezpečnú stranu. Inak sa ignoruje, ale pri numeric_state je povinná."
           }
         },
         "reconfigure": {
           "title": "Upraviť podmienku",
           "data": {
             "id": "[%key:component::cover_logic::config_subentries::condition::step::user::data::id%]",
-            "condition": "[%key:component::cover_logic::config_subentries::condition::step::user::data::condition%]"
+            "condition": "[%key:component::cover_logic::config_subentries::condition::step::user::data::condition%]",
+            "numeric_state_default": "[%key:component::cover_logic::config_subentries::condition::step::user::data::numeric_state_default%]"
+          },
+          "data_description": {
+            "numeric_state_default": "[%key:component::cover_logic::config_subentries::condition::step::user::data_description::numeric_state_default%]"
           }
         }
       },

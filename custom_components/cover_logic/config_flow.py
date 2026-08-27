@@ -46,7 +46,7 @@ from .config_store import (
     duplicate_rule_order_problems,
 )
 from .const import CONF_CONFIG_PATH, DEFAULT_CONFIG_PATH, DOMAIN
-from .validation import ERROR, validate
+from .validation import ERROR, Problem, validate
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -159,22 +159,24 @@ _NEW_SUBENTRY_ID = "__new__"
 # validation problem should block a form only if that form could fix it."
 # `_blocks_on`, below, is the one place this is read.
 #
-# Most codes have exactly one owner. `unknown_condition_ref`,
-# `bad_condition_shape` and `circular_condition_ref` do not: a condition body
-# lives, verbatim, in three different places -- a `condition` subentry's own
-# fields, a `mode`'s `when`, and (once built) a `rule`'s `if` -- and any of
-# those three forms can be the one that actually wrote the broken reference
-# or malformed shape a `validate()` pass is complaining about. Blocking only
-# one of them would let a user "fix" a `mode`'s dangling ref by editing an
-# unrelated `condition`, or leave them unable to fix it at all from the form
-# that actually holds it. So these three map to a *set* of owners, not a
-# single one -- `_blocks_on` checks membership, not equality.
+# Every code here has exactly one owning *type* -- a `blind`/`zone`/`value`
+# form is the only place its own fields live, so knowing the type is enough
+# to know it is the one form that could fix it. `unknown_condition_ref`,
+# `bad_condition_shape` and `circular_condition_ref` are deliberately absent:
+# a condition body lives, verbatim, in three different *places* of the same
+# three types -- a `condition` subentry's own fields, a `mode`'s `when`, and
+# (once built) a `rule`'s `if` -- so knowing only the type is not enough:
+# a dangling ref inside one `mode` must not block saving an unrelated
+# `condition`, or an unrelated second `mode`, even though both are the same
+# type as the one actually at fault. Those three codes are resolved by
+# `Problem.owners` instead, which names the specific subentry, not just its
+# type -- see `_blocks_on`.
 #
-# A code missing from this dict has no owning subentry type *yet*: `rule`
-# has no flow in this phase (see the module docstring /
-# `SUBENTRY_FLOW_HANDLERS`'s own comment), so a problem only that future flow
-# could fix -- rule ordering -- can never be something a
-# `blind`/`zone`/`value`/`condition`/`mode` save either caused or could
+# A code missing from this dict (and not one of the three above) has no
+# owning subentry type *yet*: `rule` has no flow in this phase (see the
+# module docstring / `SUBENTRY_FLOW_HANDLERS`'s own comment), so a problem
+# only that future flow could fix -- rule ordering -- can never be something
+# a `blind`/`zone`/`value`/`condition`/`mode` save either caused or could
 # address. This needs no "which flows exist" check of its own:
 # `_blocking_errors` only ever calls `_blocks_on` with the `subentry_type` of
 # a flow that actually exists (there is no other caller), so a code whose
@@ -183,9 +185,11 @@ _NEW_SUBENTRY_ID = "__new__"
 # and `duplicate_rule_order` already name `RULE` for exactly this reason (the
 # `mode`/`condition` precedent this pattern was proven on: `no_fallback_mode`
 # and `fallback_mode_not_last` named `MODE` while no `mode` flow existed
-# yet). The day a `rule` flow is added, this dict needs no change at all --
-# `unknown_rule_key`/`duplicate_rule_order` and `rule`'s share of the three
-# condition-body codes are already here, ready for it.
+# yet). The day a `rule` flow is added, this dict needs no change at all for
+# `unknown_rule_key`/`duplicate_rule_order`; `rule`'s share of the three
+# attributed codes needs none either -- `validation._condition_sites` already
+# yields a `("rule", ...)` owner for every rule `if`, ready the day a rule
+# subentry with a real `id_key` exists to match it against.
 _CODE_OWNERS: dict[str, frozenset[str]] = {
     "zone_member_unknown": frozenset({ZONE}),
     "blind_in_two_zones": frozenset({ZONE}),
@@ -194,21 +198,41 @@ _CODE_OWNERS: dict[str, frozenset[str]] = {
     "fallback_mode_not_last": frozenset({MODE}),
     "unknown_rule_key": frozenset({RULE}),
     "duplicate_rule_order": frozenset({RULE}),
-    "unknown_condition_ref": frozenset({CONDITION, MODE, RULE}),
-    "bad_condition_shape": frozenset({CONDITION, MODE, RULE}),
-    "circular_condition_ref": frozenset({CONDITION, MODE, RULE}),
 }
 
+# The three codes a condition body can trigger from any of several places --
+# see `_CODE_OWNERS`'s own comment for why type membership is not enough for
+# these. `_blocks_on` checks `Problem.owners` for these instead of
+# `_CODE_OWNERS`.
+_ATTRIBUTED_CODES = frozenset(
+    {"unknown_condition_ref", "bad_condition_shape", "circular_condition_ref"}
+)
 
-def _blocks_on(subentry_type: str, code: str) -> bool:
-    """Whether saving a `subentry_type` subentry is how a user would resolve `code`.
 
-    See `_CODE_OWNERS` for the mapping and the reasoning; this is the one
-    place that reads it, so a code missing or misspelled there fails as
-    "never blocks anything" -- caught by a test asserting that code *does*
-    block its owning form -- rather than as a crash.
+def _blocks_on(subentry_type: str, subentry_id: Any, problem: Problem) -> bool:
+    """Whether saving this specific `(subentry_type, subentry_id)` subentry resolves `problem`.
+
+    Two different questions, depending on the code:
+
+    - For a code in `_ATTRIBUTED_CODES`, `validate()` already knows *which*
+      subentry the problem lives in -- `problem.owners` -- so the check is
+      identity, not type: does `(subentry_type, subentry_id)` appear there.
+      This is what stops a dangling ref in `mode` "m1" from blocking a save
+      of unrelated `mode` "m3", even though both are the same type: `problem.
+      owners` for m1's own dangling ref is `{("mode", "m1")}`, which "m3"
+      does not match, while m3's *own* dangling ref produces a problem whose
+      owner is `{("mode", "m3")}`, which does.
+    - For every other code, `_CODE_OWNERS` already says the single type that
+      owns it (see its own comment for why type alone is enough there), so
+      the check stays a membership test as before.
+
+    A code missing from both fails as "never blocks anything" -- caught by a
+    test asserting that code *does* block its owning form -- rather than as
+    a crash.
     """
-    return subentry_type in _CODE_OWNERS.get(code, frozenset())
+    if problem.code in _ATTRIBUTED_CODES:
+        return (subentry_type, subentry_id) in problem.owners
+    return subentry_type in _CODE_OWNERS.get(problem.code, frozenset())
 
 
 class _SubentryStub:
@@ -304,9 +328,14 @@ def _blocking_errors(
 
     Only `ERROR`-severity `validate()` problems block, matching how
     `_describe_problems` above treats the YAML path -- and even then, only
-    the ones `_blocks_on` says `subentry_type`'s own form can actually
-    resolve; see `_CODE_OWNERS` for which those are and why the rest do not
-    block a save that could not have fixed them anyway.
+    the ones `_blocks_on` says this exact `(subentry_type, candidate_id)`
+    save can actually resolve; see `_CODE_OWNERS`/`_ATTRIBUTED_CODES` for how
+    that is decided and why the rest do not block a save that could not have
+    fixed them anyway. `candidate_id` doubles as the identity `_blocks_on`
+    compares an attributed `Problem.owners` entry against -- it is the same
+    value `config_from_subentries` uses as the condition/mode's own name, so
+    a problem `validate()` attributes to, say, `("mode", "m1")` matches this
+    save only when `data[id_key]` is also `"m1"`.
     """
     candidate_id = data.get(id_key)
     duplicate = _duplicate_errors(entry, subentry_type, subentry_id, id_key, candidate_id)
@@ -323,7 +352,7 @@ def _blocking_errors(
     return [
         f"{problem.code}: {problem.message}"
         for problem in problems
-        if problem.severity == ERROR and _blocks_on(subentry_type, problem.code)
+        if problem.severity == ERROR and _blocks_on(subentry_type, candidate_id, problem)
     ]
 
 
@@ -575,7 +604,8 @@ class ZoneSubentryFlowHandler(_SubentryFlowBase):
 # field is needed; see the task brief (finding 1) for the measurement this
 # reuses instead of re-deriving, and this task's own report for the further
 # selector quirks (entity-id coercion, `numeric_state`'s missing `default`)
-# found while building on top of it.
+# found while building on top of it -- and this fix pass's own report for how
+# that second one is now bridged instead of merely documented as a gap.
 # ---------------------------------------------------------------------------
 
 _CONDITION_FIELD = "condition"
@@ -584,10 +614,35 @@ _CONDITION_FIELD = "condition"
 # chosen -- `cv.CONDITIONS_SCHEMA = vol.All(ensure_list, [CONDITION_SCHEMA])`.
 # `vol.Length(min=1)` rejects an emptied-out selection at the schema layer,
 # before it could ever become a named condition with no body at all.
+#
+# `_NUMERIC_STATE_DEFAULT_FIELD` sits *outside* the selector, not inside it:
+# HA's own `NUMERIC_STATE_CONDITION_SCHEMA` has no `default` key and rejects
+# one as an unrecognised extra (unlike the `ALLOW_EXTRA` path this project's
+# own three custom kinds get -- `numeric_state` is a kind HA already knows,
+# so its schema is closed), so a value typed into the selector's own body
+# would never survive HA's own schema coercion to reach `_to_data` at all.
+# This field is a plain `NumberSelector`, coerced by *this* form's schema,
+# not HA's condition one -- `_to_data` merges it into the flattened body's
+# `default` key after both schemas have already run, exactly where the task
+# brief's finding 2 points out `_to_data` already sits: downstream of HA's
+# validation, upstream of `config_store`'s. Scoped deliberately to a single
+# top-level `numeric_state` node (`body.get("condition") == "numeric_state"`
+# in `_to_data`, not a walk of the whole tree) -- the real need this solves
+# (the live house's three `numeric_state` conditions, each its own single-
+# node `condition` subentry) is exactly that shape; a `numeric_state` nested
+# inside an `and`/`or`/`not` built in one selector still has no field to
+# supply its `default` from and still blocks with `bad_condition_shape`,
+# same as before this field existed. See this fix pass's own report for why
+# that boundary was chosen over a dynamic per-node form.
+_NUMERIC_STATE_DEFAULT_FIELD = "numeric_state_default"
+
 _CONDITION_SCHEMA = vol.Schema(
     {
         vol.Required(_ID_KEY): selector.TextSelector(),
         vol.Required(_CONDITION_FIELD): vol.All(selector.ConditionSelector(), vol.Length(min=1)),
+        vol.Optional(_NUMERIC_STATE_DEFAULT_FIELD): selector.NumberSelector(
+            selector.NumberSelectorConfig(mode=_BOX, step="any")
+        ),
     }
 )
 
@@ -707,15 +762,45 @@ class ConditionSubentryFlowHandler(_SubentryFlowBase):
         return _CONDITION_SCHEMA
 
     def _to_data(self, user_input: dict[str, Any]) -> dict[str, Any]:
-        """Normalize and flatten the selector's list into `config_store`'s expected body."""
+        """Normalize and flatten the selector's list into `config_store`'s expected body.
+
+        `_NUMERIC_STATE_DEFAULT_FIELD` is merged in as the flattened body's
+        `default` key, but only when the flattened body's own top-level
+        `condition` is `numeric_state` -- see that field's own comment for
+        why only the top-level, single-node shape is handled. If the field
+        was left empty, `default` is simply never added: `_to_data` never
+        invents a fallback silently, it hands `_blocking_errors` a body
+        `validate()`'s `bad_condition_shape` (`_REQUIRED_CONDITION_KEYS`
+        already requires `default` for `numeric_state`) will correctly block
+        on -- the loud failure `docs/rationale.md`'s "Why `numeric_state`
+        requires an explicit `default`" describes is preserved exactly, not
+        routed around.
+        """
         normalized = _normalize_condition_tree(user_input[_CONDITION_FIELD])
         body = _flatten_condition_list(normalized)
+        numeric_default = user_input.get(_NUMERIC_STATE_DEFAULT_FIELD)
+        if body.get("condition") == "numeric_state" and numeric_default is not None:
+            body = {**body, "default": numeric_default}
         return {_ID_KEY: user_input[_ID_KEY], **body}
 
     def _to_form_values(self, data: dict[str, Any]) -> dict[str, Any]:
-        """Unflatten a saved condition's body back into the selector's list shape."""
+        """Unflatten a saved condition's body back into the selector's list shape.
+
+        A top-level `numeric_state`'s `default` is pulled back out into
+        `_NUMERIC_STATE_DEFAULT_FIELD` rather than left in the body handed to
+        the selector -- HA's own `numeric_state` schema has no `default` key
+        (see `_NUMERIC_STATE_DEFAULT_FIELD`'s own comment) and would reject a
+        prefill that included it.
+        """
         body = {k: v for k, v in data.items() if k != _ID_KEY}
-        return {_ID_KEY: data[_ID_KEY], _CONDITION_FIELD: _unflatten_condition_body(body)}
+        numeric_default = (
+            body.pop("default", None) if body.get("condition") == "numeric_state" else None
+        )
+        return {
+            _ID_KEY: data[_ID_KEY],
+            _CONDITION_FIELD: _unflatten_condition_body(body),
+            _NUMERIC_STATE_DEFAULT_FIELD: numeric_default,
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -807,9 +892,11 @@ class ModeSubentryFlowHandler(_SubentryFlowBase):
         refs to gets deleted. Writing the already-parsed shape instead skips
         that eager check entirely -- `_parse_condition`'s dict branch passes
         it through unchanged -- deferring "does the name exist" to
-        `validate()`'s `unknown_condition_ref`, a `Problem` `_CODE_OWNERS`
-        correctly scopes to `condition`/`mode`/`rule` saves only. See the
-        task report's "dangling ref" section for the failure this avoids.
+        `validate()`'s `unknown_condition_ref`, a `Problem` `_blocks_on`
+        correctly scopes to the specific `condition`/`mode`/`rule` subentry
+        that actually holds the dangling ref, via `Problem.owners` -- not
+        every subentry of those three types. See the task report's "dangling
+        ref" section for the failure this avoids.
         It still needs `_normalize_condition_tree`: see that function's own
         docstring for why a `state`/`numeric_state` `entity_id` from the
         selector cannot be saved as-is.

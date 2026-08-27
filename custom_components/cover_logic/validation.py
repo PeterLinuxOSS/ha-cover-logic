@@ -17,11 +17,27 @@ WARNING = "warning"
 
 @dataclass(frozen=True)
 class Problem:
-    """One issue found in a configuration, at `ERROR` or `WARNING` severity."""
+    """One issue found in a configuration, at `ERROR` or `WARNING` severity.
+
+    `owners` is which `(subentry_type, id)` pairs -- `id` being the value at
+    that type's own `id_key` (`config_store._ID_KEY` for `condition`/`mode`,
+    the equivalent for a future `rule`) -- carry the data this problem is
+    actually about, for codes whose owning *type* alone is not enough to
+    say which specific save could fix it: a condition body lives verbatim in
+    a `condition` subentry's own fields, a `mode`'s `when`, or a `rule`'s
+    `if`, and a dangling ref in one must not block a save of an unrelated
+    other. Empty for every other code -- those have exactly one owning type,
+    decided by the code alone (see `config_flow._CODE_OWNERS`), so no
+    per-instance attribution is needed. Populated only by
+    `_check_unknown_condition_refs`, `_check_condition_shapes` and
+    `_check_circular_condition_refs`, the three checks whose codes need it;
+    `config_flow._blocks_on` is the only reader.
+    """
 
     severity: str
     code: str
     message: str
+    owners: frozenset[tuple[str, str]] = frozenset()
 
 
 def validate(config: Config) -> list[Problem]:
@@ -187,11 +203,18 @@ def _check_circular_condition_refs(config: Config) -> list[Problem]:
                 # DFS actually followed the references) -- report it as-is,
                 # not re-sorted, so the message names an edge that exists.
                 loop = f"{' -> '.join(cycle)} -> {cycle[0]}"
+                # Every name on the cycle is a `condition` subentry (the
+                # traversal only ever follows `config.conditions`, never a
+                # mode's/rule's `when` -- neither can be *part of* a cycle,
+                # only refer into one), and editing any single one of them to
+                # break its outgoing ref fixes the whole cycle -- so all of
+                # them are owners, not just the traversal's start.
                 out.append(
                     Problem(
                         ERROR,
                         "circular_condition_ref",
                         f"circular condition reference: {loop}",
+                        owners=frozenset(("condition", name) for name in cycle),
                     )
                 )
 
@@ -261,15 +284,26 @@ def _referenced_condition_names(node) -> set[str]:
     }
 
 
-def _condition_sites(config: Config) -> Iterator[tuple[dict | list | None, str]]:
-    """Yield every top-level condition slot in the config, with a label for problem messages."""
+def _condition_sites(
+    config: Config,
+) -> Iterator[tuple[dict | list | None, str, tuple[str, str]]]:
+    """Yield every top-level condition slot: its body, a label, and its owner.
+
+    The owner is `(subentry_type, id)` -- `id` matching exactly what that
+    type's own form would submit as `data[id_key]`, so `config_flow._blocks_
+    on` can compare it directly against the subentry actually being saved.
+    A rule's owner id (`f"{key}#{index}"`) is provisional: no `rule` subentry
+    flow exists yet to define its real `id_key`, and nothing currently calls
+    `_blocks_on` with `subentry_type="rule"` to compare it against -- see
+    `config_flow._CODE_OWNERS`'s own note on this.
+    """
     for cond_name, body in config.conditions.items():
-        yield body, f"condition {cond_name!r}"
+        yield body, f"condition {cond_name!r}", ("condition", cond_name)
     for mode in config.modes:
-        yield mode.when, f"mode {mode.id!r}"
+        yield mode.when, f"mode {mode.id!r}", ("mode", mode.id)
     for key, rules in config.rules.items():
         for index, rule in enumerate(rules):
-            yield rule.when, f"rule {key}#{index}"
+            yield rule.when, f"rule {key}#{index}", ("rule", f"{key}#{index}")
 
 
 def _get_referenced_conditions(cond_name: str, registry: dict[str, dict]) -> set[str]:
@@ -286,11 +320,16 @@ def _check_unknown_condition_refs(config: Config) -> list[Problem]:
     despite YAML-time checking".
     """
     out: list[Problem] = []
-    for node, where in _condition_sites(config):
+    for node, where, owner in _condition_sites(config):
         if node is None:
             continue
         out.extend(
-            Problem(ERROR, "unknown_condition_ref", f"{where} refers to unknown condition {name!r}")
+            Problem(
+                ERROR,
+                "unknown_condition_ref",
+                f"{where} refers to unknown condition {name!r}",
+                owners=frozenset({owner}),
+            )
             for name in sorted(_referenced_condition_names(node))
             if name not in config.conditions
         )
@@ -318,15 +357,28 @@ _REQUIRED_CONDITION_KEYS: dict[str, tuple[str, ...]] = {
 }
 
 
-def _check_condition_shape(node: dict, where: str) -> list[Problem]:
+def _check_condition_shape(node: dict, where: str, owner: tuple[str, str]) -> list[Problem]:
     """Check one condition dict's own shape; the caller walks its children.
+
+    `owner` is the same `(subentry_type, id)` the whole site (`where`) came
+    from -- every node nested inside one site's body lives in that one
+    subentry's data blob, so a shape problem anywhere within it is fixed by
+    that same subentry's own form, at whatever depth it is found.
 
     See docs/rationale.md -- "Why `_check_condition_shape` only checks known
     types and required keys".
     """
     kind = node.get("condition")
+    owners = frozenset({owner})
     if kind not in _REQUIRED_CONDITION_KEYS:
-        return [Problem(ERROR, "bad_condition_shape", f"{where}: unknown condition type {kind!r}")]
+        return [
+            Problem(
+                ERROR,
+                "bad_condition_shape",
+                f"{where}: unknown condition type {kind!r}",
+                owners=owners,
+            )
+        ]
 
     out: list[Problem] = []
     missing = [key for key in _REQUIRED_CONDITION_KEYS[kind] if key not in node]
@@ -336,6 +388,7 @@ def _check_condition_shape(node: dict, where: str) -> list[Problem]:
                 ERROR,
                 "bad_condition_shape",
                 f"{where}: condition {kind!r} is missing required key(s) {missing}",
+                owners=owners,
             )
         )
     if kind == "numeric_state" and "above" not in node and "below" not in node:
@@ -344,6 +397,7 @@ def _check_condition_shape(node: dict, where: str) -> list[Problem]:
                 ERROR,
                 "bad_condition_shape",
                 f"{where}: condition {kind!r} needs at least one of 'above'/'below'",
+                owners=owners,
             )
         )
     if kind == "time" and "after" not in node and "before" not in node:
@@ -352,6 +406,7 @@ def _check_condition_shape(node: dict, where: str) -> list[Problem]:
                 ERROR,
                 "bad_condition_shape",
                 f"{where}: condition {kind!r} needs at least one of 'after'/'before'",
+                owners=owners,
             )
         )
     return out
@@ -395,9 +450,9 @@ def _check_condition_shapes(config: Config) -> list[Problem]:
     separate check".
     """
     out: list[Problem] = []
-    for node, where in _condition_sites(config):
+    for node, where, owner in _condition_sites(config):
         if node is None:
             continue
         for n in _walk_condition_nodes(node):
-            out += _check_condition_shape(n, where)
+            out += _check_condition_shape(n, where, owner)
     return out

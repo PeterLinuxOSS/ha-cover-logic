@@ -127,14 +127,22 @@
           "description": "A named, reusable condition. Reference it by name from a mode's condition or from inside another condition.",
           "data": {
             "id": "Condition id",
-            "condition": "Condition"
+            "condition": "Condition",
+            "numeric_state_default": "Fallback for a numeric comparison"
+          },
+          "data_description": {
+            "numeric_state_default": "Only used when the condition above is a single numeric comparison (numeric_state). This is the value assumed when the compared entity is unavailable or not a number, so it decides which way the condition goes in that case -- pick it so a dead sensor fails on the safe side. Ignored otherwise, and required whenever the condition is numeric_state."
           }
         },
         "reconfigure": {
           "title": "Edit condition",
           "data": {
             "id": "[%key:component::cover_logic::config_subentries::condition::step::user::data::id%]",
-            "condition": "[%key:component::cover_logic::config_subentries::condition::step::user::data::condition%]"
+            "condition": "[%key:component::cover_logic::config_subentries::condition::step::user::data::condition%]",
+            "numeric_state_default": "[%key:component::cover_logic::config_subentries::condition::step::user::data::numeric_state_default%]"
+          },
+          "data_description": {
+            "numeric_state_default": "[%key:component::cover_logic::config_subentries::condition::step::user::data_description::numeric_state_default%]"
           }
         }
       },
