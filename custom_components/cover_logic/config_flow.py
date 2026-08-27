@@ -1199,7 +1199,7 @@ class RuleSubentryFlowHandler(_SubentryFlowBase):
         return []
 
     def _to_data(self, user_input: dict[str, Any]) -> dict[str, Any]:
-        """Reshape the submission into the keys `config_store._rule_groups`/`_rule_body` read.
+        """Reshape the submission into the keys `config_store._grouped_rules`/`_rule_body` read.
 
         `then` is always written, because `config_schema._parse_rule` requires
         it; an axis left at `keep` is written as `"keep"` rather than omitted,

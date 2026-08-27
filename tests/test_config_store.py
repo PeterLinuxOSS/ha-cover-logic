@@ -17,6 +17,8 @@ import anywhere on this path to skip.
 from dataclasses import dataclass, field
 from typing import Any
 
+import pytest
+
 from cover_logic.config_schema import load_config
 from cover_logic.config_store import (
     config_from_subentries,
@@ -329,3 +331,140 @@ def test_no_duplicate_order_across_different_mode_zone_keys() -> None:
     )
 
     assert duplicate_rule_order_problems(entry) == []
+
+
+def _assert_owner_ids_point_at_the_rules_they_claim_to(entry: Any) -> None:
+    """Decode `rule_owner_ids(entry)` back onto `entry.subentries` and check it names,
+    subentry for subentry, the exact tuple `config_from_subentries(entry).rules[key]` holds.
+
+    Relies on the fixture tagging each rule's `name` with `f"order-{order}"` --
+    a free-form field with no range check, unlike `position` -- so this stays
+    correct for orders far outside 0..100 too. This is the property that
+    `_grouped_rules` being the single source for both `_build_rules` and
+    `rule_owner_ids` makes structurally guaranteed rather than merely tested;
+    this test is what pins that guarantee down from the outside, through the
+    public API only, so it also catches a future regression back into two
+    hand-mirrored copies.
+    """
+    config = config_from_subentries(entry)
+    owners = rule_owner_ids(entry)
+    subentry_id_by_owner = {owner: subentry_id for subentry_id, owner in owners.items()}
+
+    for key, rules in config.rules.items():
+        for index, rule in enumerate(rules):
+            subentry_id = subentry_id_by_owner[f"{key}#{index}"]
+            claimed_order = entry.subentries[subentry_id].data["order"]
+            assert rule.name == f"order-{claimed_order}"
+
+
+@pytest.mark.parametrize(
+    "orders_by_insertion",
+    [
+        pytest.param([0, 1, 2], id="orders_match_insertion_order"),
+        pytest.param([2, 0, 1], id="subentries_inserted_out_of_order_value_order"),
+        pytest.param([0, 100, 55], id="non_contiguous_orders_in_insertion_order"),
+        pytest.param([55, 0, 100], id="non_contiguous_orders_out_of_order_value_order"),
+        pytest.param([1], id="single_rule"),
+    ],
+)
+def test_rule_owner_ids_align_with_config_rules_across_shapes(
+    orders_by_insertion: list[int],
+) -> None:
+    items = [
+        ("blind", {"entity": "cover.a"}),
+        ("zone", {"id": "z", "members": ["cover.a"]}),
+        ("mode", {"id": "m", "order": 0}),
+        *(
+            (
+                "rule",
+                {
+                    "mode": "m",
+                    "zone": "z",
+                    "order": order,
+                    "then": {"position": 0},
+                    "name": f"order-{order}",
+                },
+            )
+            for order in orders_by_insertion
+        ),
+    ]
+    entry = make_entry(items)
+
+    _assert_owner_ids_point_at_the_rules_they_claim_to(entry)
+
+    # And the ordering itself is right, not just internally self-consistent.
+    names = [rule.name for rule in config_from_subentries(entry).rules["m.z"]]
+    assert names == [f"order-{order}" for order in sorted(orders_by_insertion)]
+
+
+def test_rule_owner_ids_align_with_config_rules_across_several_mode_zone_keys() -> None:
+    """The same alignment property, but with two independently-sorted groups
+    interleaved in `entry.subentries`, so a bug that leaked one group's index
+    into another's would show up here even if the single-key tests above did
+    not exercise it.
+    """
+    entry = make_entry(
+        [
+            ("blind", {"entity": "cover.a"}),
+            ("blind", {"entity": "cover.b"}),
+            ("zone", {"id": "z1", "members": ["cover.a"]}),
+            ("zone", {"id": "z2", "members": ["cover.b"]}),
+            ("mode", {"id": "m", "order": 0}),
+            (
+                "rule",
+                {"mode": "m", "zone": "z2", "order": 5, "then": {"position": 0}, "name": "order-5"},
+            ),
+            (
+                "rule",
+                {
+                    "mode": "m",
+                    "zone": "z1",
+                    "order": 20,
+                    "then": {"position": 0},
+                    "name": "order-20",
+                },
+            ),
+            (
+                "rule",
+                {"mode": "m", "zone": "z1", "order": 0, "then": {"position": 0}, "name": "order-0"},
+            ),
+            (
+                "rule",
+                {"mode": "m", "zone": "z2", "order": 1, "then": {"position": 0}, "name": "order-1"},
+            ),
+        ]
+    )
+
+    _assert_owner_ids_point_at_the_rules_they_claim_to(entry)
+
+
+def test_tied_order_breaks_ties_by_subentry_id_not_by_subentries_mapping_order() -> None:
+    """Two rules sharing an `order` still need a total order between
+    `Config.rules` and `rule_owner_ids` to agree on -- `entry.subentries` is a
+    mapping, and nothing in Home Assistant's contract promises it preserves
+    insertion order across, say, a storage round-trip. Subentry ids are
+    stable and unique, so sorting by `(order, subentry id)` makes the result
+    the same regardless of what order `entry.subentries` iterates in.
+
+    Constructed with `FakeEntry` directly, not `make_entry`, because
+    `make_entry` assigns ids `s0`, `s1`, ... in insertion order, which would
+    make the id order and the insertion order the same thing and defeat the
+    point of this test. Here the subentry inserted *first* ("rB") has the id
+    that sorts *second*, so a correct, id-tiebroken sort must place "rA"
+    first even though it was inserted after "rB".
+    """
+    entry = FakeEntry(
+        subentries={
+            "rB": FakeSubentry(
+                "rule", {"mode": "m", "zone": "z", "order": 0, "then": {"position": 100}}
+            ),
+            "rA": FakeSubentry(
+                "rule", {"mode": "m", "zone": "z", "order": 0, "then": {"position": 0}}
+            ),
+        }
+    )
+
+    positions = [rule.then.position for rule in config_from_subentries(entry).rules["m.z"]]
+    assert positions == [0, 100]
+
+    assert rule_owner_ids(entry) == {"rA": "m.z#0", "rB": "m.z#1"}

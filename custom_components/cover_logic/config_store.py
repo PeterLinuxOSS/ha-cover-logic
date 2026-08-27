@@ -17,10 +17,29 @@ does a `mode` subentry. Home Assistant subentries are a flat list with no
 native reordering, but both rule resolution and mode resolution are
 first-match-wins -- order *is* the behaviour, not presentation -- so this
 module sorts by `order` within each group before building the tuples
-`Config.modes` and `Config.rules` hold. Two rule subentries claiming the same
-`order` in the same `(mode, zone)` group is not resolved by a silent pick
-here; see `duplicate_rule_order_problems` below, which must run *before*
-that tie is folded into a tuple and becomes unrecoverable.
+`Config.modes` and `Config.rules` hold. The sort key is `(order, subentry
+id)`, not `order` alone: `entry.subentries` is a mapping, and nothing in
+Home Assistant's contract promises it preserves insertion order (a storage
+round-trip is free to reorder it), so relying on that order as an implicit
+tiebreaker would make the result depend on something this module cannot
+see or pin down. The subentry id is stable and unique, so the explicit
+tiebreaker makes the sort total -- its result cannot vary run to run for
+the same subentries. Two rule subentries claiming the same `order` in the
+same `(mode, zone)` group still is not a silent pick worth keeping,
+though: see `duplicate_rule_order_problems` below, which must run *before*
+the tie is folded into a tuple and the `order` that caused it is gone.
+
+**One grouping, not two.** `_grouped_rules` below is the single place that
+groups rule subentries by `(mode, zone)` and sorts them; `_build_rules`
+(which becomes `Config.rules`) and `rule_owner_ids` (which names each
+subentry's position in that same tuple for `validate()` and `config_flow`
+to point at) both read its output rather than each running their own copy
+of the grouping. A second, hand-mirrored copy of the same sort was tried
+first and rejected: nothing forces two copies to move together, so a
+change to one without the other silently breaks the equivalence
+`rule_owner_ids` depends on, in a way the 92,160-scenario migration gate
+cannot see -- that gate exercises what the engine decides, not which
+subentry a validation problem is attributed to.
 
 **Refs.** YAML has the `!ref <name>` tag to point an action axis at a
 `values:` entry or a condition slot at a `conditions:` entry. Subentry data
@@ -187,29 +206,44 @@ def _rule_body(data: dict) -> dict:
     return {k: v for k, v in data.items() if k in ("if", "then", "events", "name")}
 
 
-def _rule_groups(entry: Any) -> dict[str, list[dict]]:
-    """Every rule subentry's `.data`, grouped by `"<mode>.<zone>"`, insertion order preserved."""
-    groups: dict[str, list[dict]] = {}
-    for data in _of_type(entry, RULE):
+def _grouped_rules(entry: Any) -> dict[str, list[tuple[str, dict]]]:
+    """Every rule subentry as `(subentry id, data)`, grouped by `(mode, zone)` and sorted.
+
+    The one place that groups-and-sorts rule subentries; see the module
+    docstring's "One grouping, not two" section for why every other
+    function that needs this shape -- `_build_rules`, `rule_owner_ids`,
+    `duplicate_rule_order_problems` -- reads this function's output instead
+    of grouping and sorting again on its own. That makes it structurally
+    impossible for `Config.rules`'s order and `rule_owner_ids`'s indices to
+    disagree: they are built by iterating the exact same list.
+
+    The `(order, subentry id)` sort key -- not `order` alone -- is what
+    makes the sort total; see the module docstring's "Ordering" section.
+    """
+    groups: dict[str, list[tuple[str, dict]]] = {}
+    for subentry_id, subentry in entry.subentries.items():
+        if subentry.subentry_type != RULE:
+            continue
+        data = dict(subentry.data)
         mode = _require(data, "mode", "rule subentry")
         zone = _require(data, "zone", "rule subentry")
         _order(data, "rule subentry")  # validated eagerly; value read again in the sort key
-        key = f"{mode}.{zone}"
-        groups.setdefault(key, []).append(data)
+        groups.setdefault(f"{mode}.{zone}", []).append((subentry_id, data))
+    for items in groups.values():
+        items.sort(key=lambda item: (_order(item[1], "rule subentry"), item[0]))
     return groups
 
 
 def _build_rules(
     entry: Any, raw_conditions: dict[str, dict], values: dict[str, Any]
 ) -> dict[str, tuple]:
-    rules = {}
-    for key, items in _rule_groups(entry).items():
-        ordered = sorted(items, key=lambda data: _order(data, "rule subentry"))
-        rules[key] = tuple(
+    return {
+        key: tuple(
             _yaml_parse_rule(_to_reftag(_rule_body(data)), raw_conditions, values)
-            for data in ordered
+            for _subentry_id, data in items
         )
-    return rules
+        for key, items in _grouped_rules(entry).items()
+    }
 
 
 def config_from_subentries(entry: Any) -> Config:
@@ -241,30 +275,6 @@ def config_from_subentries(entry: Any) -> Config:
     )
 
 
-def _grouped_rule_subentries(entry: Any) -> dict[str, list[tuple[str, int]]]:
-    """Every rule subentry as `(subentry id, order)`, grouped and sorted like `_build_rules`.
-
-    Deliberately mirrors `_rule_groups`/`_build_rules` step for step -- same
-    `entry.subentries` iteration order, same `sorted` on the same key -- so
-    the position a rule ends up at here is the position it ends up at in
-    `Config.rules`. Anything less than that equivalence would make
-    `rule_owner_ids` name a *different* rule than the one `validate()` is
-    talking about, which is worse than not naming one at all.
-    """
-    groups: dict[str, list[tuple[str, int]]] = {}
-    for subentry_id, subentry in entry.subentries.items():
-        if subentry.subentry_type != RULE:
-            continue
-        data = dict(subentry.data)
-        mode = _require(data, "mode", "rule subentry")
-        zone = _require(data, "zone", "rule subentry")
-        order = _order(data, "rule subentry")
-        groups.setdefault(f"{mode}.{zone}", []).append((subentry_id, order))
-    for items in groups.values():
-        items.sort(key=lambda pair: pair[1])
-    return groups
-
-
 def rule_owner_ids(entry: Any) -> dict[str, str]:
     """Map each rule subentry's id to the `"<mode>.<zone>#<index>"` string naming it.
 
@@ -276,14 +286,19 @@ def rule_owner_ids(entry: Any) -> dict[str, str]:
     problem `validate()` just reported about the very subentry being saved?"
     without re-deriving the sort a second time.
 
+    The index enumerates `_grouped_rules(entry)[key]` -- the exact list
+    `_build_rules` turns into `Config.rules[key]` -- so a subentry's id here
+    names the same position it occupies there by construction, not by two
+    sorts having been written to agree.
+
     Raises `ConfigError` for the same reasons `config_from_subentries` does
     (a rule subentry missing `mode`, `zone` or a valid `order`); a caller that
     cannot tolerate that should call it only after the config has parsed.
     """
     return {
         subentry_id: f"{key}#{index}"
-        for key, items in _grouped_rule_subentries(entry).items()
-        for index, (subentry_id, _order_value) in enumerate(items)
+        for key, items in _grouped_rules(entry).items()
+        for index, (subentry_id, _data) in enumerate(items)
     }
 
 
@@ -300,7 +315,10 @@ def duplicate_rule_order_problems(entry: Any) -> list[Problem]:
     """
     return check_duplicate_rule_order(
         {
-            key: [(f"{key}#{index}", order) for index, (_sid, order) in enumerate(items)]
-            for key, items in _grouped_rule_subentries(entry).items()
+            key: [
+                (f"{key}#{index}", _order(data, "rule subentry"))
+                for index, (_subentry_id, data) in enumerate(items)
+            ]
+            for key, items in _grouped_rules(entry).items()
         }
     )
