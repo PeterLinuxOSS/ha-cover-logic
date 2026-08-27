@@ -250,5 +250,73 @@
         "reconfigure_successful": "[%key:common::config_flow::abort::reconfigure_successful%]"
       }
     }
+  },
+  "services": {
+    "import_config": {
+      "name": "Importovať konfiguráciu",
+      "description": "Načíta YAML konfiguračný súbor a nahradí ním celé nastavenie žalúzií, zón, režimov, podmienok, hodnôt a pravidiel v tejto integrácii.",
+      "fields": {
+        "path": {
+          "name": "Cesta",
+          "description": "Cesta k YAML súboru, ktorý sa má importovať."
+        },
+        "dry_run": {
+          "name": "Skúšobný beh",
+          "description": "Len nahlási, čo by sa spravilo, bez akejkoľvek zmeny."
+        },
+        "overwrite": {
+          "name": "Prepísať",
+          "description": "Nutné na nahradenie už nakonfigurovaných žalúzií, zón, režimov, podmienok, hodnôt a pravidiel. Bez tohto sa import cez existujúcu konfiguráciu odmietne, nezlúči sa s ňou."
+        }
+      }
+    },
+    "export_config": {
+      "name": "Exportovať konfiguráciu",
+      "description": "Zapíše aktuálne žalúzie, zóny, režimy, podmienky, hodnoty a pravidlá tejto integrácie do YAML súboru, v rovnakom tvare, aký číta import_config.",
+      "fields": {
+        "path": {
+          "name": "Cesta",
+          "description": "Cesta, kam sa má YAML súbor zapísať. Odmietnutá, ak ide o symlink, priečinok, alebo ak nadradený priečinok neexistuje."
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "no_config_entry": {
+      "message": "Cover Logic ešte nie je nastavený."
+    },
+    "invalid_config": {
+      "message": "Tento súbor sa nedá importovať: {error_detail}"
+    },
+    "cannot_parse_file": {
+      "message": "Súbor {path} sa nedá spracovať: {error_detail}"
+    },
+    "cannot_read_file": {
+      "message": "Súbor {path} sa nedá načítať: {error_detail}"
+    },
+    "existing_config": {
+      "message": "Cover Logic už má nastavených {count} položiek. Na ich úplné nahradenie treba poslať \"overwrite: true\", alebo ich najprv odstrániť."
+    },
+    "import_conversion_failed": {
+      "message": "Importovaný súbor sa nepodarilo previesť na položky konfigurácie: {error_detail}"
+    },
+    "export_path_is_symlink": {
+      "message": "Export cez symlink je odmietnutý: {path}. Zadajte priamo skutočný súbor."
+    },
+    "export_path_is_directory": {
+      "message": "{path} je priečinok, nie súbor."
+    },
+    "export_parent_missing": {
+      "message": "Priečinok {path} neexistuje."
+    },
+    "nothing_to_export": {
+      "message": "Zatiaľ nie je nastavené nič; nie je čo exportovať."
+    },
+    "cannot_parse_subentries": {
+      "message": "Aktuálnu konfiguráciu sa nepodarilo načítať: {error_detail}"
+    },
+    "cannot_write_file": {
+      "message": "Súbor {path} sa nedá zapísať: {error_detail}"
+    }
   }
 }

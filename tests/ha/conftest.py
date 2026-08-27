@@ -140,20 +140,59 @@ class FakeEntryConfigEntries:
         return self.unload_result
 
 
+class FakeServiceRegistry:
+    """Stands in for `hass.services`, as seen from `services.async_register_services`/
+    `async_unregister_services` and by `test_services.py` driving a registered handler
+    directly.
+
+    Covers exactly `.has_service`, `.async_register` and `.async_remove` --
+    the only three calls either function makes. Registered handlers are kept
+    in a plain dict rather than dispatched through anything resembling real
+    HA service-call machinery (schema coercion, `SupportsResponse`
+    enforcement, ...), the same tradeoff every other fake in this file makes:
+    `tests/ha/test_services.py` calls `services._async_import_config`/
+    `_async_export_config` directly for its actual assertions and uses this
+    registry only to prove *that* registration happened and is idempotent.
+    """
+
+    def __init__(self):
+        """Start with nothing registered."""
+        self._services: dict[tuple[str, str], object] = {}
+
+    def has_service(self, domain, service):
+        """Whether `(domain, service)` was registered and not yet removed."""
+        return (domain, service) in self._services
+
+    def async_register(self, domain, service, handler, **_kwargs):
+        """Record the handler, ignoring `schema`/`supports_response` (not exercised here)."""
+        self._services[(domain, service)] = handler
+
+    def async_remove(self, domain, service):
+        """Drop `(domain, service)` if present; a real registry ignores a missing one too."""
+        self._services.pop((domain, service), None)
+
+    def registered_services(self):
+        """Every `(domain, service)` currently registered -- a public read, not `._services`."""
+        return frozenset(self._services)
+
+
 class FakeSetupHass:
     """Stands in for `hass` as seen by `async_setup_entry`/`async_unload_entry`.
 
-    Only `.config_entries` is touched by those two functions -- the
-    coordinator they build reads/writes nothing on `hass` beyond what
-    `hass_factory`'s real minimal `HomeAssistant` covers, but `test_init.py`'s
-    fixtures (`VALID_CONFIG` and friends) reference no entity at all, so
-    `build_world` never calls `hass.states.get` either; this fake needs
-    nothing beyond `.config_entries` to stand in for `hass` in those tests.
+    `.config_entries` and (since both functions now also (un)register the
+    `import_config`/`export_config` services) `.services` are the only two
+    attributes touched -- the coordinator they build reads/writes nothing on
+    `hass` beyond what `hass_factory`'s real minimal `HomeAssistant` covers,
+    but `test_init.py`'s fixtures (`VALID_CONFIG` and friends) reference no
+    entity at all, so `build_world` never calls `hass.states.get` either;
+    this fake needs nothing beyond those two to stand in for `hass` in those
+    tests.
     """
 
     def __init__(self, *, unload_result=True):
-        """Wrap a fresh `FakeEntryConfigEntries`."""
+        """Wrap a fresh `FakeEntryConfigEntries` and a fresh `FakeServiceRegistry`."""
         self.config_entries = FakeEntryConfigEntries(unload_result=unload_result)
+        self.services = FakeServiceRegistry()
 
     async def async_add_executor_job(self, target, *args):
         """Genuinely run `target` off the current thread, like the real one does.
@@ -394,3 +433,113 @@ def subentry_hass():
         return FakeSubentryHass(entry)
 
     return _make
+
+
+class FakeServiceConfigEntries:
+    """Stands in for `hass.config_entries`, as seen from `services.py`.
+
+    Covers exactly the four calls `services._async_import_config`/
+    `_async_export_config` make: `.async_entries`, `.async_add_subentry`,
+    `.async_remove_subentry`, `.async_update_entry`. Mutates the wrapped
+    `FakeServiceEntry` directly and in place -- the same tradeoff
+    `FakeSubentryEntry`/`FakeSubentryConfigEntries` make for the subentry
+    flows, a plain mutable `dict`/attribute standing in for what the real
+    manager does to a frozen, `MappingProxyType`-backed `ConfigEntry` via
+    `object.__setattr__`.
+    """
+
+    def __init__(self, entries):
+        """Wrap the entries `async_entries` should return -- zero or one in every
+        test here, this integration being single-instance (see
+        `services._get_entry`'s docstring).
+        """
+        self._entries = list(entries)
+
+    def async_entries(self, domain):
+        """Return every wrapped entry; `domain` is ignored -- there is only one domain here."""
+        return list(self._entries)
+
+    def async_add_subentry(self, entry, subentry):
+        """Insert `subentry` keyed by its own `subentry_id`, like the real manager does."""
+        entry.subentries[subentry.subentry_id] = subentry
+        return True
+
+    def async_remove_subentry(self, entry, subentry_id):
+        """Drop `subentry_id`, like the real manager does."""
+        del entry.subentries[subentry_id]
+        return True
+
+    def async_update_entry(self, entry, *, data=None, **_ignored):
+        """Replace `entry.data`; every other keyword the real signature accepts is unused here."""
+        if data is not None:
+            entry.data = dict(data)
+        return True
+
+
+class FakeServiceEntry:
+    """Duck-typed stand-in for `homeassistant.config_entries.ConfigEntry`, as seen
+    from `services.py`.
+
+    `.subentries` values are real `homeassistant.config_entries.ConfigSubentry`
+    instances, not a third duck-typed stand-in -- cheap to construct without a
+    running event loop, and exactly what `hass.config_entries.async_add_subentry`
+    builds in production (`services._async_import_config`), so a test pre-seeding
+    "already configured" starts from the identical shape.
+    """
+
+    def __init__(self, entry_id="entry1", data=None, subentries=None):
+        """Start with `subentries` (default: none) and `data` (default: `{}`)."""
+        self.entry_id = entry_id
+        self.data = data or {}
+        self.subentries = dict(subentries or {})
+
+
+@pytest.fixture
+def service_entry():
+    """Factory: `service_entry(subentries={...}, data={...})` -> a fresh `FakeServiceEntry`."""
+    return FakeServiceEntry
+
+
+class FakeServiceHass:
+    """Stands in for `hass` as seen from inside `services._async_import_config`/
+    `_async_export_config`/`async_register_services`/`async_unregister_services`:
+    `.config_entries`, `.services` and `.async_add_executor_job`.
+    """
+
+    def __init__(self, entries):
+        """Wrap `entries`; start with a fresh `FakeServiceConfigEntries`/`FakeServiceRegistry`."""
+        self.config_entries = FakeServiceConfigEntries(entries)
+        self.services = FakeServiceRegistry()
+
+    async def async_add_executor_job(self, target, *args):
+        """Genuinely run `target` off the current thread -- see `FakeSetupHass`'s
+        identical method for why this cannot be a same-thread stub.
+        """
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, target, *args)
+
+
+@pytest.fixture
+def service_hass():
+    """Factory: `service_hass([entry])` (or `service_hass([])` for 'no entry configured yet')."""
+
+    def _make(entries=()):
+        return FakeServiceHass(entries)
+
+    return _make
+
+
+class FakeServiceCall:
+    """Duck-typed stand-in for `homeassistant.core.ServiceCall`: only `.data` is read
+    by `services._async_import_config`/`_async_export_config`.
+    """
+
+    def __init__(self, data):
+        """Store the already-schema-coerced `data` a real service call would carry."""
+        self.data = data
+
+
+@pytest.fixture
+def service_call():
+    """Factory: `service_call({"path": ...})` -> a fake `ServiceCall`."""
+    return FakeServiceCall

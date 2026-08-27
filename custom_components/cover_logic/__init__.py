@@ -107,6 +107,17 @@ async def async_setup_entry(hass: "HomeAssistant", entry: "CoverLogicConfigEntry
     entry.runtime_data = CoverLogicData(config=config, coordinator=coordinator)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    # Deferred: see the module docstring for why this cannot be a top-level
+    # import. `import_config`/`export_config` are entry-independent in
+    # behaviour (there is only ever the one entry -- see
+    # `services._get_entry`'s docstring) but registered here, alongside it,
+    # rather than from an `async_setup` this integration has no other reason
+    # to define.
+    from .services import async_register_services  # noqa: PLC0415
+
+    async_register_services(hass)
+
     return True
 
 
@@ -126,10 +137,21 @@ async def async_unload_entry(hass: "HomeAssistant", entry: "CoverLogicConfigEntr
     -- unload, then set up again -- re-reads the file both times and starts a
     fresh coordinator each time; see `async_setup_entry`'s docstring for why
     the re-read matters.
+
+    The two services are removed last, after the coordinator -- this
+    integration supports exactly one config entry (see
+    `services._get_entry`'s docstring), so once it is unloading there is no
+    entry left for either service to act on.
     """
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if not unload_ok:
         return False
 
     await entry.runtime_data.coordinator.async_unload()
+
+    # Deferred: see the module docstring.
+    from .services import async_unregister_services  # noqa: PLC0415
+
+    async_unregister_services(hass)
+
     return True

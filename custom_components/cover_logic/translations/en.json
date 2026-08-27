@@ -250,5 +250,73 @@
         "reconfigure_successful": "[%key:common::config_flow::abort::reconfigure_successful%]"
       }
     }
+  },
+  "services": {
+    "import_config": {
+      "name": "Import configuration",
+      "description": "Reads a YAML configuration file and replaces this integration's blinds, zones, modes, conditions, values and rules with what it contains.",
+      "fields": {
+        "path": {
+          "name": "Path",
+          "description": "Path to the YAML file to import."
+        },
+        "dry_run": {
+          "name": "Dry run",
+          "description": "Report what would happen without changing anything."
+        },
+        "overwrite": {
+          "name": "Overwrite",
+          "description": "Required to replace an already-configured set of blinds, zones, modes, conditions, values and rules. Without it, importing over an existing configuration is refused rather than merged."
+        }
+      }
+    },
+    "export_config": {
+      "name": "Export configuration",
+      "description": "Writes this integration's current blinds, zones, modes, conditions, values and rules out as a YAML file, in the same format import_config reads.",
+      "fields": {
+        "path": {
+          "name": "Path",
+          "description": "Path to write the YAML file to. Refused if it is a symlink, a directory, or its parent directory does not exist."
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "no_config_entry": {
+      "message": "Cover Logic is not set up yet."
+    },
+    "invalid_config": {
+      "message": "This file could not be imported: {error_detail}"
+    },
+    "cannot_parse_file": {
+      "message": "Could not parse {path}: {error_detail}"
+    },
+    "cannot_read_file": {
+      "message": "Could not read {path}: {error_detail}"
+    },
+    "existing_config": {
+      "message": "Cover Logic already has {count} subentries configured. Pass \"overwrite: true\" to replace them entirely, or remove them first."
+    },
+    "import_conversion_failed": {
+      "message": "Could not turn the imported file into subentries: {error_detail}"
+    },
+    "export_path_is_symlink": {
+      "message": "Refusing to export through a symlink: {path}. Point at the real file instead."
+    },
+    "export_path_is_directory": {
+      "message": "{path} is a directory, not a file."
+    },
+    "export_parent_missing": {
+      "message": "The directory {path} does not exist."
+    },
+    "nothing_to_export": {
+      "message": "Nothing is configured yet; there is nothing to export."
+    },
+    "cannot_parse_subentries": {
+      "message": "The current configuration could not be read: {error_detail}"
+    },
+    "cannot_write_file": {
+      "message": "Could not write {path}: {error_detail}"
+    }
   }
 }

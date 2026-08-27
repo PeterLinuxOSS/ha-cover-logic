@@ -5,6 +5,8 @@ import pytest
 from cover_logic.conditions import evaluate_condition
 from cover_logic.config_schema import (
     ConfigError,
+    dump_config,
+    dump_config_file,
     load_config,
     load_config_file,
     referenced_entities,
@@ -427,3 +429,170 @@ def test_referenced_entities_on_minimal_config_has_no_attribute_tuples():
         "input_boolean.cover_down",
         "input_number.kvety_pozicia_zaluzie",
     }
+
+
+# --- dump_config / dump_config_file: the write side (task 5) ---------------
+#
+# `dump_config` is the inverse of `load_config`, used by the `export_config`
+# service. The decisive test is always the round trip -- parse, dump,
+# reparse, compare by object equality -- never a check of the dumped text's
+# exact spelling, which would just re-encode an assumption about PyYAML's
+# formatting choices (observed directly: it quotes a `!ref` scalar,
+# `!ref 'cover_down'`, not the bare `!ref cover_down` a human would type) as
+# if it were part of this project's contract. Text-shape assertions below are
+# limited to the one thing that has to be true regardless of quoting: the
+# `!ref` tag itself must appear, proving a ref did not silently degrade into
+# a plain string it would need re-checking to notice.
+
+ROUND_TRIP_TEXT = """
+blinds:
+  - entity: cover.a
+    facade_azimuth: 270
+    tolerance: 30
+    travel_time: 45
+    has_tilt: false
+    tilt_after_arrival: false
+  - entity: cover.b
+zones:
+  terasa:
+    members: [cover.a]
+    occupants: [peter, mimka]
+  izba:
+    members: [cover.b]
+modes:
+  - {id: noc, when: !ref cover_down}
+  - {id: bezny_den}
+conditions:
+  cover_down:
+    condition: state
+    entity_id: input_boolean.cover_down
+    state: "on"
+  pocasie:
+    condition: and
+    conditions:
+      - {condition: state, entity_id: sun.sun, state: above_horizon}
+      - !ref cover_down
+values:
+  kvety_poz:
+    entity: input_number.kvety_pozicia_zaluzie
+    default: 34
+rules:
+  noc.terasa:
+    - {then: {position: keep, tilt: keep}}
+  bezny_den.terasa:
+    - {if: !ref cover_down, then: {position: 100, tilt: keep}}
+    - {events: [arrival], name: "kvety fallback", then: {position: !ref kvety_poz, tilt: 0}}
+  bezny_den.izba:
+    - {then: {position: keep, tilt: keep}}
+guards:
+  - some_future_guard
+"""
+
+
+def test_dump_config_load_config_round_trips_every_shape():
+    """The decisive test for the write side: parse, dump, reparse, compare by
+    object equality -- not field by field, so a shape `dump_config` silently
+    drops or mis-shapes cannot hide behind a partial assertion. Exercises
+    every axis the inherited write side has to get right at once: a named
+    mode ref (`when: !ref`) and a rule-level one (`if: !ref`) -- two
+    different keys sharing the same `unparse_condition` walk but meaning
+    different things per the `!ref` tag's context-sensitivity (see
+    `config_schema.RefTag`'s own docstring) -- a `!ref` nested inside another
+    condition's own body, a `!ref` value axis sitting next to a plain int and
+    a `keep` axis, `events`, `name`, non-default blind fields, two zones (one
+    with `occupants`), and a non-empty `guards` list.
+    """
+    original = load_config(ROUND_TRIP_TEXT)
+    reloaded = load_config(dump_config(original))
+    assert reloaded == original
+
+
+def test_dump_config_keeps_the_ref_tag_for_both_a_condition_and_a_value_slot():
+    """Weaker than the round trip above, but points at the specific failure
+    mode `MODELS.md`'s "!ref is context-sensitive" note warns about: a `!ref`
+    that silently became a plain string would still often *parse* (as a
+    literal state/value), just mean something else -- see
+    `test_dump_config_round_trips_a_shared_name_used_as_both_a_condition_and_a_value_ref`
+    below for the case where getting this wrong is otherwise invisible.
+    """
+    dumped = dump_config(load_config(ROUND_TRIP_TEXT))
+    # mode's when, the nested condition ref, the rule's if, and the value ref.
+    assert dumped.count("!ref") == 4
+
+
+def test_dump_config_writes_keep_as_the_string_keep_not_the_python_repr():
+    """`KEEP` is a singleton (`model.Keep`), not a string -- see its own
+    docstring. A dump that wrote `repr(KEEP)` (`"KEEP"`) or left the key out
+    would both still produce a `Config` on reload (a missing axis defaults to
+    `KEEP` too -- see `test_missing_axis_defaults_to_keep`), so only checking
+    the dumped text catches a dump that silently relies on that default
+    instead of writing `keep` explicitly.
+    """
+    dumped = dump_config(load_config(ROUND_TRIP_TEXT))
+    assert "position: keep" in dumped
+    assert "tilt: keep" in dumped
+
+
+def test_dump_config_preserves_rule_order_within_a_group():
+    """Rule order is semantics, not presentation (`MODELS.md` Sec. 3): the
+    first rule in `bezny_den.terasa` must still be the `!ref cover_down` one
+    after a round trip, not the fallback -- a tuple written out of order
+    would silently change which rule the engine tries first, with no parse
+    error to flag it.
+    """
+    reloaded = load_config(dump_config(load_config(ROUND_TRIP_TEXT)))
+    rules = reloaded.rules["bezny_den.terasa"]
+    assert rules[0].when == {"condition": "ref", "name": "cover_down"}
+    assert rules[1].name == "kvety fallback"
+
+
+def test_dump_config_round_trips_a_shared_name_used_as_both_a_condition_and_a_value_ref():
+    """The write-side twin of `test_same_short_name_in_both_namespaces_resolves_independently`.
+
+    `unparse_condition` and `unparse_axis` are two separate walks (see
+    `RefTag`'s docstring: "the two namespaces are separate on purpose"), each
+    called from exactly the key `_parse_condition`/`_parse_axis` would read
+    on the way back in (`if`/`when` vs. `position`/`tilt`). If either walk
+    were wired to the wrong namespace's ref lookup, or if a bug ever
+    collapsed the two into one shared substitution, a name used in both
+    namespaces at once is the one case where a plain round-trip-equality
+    check could still coincidentally pass for the wrong reason (each
+    namespace happens to have an entry for that name); asserting *which*
+    slot resolved to *which* referent, post round trip, is what actually
+    catches a mix-up.
+    """
+    text = (
+        MINIMAL.replace(
+            "conditions:\n  cover_down:",
+            "conditions:\n  shared:\n    condition: state\n"
+            '    entity_id: input_boolean.cover_down\n    state: "on"\n  cover_down:',
+        )
+        .replace(
+            "values:\n  kvety_poz:",
+            "values:\n  shared:\n    entity: input_number.shared_helper\n"
+            "    default: 7\n  kvety_poz:",
+        )
+        .replace("when: !ref cover_down", "when: !ref shared")
+        .replace("position: !ref kvety_poz", "position: !ref shared")
+    )
+    original = load_config(text)
+    reloaded = load_config(dump_config(original))
+    assert reloaded == original
+    assert reloaded.modes[0].when == {"condition": "ref", "name": "shared"}
+    rule = reloaded.rules["bezny_den.terasa"][1]
+    assert rule.then.position == Ref(entity="input_number.shared_helper", default=7)
+
+
+def test_dump_config_file_round_trips_through_an_actual_file(tmp_path):
+    original = load_config(ROUND_TRIP_TEXT)
+    path = tmp_path / "out.yaml"
+    dump_config_file(path, original)
+    assert load_config_file(path) == original
+
+
+def test_dump_config_of_an_empty_config_reloads_to_an_equal_config():
+    """The degenerate case: nothing configured at all still round-trips,
+    rather than `dump_config` choking on empty dicts/tuples/`()`.
+    """
+    empty = load_config("{}")
+    assert load_config(dump_config(empty)) == empty

@@ -68,11 +68,16 @@ from typing import Any
 from .config_schema import (
     ConfigError,
     RefTag,
+    _blind_to_dict,
+    _mode_to_dict,
     _parse_blind,
     _parse_condition,
     _parse_rule as _yaml_parse_rule,
     _parse_values,
     _reject_dot,
+    _rule_to_dict,
+    _zone_to_dict,
+    unparse_condition,
 )
 from .model import Config, Mode, Zone
 from .validation import Problem, check_duplicate_rule_order
@@ -322,3 +327,191 @@ def duplicate_rule_order_problems(entry: Any) -> list[Problem]:
             for key, items in _grouped_rules(entry).items()
         }
     )
+
+
+# ---------------------------------------------------------------------------
+# `subentries_from_config`: the write side, used by the `import_config`
+# service (`services.py`) to turn an imported YAML `Config` into the
+# subentries it writes. The inverse of `config_from_subentries` above, the
+# same way `config_schema.dump_config` is the inverse of `load_config` --
+# together the two write sides make both doors into `Config` (YAML, and now
+# subentries) round-trip, not just the read side that already had to.
+# ---------------------------------------------------------------------------
+
+# The gap left between one rule's or mode's assigned `order` and the next --
+# matches `config_flow._ORDER_GAP`, for the same reason: a user who starts
+# hand-editing a rule set an import produced can still slip a new row between
+# two existing ones without renumbering either. `Config.rules`/`Config.modes`
+# hold no `order` of their own (see `duplicate_rule_order_problems`'s own
+# docstring) -- only their tuple *position* survives -- so any strictly
+# increasing sequence reproduces that position; this just picks one a human
+# editing the result afterwards will not immediately need to touch.
+_ORDER_STEP = 10
+
+
+def _ref_marker(name: str) -> dict[str, str]:
+    """The `{"ref": "<name>"}` marker this module's own docstring describes.
+
+    Passed as `unparse_condition`/`unparse_axis`'s `ref_factory` wherever this
+    module builds subentry data -- never `config_schema.RefTag` (the YAML
+    spelling), which `_to_reftag` above exists specifically to translate back
+    from. Using this marker instead of writing the already-parsed
+    `{"condition": "ref", "name": ...}` shape (as `config_flow.py`'s own
+    `mode`/`rule` forms do, for reasons specific to that UI -- see
+    `ModeSubentryFlowHandler._to_data`'s docstring) keeps a subentry an
+    imported `import_config` writes indistinguishable from one a human built
+    by hand through those same forms picking a named condition or value from
+    a dropdown: both spellings parse identically (`_to_reftag` turns this one
+    into a `RefTag`, whose eager membership check is exactly what
+    `config_from_subentries`/`_build_rules` already run for a freshly
+    imported config, so there is no unrelated-save-blocking hazard here the
+    way there is for an *edit* through the flow, which is what that decision
+    was actually about), but only one of the two is what `config_store.py`'s
+    own module docstring calls "this module's own convention".
+    """
+    return {"ref": name}
+
+
+def _condition_body_to_data(name: str, body: Any) -> dict[str, Any]:
+    """A named condition's subentry `data`: `{"id": name, **flattened body}`.
+
+    `config_store._build_conditions` merges every key of a condition
+    subentry's `data` except `id` into one dict and hands it to
+    `config_schema._parse_condition` unchanged -- so `body` must already be a
+    single condition node (a mapping), not a bare list. `Config.conditions`
+    is typed `dict[str, dict]` (see `model.Config`) for exactly this reason;
+    a YAML file that names a bare list as one condition's whole body (legal
+    for `load_config`, since `_parse_condition` accepts a top-level list, but
+    never produced by anything in `config_flow.py`) cannot become a `condition`
+    subentry undistorted, and this raises rather than silently wrapping it in
+    an implicit `and` the user did not write.
+    """
+    if not isinstance(body, dict):
+        msg = (
+            f"condition {name!r}: only a single condition (a mapping), not a bare list, "
+            f"can become a 'condition' subentry -- got {body!r}"
+        )
+        raise ConfigError(msg)
+    return {_ID_KEY: name, **unparse_condition(body, _ref_marker)}
+
+
+class _StubSubentry:
+    """The minimal duck-typed subentry `config_from_subentries` needs to read back.
+
+    Same surface as `config_flow._SubentryStub`, redefined here rather than
+    imported from it: `config_flow.py` is the Home Assistant layer (imports
+    `homeassistant` unconditionally, per its own module docstring), and this
+    module stays on the pure side of the split `tests/test_purity.py`
+    enforces -- importing from `config_flow` would drag that import in
+    transitively the moment anything under `custom_components/cover_logic/`
+    is loaded from the system-Python test run.
+    """
+
+    __slots__ = ("data", "subentry_type")
+
+    def __init__(self, subentry_type: str, data: dict[str, Any]) -> None:
+        """Store the two attributes `config_from_subentries` reads."""
+        self.subentry_type = subentry_type
+        self.data = data
+
+
+class _StubEntry:
+    """The minimal duck-typed entry `config_from_subentries` needs to read back.
+
+    See `_StubSubentry`'s docstring for why this is not imported from
+    `config_flow._EntryStub` instead.
+    """
+
+    __slots__ = ("data", "subentries")
+
+    def __init__(self, data: dict[str, Any], subentries: dict[str, _StubSubentry]) -> None:
+        """Store the two attributes `config_from_subentries` reads."""
+        self.data = data
+        self.subentries = subentries
+
+
+def entry_from_subentry_items(
+    items: list[tuple[str, dict[str, Any]]], guards: tuple = ()
+) -> _StubEntry:
+    """Build the minimal entry `config_from_subentries` can read from `(type, data)` pairs.
+
+    Shared by `subentries_from_config`'s own round-trip self-check below and
+    by `tests/test_config_store.py`'s tests for it, so neither has to
+    fabricate a second stand-in for "an entry with exactly these subentries".
+    """
+    subentries = {str(i): _StubSubentry(kind, data) for i, (kind, data) in enumerate(items)}
+    return _StubEntry(data={"guards": list(guards)}, subentries=subentries)
+
+
+def subentries_from_config(config: Config) -> list[tuple[str, dict[str, Any]]]:
+    """Invert `config_from_subentries`: every `(subentry_type, data)` pair that reproduces `config`.
+
+    The write side `import_config` (`services.py`) uses to turn a parsed YAML
+    `Config` into real subentries -- `hass.config_entries.async_add_subentry`
+    wraps each pair in a real `ConfigSubentry`, a step this function does not
+    take itself so it can stay on the pure side of the split (see
+    `_StubSubentry`'s docstring) and be tested without any `homeassistant`
+    import.
+
+    Ordering: `Config.modes` and each `Config.rules[...]` tuple carry
+    first-match-wins meaning (see `MODELS.md` Sec. 3) but no `order` field of
+    their own -- only tuple *position* -- so this assigns a fresh, strictly
+    increasing `order` (`_ORDER_STEP` apart) to each mode and to each rule
+    within its `(mode, zone)` group, in exact tuple order. Because the
+    assigned values are strictly increasing and never repeat within a group,
+    `_grouped_rules`'/`_build_modes`'s own `(order, subentry id)` sort
+    reproduces that same order regardless of what subentry ids the real
+    `ConfigSubentryFlowManager` ends up assigning -- the id half of the sort
+    key never has to break a tie. (The literal numeric order values chosen
+    here are not preserved from wherever `config` originally came from --
+    `Config` does not carry them at all once built, by construction -- so
+    "preserving order" means preserving the resulting sequence, not
+    reproducing specific numbers a user may have typed into a UI form.)
+
+    Before returning, rebuilds a `Config` from exactly the pairs about to be
+    handed back (via `entry_from_subentry_items`/`config_from_subentries`)
+    and raises `ConfigError` if it does not equal `config`. This is a
+    self-check on this function and `config_from_subentries` staying inverses
+    of one another, not a check on `config` itself (which already parsed
+    successfully, or there would be no `Config` to call this with) -- see the
+    task report for why a mismatch here must be treated as this function's
+    own bug, not the caller's.
+    """
+    items: list[tuple[str, dict[str, Any]]] = [
+        (BLIND, _blind_to_dict(blind)) for blind in config.blinds.values()
+    ]
+
+    for zone_id, zone in sorted(config.zones.items()):
+        items.append((ZONE, {_ID_KEY: zone_id, **_zone_to_dict(zone)}))
+
+    for name, ref in sorted(config.values.items()):
+        items.append((VALUE, {_ID_KEY: name, "entity": ref.entity, "default": ref.default}))
+
+    for name, body in sorted(config.conditions.items()):
+        items.append((CONDITION, _condition_body_to_data(name, body)))
+
+    for index, mode in enumerate(config.modes):
+        data = _mode_to_dict(mode, _ref_marker)
+        data["order"] = index * _ORDER_STEP
+        items.append((MODE, data))
+
+    ref_names = {id(ref): name for name, ref in config.values.items()}
+    for key, rules in sorted(config.rules.items()):
+        mode_id, _dot, zone_id = key.partition(".")
+        for index, rule in enumerate(rules):
+            data = _rule_to_dict(rule, ref_names, _ref_marker)
+            data["mode"] = mode_id
+            data["zone"] = zone_id
+            data["order"] = index * _ORDER_STEP
+            items.append((RULE, data))
+
+    rebuilt = config_from_subentries(entry_from_subentry_items(items, config.guards))
+    if rebuilt != config:
+        msg = (
+            "subentries_from_config produced subentries that do not round-trip back to "
+            "the same Config -- this is a bug in subentries_from_config/config_from_subentries "
+            "itself, not a problem with the input Config"
+        )
+        raise ConfigError(msg)
+
+    return items

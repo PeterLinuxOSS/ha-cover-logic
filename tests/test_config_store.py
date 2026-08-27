@@ -19,11 +19,14 @@ from typing import Any
 
 import pytest
 
-from cover_logic.config_schema import load_config
+from cover_logic.config_schema import ConfigError, load_config, load_config_file
+import cover_logic.config_store as config_store_module
 from cover_logic.config_store import (
     config_from_subentries,
     duplicate_rule_order_problems,
+    entry_from_subentry_items,
     rule_owner_ids,
+    subentries_from_config,
 )
 from cover_logic.validation import ERROR, validate
 
@@ -468,3 +471,99 @@ def test_tied_order_breaks_ties_by_subentry_id_not_by_subentries_mapping_order()
     assert positions == [0, 100]
 
     assert rule_owner_ids(entry) == {"rA": "m.z#0", "rB": "m.z#1"}
+
+
+# --- subentries_from_config: the write side (task 5) ------------------------
+#
+# `subentries_from_config` is the inverse of `config_from_subentries` above,
+# used by the `import_config` service to turn an imported YAML `Config` into
+# real subentries. `YAML_TEXT`/`SUBENTRY_ITEMS` already give one configuration
+# expressed both ways -- two zones, two modes (one conditional, one
+# fallback), and `slnecno.terasa`'s rule list, which is exactly the "a pair
+# with non-contiguous orders" case the task brief calls out: `config_
+# from_subentries` sees it filed under scrambled subentry `order`s 1 then 0
+# (see `SUBENTRY_ITEMS`'s own comment), so a `Config` built from it already
+# has its two rules in the *resolved* order (the `!ref slnko` one first, the
+# catch-all second) before `subentries_from_config` ever sees it -- proving
+# it reproduces that resolved order using its own fresh `order` numbering,
+# not whatever numbers happened to produce it.
+
+
+def test_subentries_from_config_round_trips_the_yaml_text_config():
+    original = load_config(YAML_TEXT)
+    items = subentries_from_config(original)
+    rebuilt = config_from_subentries(entry_from_subentry_items(items, original.guards))
+    assert rebuilt == original
+
+
+def test_subentries_from_config_preserves_multi_rule_order_within_a_group():
+    original = load_config(YAML_TEXT)
+    items = subentries_from_config(original)
+    rule_items = [data for kind, data in items if kind == "rule" and data["zone"] == "terasa"]
+    slnecno_rules = sorted(
+        (data for data in rule_items if data["mode"] == "slnecno"), key=lambda d: d["order"]
+    )
+    assert [rule.get("name") for rule in slnecno_rules] == ["shade", None]
+
+
+def test_subentries_from_config_round_trips_the_real_fixture(fixtures_dir):
+    """The decisive test on the real house's configuration -- 10 blinds, 7
+    zones, 4 modes, 25 conditions, 1 value and 86 rules across 28 `(mode,
+    zone)` groups, several with more than one rule. `subentries_from_config`
+    already runs this same equality check on every call (see its own
+    docstring's "Before returning" paragraph); this test is what actually
+    exercises that self-check against configuration of this size and
+    complexity, rather than only the small hand-written fixtures above.
+    """
+    original = load_config_file(fixtures_dir / "dom_peter.yaml")
+    items = subentries_from_config(original)
+    rebuilt = config_from_subentries(entry_from_subentry_items(items, original.guards))
+    assert rebuilt == original
+
+
+def test_subentries_from_config_rejects_a_bare_list_as_a_named_conditions_body():
+    """`Config.conditions` is typed `dict[str, dict]` (see `model.Config`),
+    but `load_config` does not itself enforce that a named condition's body
+    is a mapping -- a bare list parses fine there (`_parse_condition`
+    accepts a top-level list, treating it as an implicit `and`) and only
+    breaks the *subentry* shape, which has no field to hold a body that is
+    not itself a mapping. This must raise loudly rather than silently
+    dropping the list or guessing at how to wrap it.
+    """
+    text = """
+blinds:
+  - {entity: cover.a}
+zones:
+  z: {members: [cover.a]}
+modes:
+  - {id: any}
+conditions:
+  multi:
+    - {condition: state, entity_id: a, state: "on"}
+    - {condition: state, entity_id: b, state: "on"}
+rules:
+  any.z:
+    - {then: {position: keep, tilt: keep}}
+"""
+    cfg = load_config(text)
+    assert isinstance(cfg.conditions["multi"], list)  # the shape this guards against
+    with pytest.raises(ConfigError):
+        subentries_from_config(cfg)
+
+
+def test_subentries_from_config_self_check_rejects_a_broken_conversion(monkeypatch):
+    """Prove the round-trip self-check inside `subentries_from_config` is
+    load-bearing, not decoration: break the write side (make it drop a
+    blind's `facade_azimuth`/`tolerance`/`travel_time`) and confirm the
+    function refuses to return anything, instead of silently handing back
+    subentries that would reload to a *different* `Config` than the one it
+    was given -- exactly the class of bug this task's brief warns the
+    inherited write side had never been exercised against.
+    """
+    monkeypatch.setattr(
+        config_store_module, "_blind_to_dict", lambda blind: {"entity": blind.entity}
+    )
+
+    original = load_config(YAML_TEXT)  # cover.a has a non-default facade_azimuth
+    with pytest.raises(ConfigError):
+        subentries_from_config(original)
