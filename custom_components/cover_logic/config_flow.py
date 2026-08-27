@@ -37,6 +37,7 @@ from .config_schema import ConfigError, load_config_file
 from .config_store import (
     _ID_KEY,
     BLIND,
+    MODE,
     VALUE,
     ZONE,
     config_from_subentries,
@@ -147,25 +148,53 @@ class CoverLogicConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 # alongside the real ones for exactly one validation pass, then be discarded.
 _NEW_SUBENTRY_ID = "__new__"
 
-# ERROR-severity `validation.Problem` codes that are true of *every*
-# configuration built one subentry type at a time before `mode` and `rule`
-# subentries exist to complete it -- not something wrong with the blind,
-# zone or value just submitted:
-#
-# - `no_fallback_mode`: fires whenever `config.modes` is empty, which is
-#   every config in this phase (no `mode` subentry flow exists yet). Blocking
-#   on it would make it impossible to ever save a first blind, zone or value.
-# - `blind_without_zone`: fires for every blind not yet claimed by a zone,
-#   including the ordinary, temporary case of "just added the blind, about
-#   to go add the zone next" -- the task brief calls this out by name as a
-#   legitimate state of a configuration still being built, not a defect in
-#   the blind or zone subentry that was just saved.
-#
-# Excluded uniformly across all three flows (see `_blocking_errors`) rather
-# than per-type, because both are properties of the *whole* config, not of
-# any one subentry -- the same reason `config_store.config_from_subentries`
-# does not special-case them either.
-_TRANSIENT_ERROR_CODES = frozenset({"no_fallback_mode", "blind_without_zone"})
+
+def _transient_error_codes(subentries: dict[str, Any]) -> frozenset[str]:
+    """ERROR-severity `validation.Problem` codes to drop for this candidate's subentry mix.
+
+    Neither code is exempt forever -- each is exempt only while the subentry
+    type that would let a user actually *fix* it does not exist yet in
+    `subentries`. The moment that type appears, the same problem stops being
+    "haven't gotten there yet" and starts being something the form that just
+    ran could have addressed, so the exemption must lift on that same save,
+    not some later phase. Computed from `subentries` fresh on every call
+    (never cached) so it reflects the *candidate* -- existing subentries plus
+    whatever is about to be saved -- not just what was on disk before this
+    step ran; see `_blocking_errors`, the only caller.
+
+    - `no_fallback_mode` needs at least one `mode` subentry to mean anything:
+      with zero, `config.modes` is empty in literally every configuration
+      buildable in this phase (no `mode` subentry flow exists yet), so the
+      code cannot distinguish "the feature to fix this does not exist yet"
+      from "modes exist but none is a fallback" -- those are the same state,
+      always, until a `mode` flow exists. The instant a `mode` subentry
+      exists -- even the very first one, saved in this very step -- that
+      question becomes real and answerable, so it is enforced from then on.
+    - `blind_without_zone` cannot reuse that reasoning as-is: unlike `mode`,
+      the `zone` subentry type already exists in this phase, so "no zone
+      subentry flow exists yet" is not true today and this code is not
+      unconditionally unanswerable the way `no_fallback_mode` is. What
+      remains true is the *narrower* claim the task brief actually makes:
+      a lone blind with no zone, before any zone exists at all, is the
+      ordinary "just added the blind, about to go add its zone next" case.
+      Once at least one zone subentry exists, an unclaimed blind is no
+      longer that -- the user already has the tool to fix it (add it to
+      that zone, or another) -- so this exemption lifts on a shorter fuse
+      than `no_fallback_mode`'s: as soon as any `zone` subentry exists, not
+      only once every blind has one.
+
+    Both are dropped uniformly across all three flows (see
+    `_blocking_errors`) rather than per-type, because both are properties of
+    the *whole* config, not of any one subentry -- the same reason
+    `config_store.config_from_subentries` does not special-case them either.
+    """
+    present_types = {sub.subentry_type for sub in subentries.values()}
+    codes = set()
+    if MODE not in present_types:
+        codes.add("no_fallback_mode")
+    if ZONE not in present_types:
+        codes.add("blind_without_zone")
+    return frozenset(codes)
 
 
 class _SubentryStub:
@@ -260,9 +289,11 @@ def _blocking_errors(
     here so nothing has to change when one is added).
 
     Only `ERROR`-severity `validate()` problems block, matching how
-    `_describe_problems` above treats the YAML path; `_TRANSIENT_ERROR_CODES`
-    are dropped even at `ERROR` severity for the reason given on that
-    constant.
+    `_describe_problems` above treats the YAML path; codes from
+    `_transient_error_codes` are dropped even at `ERROR` severity for the
+    reason given on that function -- computed from this candidate's own
+    subentries, not a fixed set, so the exemption tracks what is actually
+    still unbuildable in this phase rather than outliving it.
     """
     candidate_id = data.get(id_key)
     duplicate = _duplicate_errors(entry, subentry_type, subentry_id, id_key, candidate_id)
@@ -275,11 +306,12 @@ def _blocking_errors(
     except ConfigError as err:
         return [str(err)]
 
+    exempt = _transient_error_codes(candidate.subentries)
     problems = validate(config) + duplicate_rule_order_problems(candidate)
     return [
         f"{problem.code}: {problem.message}"
         for problem in problems
-        if problem.severity == ERROR and problem.code not in _TRANSIENT_ERROR_CODES
+        if problem.severity == ERROR and problem.code not in exempt
     ]
 
 
@@ -413,7 +445,7 @@ _VALUE_SCHEMA = vol.Schema(
     {
         vol.Required(_ID_KEY): selector.TextSelector(),
         vol.Required("entity"): selector.EntitySelector(),
-        vol.Required("default", default=0): selector.NumberSelector(
+        vol.Optional("default", default=0): selector.NumberSelector(
             selector.NumberSelectorConfig(min=0, max=100, step=1, mode=_BOX)
         ),
     }

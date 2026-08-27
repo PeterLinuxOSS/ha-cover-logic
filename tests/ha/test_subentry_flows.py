@@ -23,6 +23,7 @@ import pytest
 pytest.importorskip("homeassistant")
 
 from homeassistant.data_entry_flow import FlowResultType
+import voluptuous as vol
 
 from cover_logic.config_flow import (
     SUBENTRY_FLOW_HANDLERS,
@@ -31,8 +32,15 @@ from cover_logic.config_flow import (
     ValueSubentryFlowHandler,
     ZoneSubentryFlowHandler,
 )
-from cover_logic.config_schema import _BLIND_KEYS, _VALUE_KEYS, _ZONE_KEYS, load_config
-from cover_logic.config_store import _ID_KEY, BLIND, VALUE, ZONE, config_from_subentries
+from cover_logic.config_schema import (
+    _BLIND_KEYS,
+    _VALUE_KEYS,
+    _ZONE_KEYS,
+    _parse_values,
+    load_config,
+)
+from cover_logic.config_store import _ID_KEY, BLIND, MODE, VALUE, ZONE, config_from_subentries
+from cover_logic.model import Blind, Ref
 
 _ENTRY_ID = "entry1"
 
@@ -144,9 +152,27 @@ def test_blind_reconfigure_updates_the_existing_subentry(subentry_entry, subentr
     )
 
     # Confirm the form is pre-filled with the existing data before submitting a change.
+    # A broken `add_suggested_values_to_schema` call (wrong `current`, or the
+    # call dropped entirely) would still leave `type`/`step_id` exactly as
+    # asserted below, so those two alone cannot catch it -- the suggested
+    # values baked into each field's marker (`add_suggested_values_to_schema`
+    # writes `key.description = {"suggested_value": ...}`, see
+    # `homeassistant/data_entry_flow.py`) must be inspected directly.
     shown = asyncio.run(flow.async_step_reconfigure(None))
     assert shown["type"] is FlowResultType.FORM
     assert shown["step_id"] == "reconfigure"
+    suggested = {
+        key.schema: key.description["suggested_value"]
+        for key in shown["data_schema"].schema
+        if isinstance(key, vol.Marker) and key.description
+    }
+    assert suggested == {
+        "entity": "cover.a",
+        "tolerance": 45,
+        "travel_time": 60,
+        "has_tilt": True,
+        "tilt_after_arrival": True,
+    }
 
     updated = {
         "entity": "cover.a",
@@ -166,7 +192,8 @@ def test_blind_add_is_not_blocked_by_having_no_zone_yet(subentry_entry, subentry
     """A first blind, alone, would fail `validate()`'s `blind_without_zone` and
     `no_fallback_mode` -- both are transient artefacts of building a config
     one subentry type at a time, not a problem with this blind, and must not
-    block the save. See `config_flow._TRANSIENT_ERROR_CODES`.
+    block the save while no `zone`/`mode` subentry exists yet. See
+    `config_flow._transient_error_codes`.
     """
     entry = subentry_entry()
     flow = _make_flow(BlindSubentryFlowHandler, subentry_hass(entry), BLIND)
@@ -439,3 +466,130 @@ def test_config_built_through_the_flows_matches_the_equivalent_yaml(subentry_ent
     built_from_yaml = load_config(_EQUIVALENT_YAML)
 
     assert built_through_flows == built_from_yaml
+
+
+# ---------------------------------------------------------------------------
+# `_transient_error_codes`: the exemption tracks subentry state, not a
+# fixed set (finding 1 -- see `config_flow._transient_error_codes`'s
+# docstring for the full reasoning this pair of tests exercises)
+# ---------------------------------------------------------------------------
+
+
+def test_no_fallback_mode_blocks_once_a_mode_subentry_exists(subentry_entry, subentry_hass):
+    """No `mode` subentry *flow* exists yet, but `config_store.
+    config_from_subentries` already reads a `mode` subentry if one is
+    present -- a later task's flow, or any other producer of subentries,
+    would create exactly this state. `no_fallback_mode` must stop being
+    exempt the moment that happens, not stay exempt forever because no flow
+    happened to create it. Seeded directly via `add_subentry`, the same way
+    `tests/test_config_store.py` builds a fake entry with a `mode` subentry
+    -- there is no flow to drive it through yet.
+    """
+    entry = subentry_entry()
+    entry.add_subentry(
+        MODE,
+        {
+            "id": "den",
+            "order": 0,
+            "when": {"condition": "state", "entity_id": "input_boolean.a", "state": "on"},
+        },
+    )
+    flow = _make_flow(ValueSubentryFlowHandler, subentry_hass(entry), VALUE)
+
+    result = asyncio.run(
+        flow.async_step_user(
+            {"id": "kvety_poz", "entity": "input_number.kvety_pozicia_zaluzie", "default": 34}
+        )
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "invalid_config"}
+    assert "no_fallback_mode" in result["description_placeholders"]["error_detail"]
+    # Rejected, not created: no value subentry exists.
+    assert not any(s.subentry_type == VALUE for s in entry.subentries.values())
+
+
+def test_blind_without_zone_blocks_once_a_zone_subentry_exists(subentry_entry, subentry_hass):
+    """Unlike `no_fallback_mode`, `blind_without_zone`'s exemption cannot rely
+    on "the subentry type that would resolve it does not exist yet" -- the
+    `zone` type already exists in this very phase. Once at least one `zone`
+    subentry exists, a blind still outside every zone is no longer the
+    "just added it, about to add its zone next" case the exemption protects
+    -- the user already has the tool (this same zone, or another) to fix it.
+    """
+    entry = subentry_entry()
+    entry.add_subentry(BLIND, {"entity": "cover.a", "tolerance": 45, "travel_time": 60})
+    entry.add_subentry(ZONE, {"id": "terasa", "members": ["cover.a"], "occupants": []})
+    flow = _make_flow(BlindSubentryFlowHandler, subentry_hass(entry), BLIND)
+
+    result = asyncio.run(
+        flow.async_step_user(
+            {
+                "entity": "cover.b",
+                "tolerance": 45,
+                "travel_time": 60,
+                "has_tilt": True,
+                "tilt_after_arrival": True,
+            }
+        )
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "invalid_config"}
+    assert "blind_without_zone" in result["description_placeholders"]["error_detail"]
+    # Rejected, not created: only the one blind seeded above exists.
+    assert len([s for s in entry.subentries.values() if s.subentry_type == BLIND]) == 1
+
+
+# ---------------------------------------------------------------------------
+# real voluptuous coercion (finding 4): every test above hands
+# `async_step_user`/`async_step_reconfigure` a fully-resolved dict, matching
+# what a flow step receives *after* `ConfigSubentryFlowManager` has already
+# run the raw submission through `data_schema`
+# (`homeassistant/data_entry_flow.py`'s `_async_handle_step`:
+# `user_input = cur_step["data_schema"](user_input)`). Skipping that step
+# everywhere else means a default drifting between this module's schema and
+# `model.Blind`/`config_schema._parse_values`'s own defaults would pass
+# every test above without complaint. These two drive the real schema
+# first, the way the flow manager does, submitting only the field(s)
+# voluptuous actually requires, and check the result against the *parser's*
+# own default, not a literal copied by hand -- so a drift moves one of the
+# two sides and still fails here.
+# ---------------------------------------------------------------------------
+
+
+def test_blind_minimal_submission_coerces_to_the_model_defaults(subentry_entry, subentry_hass):
+    entry = subentry_entry()
+    flow = _make_flow(BlindSubentryFlowHandler, subentry_hass(entry), BLIND)
+
+    # The exact schema object a real form would have been rendered with --
+    # not a hand-built `vol.Schema` -- so this exercises what
+    # `ConfigSubentryFlowManager` actually runs the submission through.
+    shown = asyncio.run(flow.async_step_user(None))
+    coerced = shown["data_schema"]({"entity": "cover.a"})
+    result = asyncio.run(flow.async_step_user(coerced))
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    expected = Blind(entity="cover.a")
+    assert result["data"] == {
+        "entity": expected.entity,
+        "tolerance": expected.tolerance,
+        "travel_time": expected.travel_time,
+        "has_tilt": expected.has_tilt,
+        "tilt_after_arrival": expected.tilt_after_arrival,
+    }
+
+
+def test_value_minimal_submission_coerces_to_the_parser_default(subentry_entry, subentry_hass):
+    entry = subentry_entry()
+    flow = _make_flow(ValueSubentryFlowHandler, subentry_hass(entry), VALUE)
+
+    shown = asyncio.run(flow.async_step_user(None))
+    coerced = shown["data_schema"]({"id": "kvety_poz", "entity": "input_number.a"})
+    result = asyncio.run(flow.async_step_user(coerced))
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    body = {k: v for k, v in result["data"].items() if k != _ID_KEY}
+    assert _parse_values({"kvety_poz": body}) == {
+        "kvety_poz": Ref(entity="input_number.a", default=0)
+    }
