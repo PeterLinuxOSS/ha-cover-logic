@@ -78,7 +78,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import selector
 import voluptuous as vol
 
-from .config_flow import _NEW_SUBENTRY_ID, SUBENTRY_FLOW_HANDLERS, _rule_pick_schema
+from .config_flow import _NEW_SUBENTRY_ID, SUBENTRY_FLOW_HANDLERS, _axis_to_form, _rule_pick_schema
 from .config_schema import ConfigError, load_config_file
 from .config_store import (
     BLIND,
@@ -107,13 +107,15 @@ from .services import (
 # them out column-major (nouns first -- blind/zone/value -- then the logic
 # built on top of them -- condition/mode/rule), plus the two actions that are
 # not a subentry type at all.
+_RULES_SECTION = "rules"
+
 _SECTION_TYPE: dict[str, str] = {
     "blinds": BLIND,
     "zones": ZONE,
     "values": VALUE,
     "conditions": CONDITION,
     "modes": MODE,
-    "rules": RULE,
+    _RULES_SECTION: RULE,
 }
 
 _MAIN_MENU_OPTIONS = [*_SECTION_TYPE, "import_export", "check_matrix"]
@@ -176,6 +178,49 @@ def _rule_items(entry: Any) -> list[tuple[str, str]]:
         for items in _grouped_rules(entry).values()
         for subentry_id, _data in items
     ]
+
+
+def _rule_action_text(then: dict[str, Any]) -> str:
+    """`position`/`tilt` as a human string: a number, `"keep"`, or a value's name.
+
+    Reuses `config_flow._axis_to_form` -- the exact function
+    `RuleSubentryFlowHandler._title` already calls to build a single rule
+    subentry's own title -- rather than a second axis-rendering rule that
+    could show `keep` or a `!ref` differently from what that title already
+    promises. `then` is a raw rule subentry's `"then"` mapping (`{"position":
+    ..., "tilt": ...}`), the same shape `_grouped_rules` hands back unparsed.
+    """
+    return f"position={_axis_to_form(then.get('position'))}, tilt={_axis_to_form(then.get('tilt'))}"
+
+
+def _rule_overview_text(entry: Any) -> str:
+    """Every rule subentry as the house will actually evaluate it: grouped, ordered, visible.
+
+    Reads `config_store._grouped_rules` directly -- the one place that groups
+    rule subentries by `(mode, zone)` and sorts them by `(order, subentry id)`
+    -- and renders its output as-is, in the order it comes back. Nothing here
+    re-groups or re-sorts: see that function's own "One grouping, not two"
+    docstring section, and `_rule_items` above, which already makes the same
+    choice for the edit picker. Within a `(mode, zone)` pair the engine tries
+    rules in exactly this order and stops at the first match, so a summary
+    that reordered them -- even to look tidier, e.g. alphabetically by pair --
+    would show a house behaviour that is not the one that actually runs.
+    """
+    groups = _grouped_rules(entry)
+    if not groups:
+        return "No rules configured yet."
+
+    lines: list[str] = []
+    for key, items in groups.items():
+        lines.append(f"{key}:")
+        for _subentry_id, data in items:
+            then = data.get("then") or {}
+            line = f"  {data.get('order')}: {_rule_action_text(then)}"
+            name = data.get("name")
+            if name:
+                line = f"{line} ({name})"
+            lines.append(line)
+    return "\n".join(lines)
 
 
 def _pick_schema(items: list[tuple[str, str]]) -> vol.Schema:
@@ -318,7 +363,18 @@ class CoverLogicOptionsFlow(OptionsFlow):
         entry = self.config_entry
         subentry_type = _SECTION_TYPE[self._section]
         items = _items(entry, subentry_type)
-        options = ["add", *(["edit", "remove"] if items else []), "back"]
+        options = ["add"]
+        # `list` (a read-only "what will the house actually do" report) only
+        # ever makes sense for `rules` -- see `_rule_overview_text`'s own
+        # docstring for why order and grouping are the whole point there in
+        # a way they are not for the other five, simpler types, whose own
+        # titles (shown in the `edit`/`remove` picker) already say everything
+        # a summary would.
+        if self._section == _RULES_SECTION and items:
+            options.append("list")
+        if items:
+            options.extend(["edit", "remove"])
+        options.append("back")
         return self.async_show_menu(
             step_id=self._section,
             menu_options=options,
@@ -331,6 +387,26 @@ class CoverLogicOptionsFlow(OptionsFlow):
         self._pending_id = None
         self._rule_pick = None
         return await self._show_main_menu()
+
+    # -- Rules: read-only evaluation-order report --------------------------
+
+    async def async_step_list(self, user_input: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Show every rule subentry the way the engine will actually evaluate it.
+
+        Only ever reached from the `rules` section menu (see
+        `_show_section_menu`) -- there is nothing type-specific about the
+        step itself, but `_rule_overview_text` only knows how to render a
+        rule's `then`, so this is not offered for the other five types.
+        Read-only: the one field this shows is submitted purely to return to
+        the section menu, the same "empty form as an acknowledgement" shape
+        `async_step_check_matrix` already uses for the same reason.
+        """
+        if user_input is not None:
+            return await self._show_section_menu()
+        result = _rule_overview_text(self.config_entry)
+        return self.async_show_form(
+            step_id="list", data_schema=vol.Schema({}), description_placeholders={"result": result}
+        )
 
     # -- Add ------------------------------------------------------------
 

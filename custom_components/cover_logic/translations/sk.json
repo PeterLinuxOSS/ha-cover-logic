@@ -352,10 +352,15 @@
         "description": "Nastavených: {count}, naprieč všetkými dvojicami režim-zóna. V rámci dvojice rozhoduje prvé pravidlo, ktorého podmienka sedí -- poradie v dvojici je presne to, čo engine skúša ako prvé.",
         "menu_options": {
           "add": "[%key:component::cover_logic::options::step::blinds::menu_options::add%]",
+          "list": "Zobraziť, čo dom naozaj urobí",
           "edit": "[%key:component::cover_logic::options::step::blinds::menu_options::edit%]",
           "remove": "[%key:component::cover_logic::options::step::blinds::menu_options::remove%]",
           "back": "[%key:component::cover_logic::options::step::blinds::menu_options::back%]"
         }
+      },
+      "list": {
+        "title": "Pravidlá v poradí vyhodnocovania",
+        "description": "Zoskupené podľa režimu a zóny, presne v poradí, v akom ich engine v rámci dvojice skúša -- rozhoduje prvé pravidlo, ktorého podmienka sedí.\n\n{result}"
       },
       "add": {
         "title": "Pridať",

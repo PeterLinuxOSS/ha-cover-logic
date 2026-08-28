@@ -352,10 +352,15 @@
         "description": "{count} configured, across every mode-and-zone pair. The first rule in a pair whose condition matches decides that pair; order within a pair is what the engine actually tries first.",
         "menu_options": {
           "add": "[%key:component::cover_logic::options::step::blinds::menu_options::add%]",
+          "list": "See what the house will do",
           "edit": "[%key:component::cover_logic::options::step::blinds::menu_options::edit%]",
           "remove": "[%key:component::cover_logic::options::step::blinds::menu_options::remove%]",
           "back": "[%key:component::cover_logic::options::step::blinds::menu_options::back%]"
         }
+      },
+      "list": {
+        "title": "Rules in evaluation order",
+        "description": "Grouped by mode and zone, in the exact order the engine tries them within each pair -- the first rule whose condition matches decides that pair.\n\n{result}"
       },
       "add": {
         "title": "Add",

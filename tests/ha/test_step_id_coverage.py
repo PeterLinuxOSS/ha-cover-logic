@@ -194,6 +194,11 @@ def test_options_flow_every_reachable_step_id_is_dispatchable(subentry_entry, op
         if section == "rules":
             session.configure({"mode": "m", "zone": "z"})
 
+        if section == "rules":
+            session.start()
+            session.choose(section)
+            session.choose("list")
+
         session.start()
         session.choose(section)
         session.choose("edit")

@@ -27,7 +27,7 @@ from homeassistant.data_entry_flow import FlowResultType
 
 from cover_logic import options_flow as options_flow_module
 from cover_logic.config_flow import CoverLogicConfigFlow
-from cover_logic.config_store import BLIND, MODE, RULE, ZONE
+from cover_logic.config_store import BLIND, MODE, RULE, VALUE, ZONE
 from cover_logic.options_flow import CoverLogicOptionsFlow
 
 _ENTRY_ID = "entry1"
@@ -316,6 +316,105 @@ def test_rules_list_menu_and_picker_use_the_real_evaluation_order(subentry_entry
     assert labels_in_order == ["9 m.z -> keep/keep", "20 m.z -> keep/keep"]
 
 
+def test_rules_section_offers_list_only_once_a_rule_exists(subentry_entry, options_hass):
+    """`list` -- the read-only evaluation-order report -- is not offered on
+    an empty `rules` section: there is nothing yet for it to show, the same
+    reasoning `edit`/`remove` already follow for every type.
+    """
+    entry = subentry_entry()
+    flow = _make_flow(options_hass(entry))
+
+    empty_menu = _menu(asyncio.run(flow.async_step_rules(None)))
+    assert "list" not in empty_menu["menu_options"]
+
+    entry.add_subentry(
+        RULE, {"mode": "m", "zone": "z", "order": 0, "then": {"position": "keep", "tilt": "keep"}}
+    )
+    nonempty_menu = _menu(asyncio.run(flow.async_step_rules(None)))
+    assert nonempty_menu["menu_options"] == ["add", "list", "edit", "remove", "back"]
+
+
+def test_rules_list_shows_every_rule_grouped_in_real_order_with_action_visible(
+    subentry_entry, options_hass
+):
+    """The whole point of Task 3: order is semantics (first match wins within
+    a `(mode, zone)` pair), so the report must show the *real* evaluation
+    order -- not alphabetical by title, which "20" sorting before "9" as text
+    would silently get wrong -- and must not hide `keep` or a `!ref` behind
+    an opaque value.
+    """
+    entry = subentry_entry()
+    entry.add_subentry(VALUE, {"id": "kvety_poz", "entity": "input_number.x", "default": 34})
+    # Deliberately added out of numeric order and split across two different
+    # (mode, zone) pairs, so a naive re-sort (by title, or by subentry
+    # insertion order) would show something other than the real order.
+    entry.add_subentry(
+        RULE,
+        {"mode": "m", "zone": "z", "order": 20, "then": {"position": 50, "tilt": "keep"}},
+    )
+    entry.add_subentry(
+        RULE,
+        {
+            "mode": "m",
+            "zone": "z",
+            "order": 9,
+            "then": {"position": {"ref": "kvety_poz"}, "tilt": 0},
+        },
+    )
+    entry.add_subentry(
+        RULE,
+        {"mode": "noc", "zone": "spalna", "order": 0, "then": {"position": "keep", "tilt": "keep"}},
+    )
+    flow = _make_flow(options_hass(entry))
+    asyncio.run(flow.async_step_rules(None))
+
+    result = _form(asyncio.run(flow.async_step_list(None)))
+
+    assert result["step_id"] == "list"
+    text = result["description_placeholders"]["result"]
+
+    # "m.z" lists its two rules with "9" before "20" -- the real evaluation
+    # order, not what alphabetical-by-title ("20 ..." before "9 ...") or
+    # subentry-add order (20 was added first here) would show.
+    m_z_index = text.index("m.z:")
+    line_9 = text.index("9: position=kvety_poz, tilt=0")
+    line_20 = text.index("20: position=50, tilt=keep")
+    noc_spalna_index = text.index("noc.spalna:")
+    assert m_z_index < line_9 < line_20
+    assert "0: position=keep, tilt=keep" in text
+    assert noc_spalna_index > m_z_index
+
+
+def test_rules_list_reports_no_rules_configured_when_the_section_is_empty(
+    subentry_entry, options_hass
+):
+    """Reachable only if a caller invokes `async_step_list` directly (the
+    menu itself hides `list` when empty -- see the test above), but the step
+    must still say something sane rather than rendering blank.
+    """
+    entry = subentry_entry()
+    flow = _make_flow(options_hass(entry))
+    asyncio.run(flow.async_step_rules(None))
+
+    result = _form(asyncio.run(flow.async_step_list(None)))
+
+    assert "No rules configured" in result["description_placeholders"]["result"]
+
+
+def test_rules_list_submit_returns_to_the_rules_section_menu(subentry_entry, options_hass):
+    entry = subentry_entry()
+    entry.add_subentry(
+        RULE, {"mode": "m", "zone": "z", "order": 0, "then": {"position": "keep", "tilt": "keep"}}
+    )
+    flow = _make_flow(options_hass(entry))
+    asyncio.run(flow.async_step_rules(None))
+    asyncio.run(flow.async_step_list(None))
+
+    result = _menu(asyncio.run(flow.async_step_list({})))
+
+    assert result["step_id"] == "rules"
+
+
 # ---------------------------------------------------------------------------
 # Import / export -- calling the existing handlers, not the service bus
 # ---------------------------------------------------------------------------
@@ -490,6 +589,7 @@ _ALL_STEP_IDS = [
     "conditions",
     "modes",
     "rules",
+    "list",
     "add",
     "add_rule_fields",
     "edit",
@@ -581,4 +681,10 @@ def test_main_menu_options_all_have_labels():
 def test_section_menu_options_all_have_labels():
     for section in ("blinds", "zones", "values", "conditions", "modes", "rules"):
         menu = _strings()["options"]["step"][section]["menu_options"]
-        assert set(menu) == {"add", "edit", "remove", "back"}
+        expected = {"add", "edit", "remove", "back"}
+        if section == "rules":
+            # `rules` alone also offers `list` -- the read-only evaluation-
+            # order report; see `options_flow._show_section_menu`'s own
+            # reasoning for why the other five types do not.
+            expected.add("list")
+        assert set(menu) == expected
