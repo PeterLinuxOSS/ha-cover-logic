@@ -327,6 +327,95 @@ def test_export_refuses_to_write_through_a_symlink(tmp_path, service_hass, servi
     assert real_target.read_text(encoding="utf-8") == "untouched: true\n"
 
 
+def test_export_refuses_an_existing_target_that_has_comments(tmp_path, service_hass, service_call):
+    """The comment-destruction guard: `dump_config` carries no comments at all
+    (see `services.py`'s module docstring and `fixtures/dom_peter.yaml`'s own
+    49), so overwriting a file that has any must be refused rather than
+    silently discarding them.
+    """
+    out = tmp_path / "out.yaml"
+    out.write_text("# do not lose me\nblinds: []\n", encoding="utf-8")
+
+    entry = _entry_with(VALID_TEXT)
+    hass = service_hass([entry])
+
+    async def run():
+        return await _async_export_config(hass, service_call({"path": str(out)}))
+
+    with pytest.raises(ServiceValidationError) as excinfo:
+        asyncio.run(run())
+
+    assert excinfo.value.translation_key == "export_target_has_comments"
+    # Refused before the write -- the original content must survive untouched.
+    assert out.read_text(encoding="utf-8") == "# do not lose me\nblinds: []\n"
+
+
+def test_export_refuses_a_target_with_an_indented_comment_line(
+    tmp_path, service_hass, service_call
+):
+    """A comment need not start in column 0 -- `fixtures/dom_peter.yaml` has
+    several indented under a `rules:`/`zones:` block. The guard must not miss
+    those by anchoring to the start of the line instead of the first
+    non-whitespace character.
+    """
+    out = tmp_path / "out.yaml"
+    out.write_text(
+        "zones:\n  z:\n    # members explained here\n    members: []\n", encoding="utf-8"
+    )
+
+    entry = _entry_with(VALID_TEXT)
+    hass = service_hass([entry])
+
+    async def run():
+        return await _async_export_config(hass, service_call({"path": str(out)}))
+
+    with pytest.raises(ServiceValidationError) as excinfo:
+        asyncio.run(run())
+
+    assert excinfo.value.translation_key == "export_target_has_comments"
+
+
+def test_export_allows_overwriting_an_existing_target_with_no_comments(
+    tmp_path, service_hass, service_call
+):
+    """The guard is about comments, not about "the file already exists" in
+    general -- re-exporting the house's own configuration after editing it
+    through the UI (`services.py`'s own "Path safety" docstring section)
+    must keep working for a plain, comment-free file.
+    """
+    out = tmp_path / "out.yaml"
+    out.write_text("blinds: []\n", encoding="utf-8")
+
+    entry = _entry_with(VALID_TEXT)
+    hass = service_hass([entry])
+
+    async def run():
+        return await _async_export_config(hass, service_call({"path": str(out)}))
+
+    asyncio.run(run())
+
+    assert load_config_file(out) == config_from_subentries(entry)
+
+
+def test_export_does_not_read_a_target_that_does_not_exist_yet(
+    tmp_path, service_hass, service_call
+):
+    """A first export has nothing to lose -- the guard must not require the
+    target to pre-exist, and must not itself raise `cannot_read_file` for the
+    ordinary "new file" case.
+    """
+    out = tmp_path / "brand_new.yaml"
+    entry = _entry_with(VALID_TEXT)
+    hass = service_hass([entry])
+
+    async def run():
+        return await _async_export_config(hass, service_call({"path": str(out)}))
+
+    asyncio.run(run())
+
+    assert load_config_file(out) == config_from_subentries(entry)
+
+
 def test_export_refuses_a_directory_path(tmp_path, service_hass, service_call):
     entry = _entry_with(VALID_TEXT)
     hass = service_hass([entry])

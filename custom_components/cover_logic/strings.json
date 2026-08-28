@@ -315,6 +315,9 @@
     "export_parent_missing": {
       "message": "The directory {path} does not exist."
     },
+    "export_target_has_comments": {
+      "message": "{path} already has {count} comment line(s). Exporting would silently discard them -- move the file aside first, or export somewhere else and merge the comments back by hand."
+    },
     "nothing_to_export": {
       "message": "Nothing is configured yet; there is nothing to export."
     },

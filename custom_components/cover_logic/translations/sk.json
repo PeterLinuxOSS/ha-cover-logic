@@ -315,6 +315,9 @@
     "export_parent_missing": {
       "message": "Priečinok {path} neexistuje."
     },
+    "export_target_has_comments": {
+      "message": "{path} už obsahuje {count} riadkov s komentárom. Export by ich ticho zmazal -- najprv súbor presuňte inam, alebo exportujte inde a komentáre doplňte ručne."
+    },
     "nothing_to_export": {
       "message": "Zatiaľ nie je nastavené nič; nie je čo exportovať."
     },

@@ -1,4 +1,4 @@
-"""The `import_config`/`export_config` services: the bridge between YAML and subentries.
+r"""The `import_config`/`export_config` services: the bridge between YAML and subentries.
 
 `config_schema.py` reads/writes a `Config` as YAML text. `config_store.py`
 reads/writes the same `Config` as Home Assistant config-entry subentries.
@@ -46,16 +46,24 @@ block, and `MODELS.md`'s "do not touch `fixtures/dom_peter.yaml`" rule is
 about not editing it for unrelated (documentation/example) reasons, not
 about this service.
 
-One risk this module does *not* guard against, because doing so is out of
-this task's scope: `dump_config` (`config_schema.py`) writes from the parsed
-`Config`, which carries no comments at all -- exporting onto *any* existing
-file, symlinked or not, replaces its content wholesale, comments included.
-`fixtures/dom_peter.yaml` itself has 49 comment lines today. This is exactly
-the class of danger the project's own `CLAUDE.md` documents for `safe_load`
-+ `dump` round-trips of `automations.yaml`/`scripts.yaml`; a future task
-adding comment preservation (e.g. switching `config_schema.py` to a
-round-trip-preserving YAML library) would need to touch the pure write side,
-not this one.
+**Comment preservation.** `dump_config` (`config_schema.py`) writes from the
+parsed `Config`, which carries no comments at all -- exporting onto an
+existing file that has any would silently discard them, with no way back.
+`fixtures/dom_peter.yaml` itself has 49 comment lines today, explaining the
+transcription from the live house's Jinja matrix; losing them would not
+break anything the migration gate checks (`Config` equality does not see
+comments either), only the reviewability the project's own `MODELS.md`
+relies on. This is exactly the class of danger the operator's own `CLAUDE.md`
+documents for `safe_load` + `dump` round-trips of `automations.yaml`/
+`scripts.yaml`. `_check_export_target_has_no_comments` refuses outright,
+before the write happens, whenever the target already exists and contains
+at least one whole-line comment (`^\\s*#`, the same check that `CLAUDE.md`
+itself prescribes for auditing comment loss around the HA config API) --
+see that function's own docstring for why this is an unconditional refusal
+rather than an "I mean it" override field. A future task adding real
+comment preservation (e.g. switching `config_schema.py` to a round-trip-
+preserving YAML library) would remove this guard from the write side, not
+add an escape hatch to it.
 """
 
 from pathlib import Path
@@ -256,6 +264,56 @@ async def _async_import_config(hass: HomeAssistant, call: ServiceCall) -> Servic
     return summary
 
 
+def _check_export_target_has_no_comments(path: Path) -> None:
+    r"""Refuse to overwrite an existing file that contains whole-line comments.
+
+    Runs inside `hass.async_add_executor_job` -- unlike `_prepare_export_path`,
+    which only ever stats `path` and its parent, this reads file *content*,
+    the boundary that function's own docstring draws.
+
+    Does nothing if `path` does not exist yet (a first export has nothing to
+    lose) or is a directory/symlink (`_prepare_export_path` already refused
+    those before this ever runs).
+
+    Counts a comment the same way this project's own operator already
+    audits comment loss elsewhere -- `grep -c '^\\s*#'`, per this repo's
+    `CLAUDE.md` on the HA config API silently dumping `automations.yaml` --
+    rather than writing a YAML-comment-aware parser: `dump_config` cannot
+    reproduce a comment regardless of where mid-line it sits, so counting
+    only whole-line comments already catches the exact fixture this guard
+    exists for (`fixtures/dom_peter.yaml`, 49 such lines) without pretending
+    to attempt inline-comment preservation nobody is building.
+
+    Refuses outright rather than accepting an "I mean it, overwrite anyway"
+    field. An override field would have to be passed on *every* legitimate
+    re-export of a file that will always have comments -- nothing here ever
+    regenerates them -- so it would fossilise into "always pass
+    `overwrite_comments: true`", the same rubber-stamping this project's own
+    `CLAUDE.md` already warns about for the config-subentry flow's
+    `reconfigure_successful` swallowing a real problem. Refusing forces a
+    deliberate, manual step instead -- move the commented file aside, or
+    hand-merge the comments back afterwards -- rather than a flag that stops
+    meaning anything after its first use.
+    """
+    if not path.is_file():
+        return
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as err:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="cannot_read_file",
+            translation_placeholders={"path": str(path), "error_detail": str(err)},
+        ) from err
+    comment_lines = sum(1 for line in text.splitlines() if line.strip().startswith("#"))
+    if comment_lines:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="export_target_has_comments",
+            translation_placeholders={"path": str(path), "count": str(comment_lines)},
+        )
+
+
 def _prepare_export_path(path_str: str) -> Path:
     """Validate `path_str` as an `export_config` destination.
 
@@ -297,6 +355,12 @@ async def _async_export_config(hass: HomeAssistant, call: ServiceCall) -> Servic
     which is a legitimate use `import_config`'s "validate before writing"
     rule does not need to extend to: nothing runs off an exported file the
     way `async_setup_entry` runs off an imported one.
+
+    An existing target that already has whole-line comments still blocks --
+    see `_check_export_target_has_no_comments`'s own docstring -- run after
+    `_prepare_export_path`'s symlink/directory/missing-parent checks and
+    before the write itself, so `dump_config_file` never runs against a
+    target this function is about to refuse.
     """
     path_str = call.data[ATTR_PATH]
 
@@ -317,6 +381,7 @@ async def _async_export_config(hass: HomeAssistant, call: ServiceCall) -> Servic
         ) from err
 
     path = _prepare_export_path(path_str)
+    await hass.async_add_executor_job(_check_export_target_has_no_comments, path)
 
     try:
         await hass.async_add_executor_job(dump_config_file, path, config)
