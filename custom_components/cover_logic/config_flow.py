@@ -267,10 +267,16 @@ class CoverLogicConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         button that can only ever fail there, or aborting the whole flow the
         one time it is picked on such an install (which would force starting
         the entire setup over, the opposite of "always land somewhere you
-        can continue from"), this step explains why in a plain message and
-        returns to the main menu on the next submit -- `async_step_user`
-        again, exactly as if the flow had just started, unique-id check and
-        all (idempotent: nothing about this entry exists yet either way).
+        can continue from"), this delegates to `async_step_example_not_
+        available` -- a real step of its own, not just a different
+        `step_id` rendered from here: Home Assistant's own flow manager
+        checks, on *every* step result, that `result["step_id"]` names a
+        real `async_step_<step_id>` method (`FlowManager._raise_if_step_
+        does_not_exist`) -- including the render that shows a form, not only
+        the resume that follows it -- so reusing this method's own name for
+        that other form's `step_id` would raise `UnknownStep` the moment a
+        real installation (not this project's own tests, which call each
+        method directly and so never hit the manager's check) rendered it.
 
         Where the file *is* available, reuses `config_store.
         subentries_from_config` -- the exact function `services.
@@ -286,9 +292,7 @@ class CoverLogicConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """
         example_path = repo_example_config_path()
         if example_path is None:
-            if user_input is not None:
-                return await self.async_step_user(None)
-            return self.async_show_form(step_id="example_not_available", data_schema=vol.Schema({}))
+            return await self.async_step_example_not_available(user_input)
 
         errors: dict[str, str] = {}
         description_placeholders: dict[str, str] | None = None
@@ -322,6 +326,24 @@ class CoverLogicConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
             description_placeholders=description_placeholders,
         )
+
+    async def async_step_example_not_available(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """The dead end `async_step_from_example` delegates to when there is no example to load.
+
+        A real step of its own, reachable only from `async_step_from_example`
+        -- never listed in the `user` step's own `menu_options` -- so Home
+        Assistant's flow manager has a genuine `async_step_example_not_
+        available` to dispatch a resubmission to; see the caller's own
+        docstring for why that is not optional. On submit, returns to the
+        main menu (`async_step_user` again) rather than aborting the flow
+        outright, so picking this menu item on an install that cannot honour
+        it costs nothing more than one extra screen.
+        """
+        if user_input is not None:
+            return await self.async_step_user(None)
+        return self.async_show_form(step_id="example_not_available", data_schema=vol.Schema({}))
 
     async def async_step_empty(
         self, user_input: dict[str, Any] | None = None

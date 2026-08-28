@@ -284,6 +284,16 @@ def test_from_example_falls_back_to_the_menu_when_not_shipped(flow_hass):
     sibling `docs/` directory -- `repo_example_config_path` returns `None`
     there (see its own docstring). This step must explain that and return to
     the main menu on the next submit, not abort the whole flow.
+
+    The resubmission goes to `async_step_example_not_available`, not back to
+    `async_step_from_example` -- exactly what Home Assistant's own flow
+    manager does with a form's `step_id` (`_async_handle_step(flow,
+    cur_step["step_id"], user_input)`), and the reason `shown["step_id"]`
+    must name a method that actually exists: a form whose `step_id` has no
+    matching `async_step_<id>` fails the manager's own `_raise_if_step_
+    does_not_exist` the moment it is rendered for real, something driving
+    methods directly (as every test in this module does) cannot catch on its
+    own -- asserted below via `hasattr`.
     """
     flow = _make_flow(flow_hass())
 
@@ -291,8 +301,9 @@ def test_from_example_falls_back_to_the_menu_when_not_shipped(flow_hass):
         shown = asyncio.run(flow.async_step_from_example(None))
         assert shown["type"] is FlowResultType.FORM
         assert shown["step_id"] == "example_not_available"
+        assert hasattr(flow, f"async_step_{shown['step_id']}")
 
-        back = asyncio.run(flow.async_step_from_example({}))
+        back = asyncio.run(flow.async_step_example_not_available({}))
 
     assert back["type"] is FlowResultType.MENU
     assert back["step_id"] == "user"
