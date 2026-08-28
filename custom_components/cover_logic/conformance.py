@@ -60,13 +60,35 @@ _REPO_FIXTURE = Path(__file__).resolve().parents[2] / "fixtures" / "dom_peter.ya
 def repo_fixture_path() -> Path | None:
     """The on-disk `fixtures/dom_peter.yaml` this checkout ships, or `None` elsewhere.
 
-    Deliberately the only house-specific thing in this module -- `diff_configs`
-    above is the same general-purpose comparison a different house's own
-    fixture (if it ever has one) could use instead. `None` must be treated as
-    "nothing to compare against", never as an error: an installation with no
-    sibling `fixtures/` directory has no fixture to drift from, and this
-    project's own "universal integration" goal (`MODELS.md` Sec. 1) means
-    that has to stay a silent no-op, not a startup failure for every other
-    house that ever installs this integration.
+    `diff_configs` above is a general-purpose comparison a different house's
+    own fixture (if it ever has one) could use instead; this function is the
+    one house-specific (well, checkout-specific) piece of this module. `None`
+    must be treated as "nothing to compare against", never as an error: an
+    installation with no sibling `fixtures/` directory has no fixture to
+    drift from, and this project's own "universal integration" goal
+    (`MODELS.md` Sec. 1) means that has to stay a silent no-op, not a startup
+    failure for every other house that ever installs this integration.
     """
     return _REPO_FIXTURE if _REPO_FIXTURE.is_file() else None
+
+
+# Same reasoning as `_REPO_FIXTURE` above, one directory over: a checkout of
+# this project ships `docs/example-config.yaml` (a worked example for a
+# different, invented house -- see that file's own header and
+# `tests/test_example_config.py`), but a HACS install or a manual copy of
+# just `custom_components/cover_logic` has no sibling `docs/` at all.
+_REPO_EXAMPLE_CONFIG = Path(__file__).resolve().parents[2] / "docs" / "example-config.yaml"
+
+
+def repo_example_config_path() -> Path | None:
+    """The on-disk `docs/example-config.yaml` this checkout ships, or `None` elsewhere.
+
+    `config_flow.CoverLogicConfigFlow.async_step_from_example` is the one
+    reader of this: a setup step that lets a brand-new install start from a
+    worked example instead of an empty configuration. `None` is not an error
+    here either, for the same reason it is not one for `repo_fixture_path` --
+    that step turns it into a plain "not available on this install" message
+    rather than a crash, precisely because most installs are expected to hit
+    it.
+    """
+    return _REPO_EXAMPLE_CONFIG if _REPO_EXAMPLE_CONFIG.is_file() else None

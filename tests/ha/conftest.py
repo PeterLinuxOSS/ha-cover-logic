@@ -101,13 +101,15 @@ class FakeConfigEntry:
     is a plain assignable attribute there too; this fake matches that shape
     by simply not setting it until `async_setup_entry` does.
 
-    `subentries` defaults to `{}` (empty, falsy) so every pre-existing test
-    that only ever passed `data` keeps exercising the legacy, path-based
-    branch of `async_setup_entry` unchanged -- see that function's own
-    docstring for why `entry.subentries` truthy is what switches it onto
-    `config_from_subentries` instead. `version` defaults to `1`, the
-    original shape's version, matching every entry these fixtures built
-    before `async_migrate_entry` existed.
+    `subentries` defaults to `{}` (empty) -- harmless for every pre-existing
+    test here, since they all pass `CONF_CONFIG_PATH` in `data`, and it is
+    the presence of that key, not `entry.subentries` truthiness, that sends
+    `async_setup_entry` down the legacy, path-based branch -- see that
+    function's own docstring for why (phase 5 changed this: a subentry-backed
+    entry can legitimately have zero subentries too, e.g. straight after
+    "start empty"). `version` defaults to `1`, the original shape's version,
+    matching every entry these fixtures built before `async_migrate_entry`
+    existed.
     """
 
     def __init__(self, data, *, subentries=None, version=1):

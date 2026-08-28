@@ -68,18 +68,34 @@ if TYPE_CHECKING:
 async def async_setup_entry(hass: "HomeAssistant", entry: "CoverLogicConfigEntry") -> bool:
     """Set up cover_logic from a config entry.
 
-    Reads the `Config` from `entry.subentries` if there are any, otherwise
-    from the YAML file named by `entry.data[CONF_CONFIG_PATH]` -- the shape
-    an entry has *before* `async_migrate_entry` (below) ever ran, or a fresh
-    entry created through the still-unchanged `user` step of `config_flow.py`
-    that nobody has added a subentry to yet. `validate()` runs over the
-    result either way. An `ERROR`-severity problem refuses the start --
-    `ConfigEntryNotReady`, naming every such problem -- rather than running
-    with rules nobody checked; a `WARNING`-severity one is only logged, not
-    fatal. A missing or unparsable file (the YAML branch only -- reading
-    subentries does no I/O and cannot raise `OSError`) fails the same clean
-    way, not with a raw traceback: both `ConfigError` (bad YAML/schema/
-    subentries) and `OSError` become `ConfigEntryNotReady`.
+    Reads the `Config` from the YAML file named by
+    `entry.data[CONF_CONFIG_PATH]` if that key is present, otherwise from
+    `entry.subentries` -- which source is authoritative is decided by which
+    key `entry.data` carries, not by whether `entry.subentries` happens to be
+    non-empty. That distinction matters since phase 5: a brand-new entry
+    created by `config_flow.py`'s "start empty" or "set up blinds now" setup
+    steps carries *no* `CONF_CONFIG_PATH` and legitimately has zero
+    subentries (a fresh install with nothing configured yet, or one where
+    every selected cover was later removed) -- checking `entry.subentries`
+    truthiness the way this used to would send that entry down the YAML
+    branch and crash on the now-absent `CONF_CONFIG_PATH` key. Checking for
+    the key directly instead means "no subentries yet" and "no subentries
+    because the source is a file" are told apart by the one fact that
+    actually distinguishes them.
+
+    `validate()` runs over the result either way. An `ERROR`-severity
+    problem refuses the start -- `ConfigEntryNotReady`, naming every such
+    problem -- rather than running with rules nobody checked; a
+    `WARNING`-severity one is only logged, not fatal. A brand-new,
+    still-incomplete configuration (no blinds, or blinds with no zone yet)
+    hits this same `ConfigEntryNotReady` path, not a crash: the entry still
+    exists, and its subentries -- and, since phase 5, the options-flow menu
+    over them -- stay reachable regardless of setup state, which is how a
+    user actually finishes configuring it. A missing or unparsable file (the
+    YAML branch only -- reading subentries does no I/O and cannot raise
+    `OSError`) fails the same clean way, not with a raw traceback: both
+    `ConfigError` (bad YAML/schema/subentries) and `OSError` become
+    `ConfigEntryNotReady`.
 
     Both sources are re-read on every call, including a config entry reload
     -- nothing about the parsed `Config` is cached across calls or stashed at
@@ -90,18 +106,7 @@ async def async_setup_entry(hass: "HomeAssistant", entry: "CoverLogicConfigEntry
     # import.
     from homeassistant.exceptions import ConfigEntryNotReady  # noqa: PLC0415
 
-    if entry.subentries:
-        try:
-            config = config_from_subentries(entry)
-        except ConfigError as err:
-            msg = f"cover_logic: this entry's subentries could not be read: {err}"
-            raise ConfigEntryNotReady(msg) from err
-        source = "subentries"
-        # Only meaningful once subentries are the source of truth -- see
-        # that function's own docstring for why a still-legacy, path-based
-        # entry (the `else` branch below) has nothing of this kind to check.
-        _check_fixture_conformance(hass, config)
-    else:
+    if CONF_CONFIG_PATH in entry.data:
         path = entry.data[CONF_CONFIG_PATH]
         try:
             config = await hass.async_add_executor_job(load_config_file, path)
@@ -112,6 +117,17 @@ async def async_setup_entry(hass: "HomeAssistant", entry: "CoverLogicConfigEntry
             msg = f"cover_logic: config at {path!r} could not be read: {err}"
             raise ConfigEntryNotReady(msg) from err
         source = f"file {path!r}"
+    else:
+        try:
+            config = config_from_subentries(entry)
+        except ConfigError as err:
+            msg = f"cover_logic: this entry's subentries could not be read: {err}"
+            raise ConfigEntryNotReady(msg) from err
+        source = "subentries"
+        # Only meaningful once subentries are the source of truth -- see
+        # that function's own docstring for why a still-legacy, path-based
+        # entry (the `if` branch above) has nothing of this kind to check.
+        _check_fixture_conformance(hass, config)
 
     problems = validate(config)
     errors = [problem for problem in problems if problem.severity == ERROR]

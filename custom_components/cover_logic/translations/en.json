@@ -3,14 +3,44 @@
     "step": {
       "user": {
         "title": "Cover Logic",
+        "description": "How do you want to start?",
+        "menu_options": {
+          "blinds_now": "Set up blinds now (recommended)",
+          "from_file": "Load a configuration from a YAML file",
+          "from_example": "Start from the example configuration",
+          "empty": "Start empty"
+        }
+      },
+      "blinds_now": {
+        "title": "Set up blinds now",
+        "description": "Pick every cover Cover Logic should control. One blind is created for each -- add zones, modes and rules for them afterwards from the configuration menu.",
+        "data": {
+          "entities": "Blinds"
+        }
+      },
+      "from_file": {
+        "title": "Load a configuration from a YAML file",
         "description": "Point Cover Logic at the YAML file describing your blinds, zones and rules. It is loaded and checked right away.",
         "data": {
           "config_path": "Configuration file path"
         }
+      },
+      "from_example": {
+        "title": "Start from the example configuration",
+        "description": "Imports the worked example for a different, invented house (four windows, an away/night/home mode split) as a starting point. Edit or remove any of it afterwards from the configuration menu."
+      },
+      "example_not_available": {
+        "title": "Example not available",
+        "description": "This installation does not ship the example configuration. Continue to go back to the setup menu and pick a different way to start."
+      },
+      "empty": {
+        "title": "Start empty",
+        "description": "Creates Cover Logic with nothing configured yet. Add blinds, zones, modes and rules afterwards from the configuration menu."
       }
     },
     "error": {
-      "invalid_config": "This file could not be used: {error_detail}"
+      "invalid_config": "This file could not be used: {error_detail}",
+      "no_blinds_selected": "Pick at least one blind, or use \"Start empty\" instead."
     },
     "abort": {
       "already_configured": "Cover Logic is already set up; only one instance is supported."

@@ -244,15 +244,35 @@ def _class_node(tree, class_name):
     pytest.fail(f"no class named {class_name!r} found")
 
 
+def _step_method_nodes(class_node):
+    """Every `async def async_step_<name>` defined directly on `class_node`, as `{name: node}`.
+
+    Since the phase 5 setup menu, `CoverLogicConfigFlow` has more than one
+    step with its own schema/menu (`user`, `blinds_now`, `from_file`,
+    `from_example`, `empty`) -- see that module's own docstring. Scoping a
+    derivation to one method's own AST subtree, rather than the whole class,
+    is what lets each step's fields/menu options be checked against that
+    step's own `strings.json["config"]["step"][name]` entry, instead of one
+    flat bucket every step's fields would otherwise be pooled into.
+    """
+    return {
+        node.name[len("async_step_") :]: node
+        for node in class_node.body
+        if isinstance(node, ast.AsyncFunctionDef) and node.name.startswith("async_step_")
+    }
+
+
 def _base_error_literals(class_node):
     """Every string literal assigned to `errors["base"]` anywhere in `class_node`.
 
-    `config_flow.py` has exactly two places that assign `errors["base"]`: the
-    top-level `CoverLogicConfigFlow.async_step_user` and the shared subentry
-    `_SubentryFlowBase._step`. Restricting the walk to one class's own AST
-    subtree (rather than the whole module) is what keeps this test about the
-    top-level flow specifically -- the subentry side is already covered,
-    flow-rendered, by `tests/ha/test_subentry_flows.py`.
+    `config_flow.py`'s `CoverLogicConfigFlow` has several places that assign
+    `errors["base"]` since the phase 5 setup menu split what used to be one
+    `user` step into several (`blinds_now`'s `no_blinds_selected`,
+    `from_file`'s and `from_example`'s `invalid_config`) -- restricting the
+    walk to this one class's own AST subtree (rather than the whole module)
+    is what keeps this test about the top-level flow specifically; the
+    unrelated `_SubentryFlowBase._step` (a different class) is already
+    covered, flow-rendered, by `tests/ha/test_subentry_flows.py`.
     """
     literals = set()
     for node in ast.walk(class_node):
@@ -301,12 +321,16 @@ def test_top_level_config_flow_error_key_is_declared():
     assert missing == set(), f"CoverLogicConfigFlow uses undeclared error key(s): {sorted(missing)}"
 
 
-def test_top_level_config_flow_user_step_fields_are_declared():
-    """Every field the `user` step's `vol.Schema` declares must have a
-    `strings.json["config"]["step"]["user"]["data"]` label -- derived from the
-    schema-building call itself (`vol.Required`/`vol.Optional`), not a
-    hand-kept list, so a second field added to this step is caught the same
-    way a renamed one would be.
+def test_top_level_config_flow_step_fields_are_declared():
+    """Every step's own `vol.Schema` fields must have a
+    `strings.json["config"]["step"][<step>]["data"]` label -- derived per
+    step method (`async_step_<name>` -> `strings.json`'s `<name>`), not a
+    hand-kept list, so a field added to any of the setup menu's branches is
+    caught the same way a renamed one would be. One step at a time, not the
+    whole class pooled together the way this test worked before the phase 5
+    setup menu: `blinds_now`'s `entities` and `from_file`'s `config_path` are
+    unrelated fields on unrelated forms, and pooling them would let either
+    one go undeclared as long as the *other* satisfied the check.
     """
     flow_tree = _ast_tree(_CONFIG_FLOW_PY)
     const_tree = _ast_tree(_CONST_PY)
@@ -315,16 +339,67 @@ def test_top_level_config_flow_user_step_fields_are_declared():
         **_module_level_string_constants(flow_tree),
     }
     class_node = _class_node(flow_tree, "CoverLogicConfigFlow")
-    used = _vol_schema_field_names(class_node, constants)
-    declared = set(_load(_STRINGS)["config"]["step"]["user"]["data"])
+    steps = _step_method_nodes(class_node)
+    declared_steps = _load(_STRINGS)["config"]["step"]
+
+    checked_any = False
+    for name, method_node in steps.items():
+        used = _vol_schema_field_names(method_node, constants)
+        if not used:
+            continue
+        checked_any = True
+        declared = set(declared_steps.get(name, {}).get("data", {}))
+        missing = used - declared
+        assert missing == set(), f"'{name}' step has undeclared field(s): {sorted(missing)}"
+
+    assert checked_any, (
+        "derivation found no vol.Required/vol.Optional field in any step at all -- "
+        "the AST walk is broken"
+    )
+
+
+def _menu_options_from_show_menu(method_node, constants):
+    """Every literal in an `async_show_menu(menu_options=[...])` call within `method_node`."""
+    options = set()
+    for node in ast.walk(method_node):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+            continue
+        if node.func.attr != "async_show_menu":
+            continue
+        for keyword in node.keywords:
+            if keyword.arg != "menu_options":
+                continue
+            value = keyword.value
+            if not isinstance(value, ast.List):
+                pytest.fail(
+                    f"async_show_menu(menu_options=...) not a list literal: {ast.dump(value)}"
+                )
+            options.update(
+                _resolve_str(elt, constants, context="async_show_menu(menu_options=...)")
+                for elt in value.elts
+            )
+    return options
+
+
+def test_top_level_config_flow_menu_options_are_declared():
+    """The `user` step's `async_show_menu` options must each have a
+    `strings.json["config"]["step"]["user"]["menu_options"]` label -- derived
+    from the call itself, so a fifth way to start added later is caught the
+    same way a renamed one would be.
+    """
+    flow_tree = _ast_tree(_CONFIG_FLOW_PY)
+    constants = _module_level_string_constants(flow_tree)
+    class_node = _class_node(flow_tree, "CoverLogicConfigFlow")
+    steps = _step_method_nodes(class_node)
+    used = _menu_options_from_show_menu(steps["user"], constants)
+    declared = set(_load(_STRINGS)["config"]["step"]["user"]["menu_options"])
 
     assert used, (
-        "derivation found no vol.Required/vol.Optional field at all -- the AST walk is broken"
+        "derivation found no async_show_menu(menu_options=...) call at all -- "
+        "the AST walk is broken"
     )
     missing = used - declared
-    assert missing == set(), (
-        f"CoverLogicConfigFlow 'user' step has undeclared field(s): {sorted(missing)}"
-    )
+    assert missing == set(), f"'user' step menu_options undeclared: {sorted(missing)}"
 
 
 def test_top_level_config_flow_abort_key_is_declared():
