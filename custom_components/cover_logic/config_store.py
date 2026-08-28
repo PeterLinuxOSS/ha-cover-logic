@@ -32,7 +32,7 @@ the tie is folded into a tuple and the `order` that caused it is gone.
 **One grouping, not two.** `_grouped_rules` below is the single place that
 groups rule subentries by `(mode, zone)` and sorts them; `_build_rules`
 (which becomes `Config.rules`) and `rule_owner_ids` (which names each
-subentry's position in that same tuple for `validate()` and `config_flow`
+subentry's position in that same tuple for `validate()` and `subentry_flow`
 to point at) both read its output rather than each running their own copy
 of the grouping. A second, hand-mirrored copy of the same sort was tried
 first and rejected: nothing forces two copies to move together, so a
@@ -258,11 +258,12 @@ def config_from_subentries(entry: Any) -> Config:
     `load_config` raises on -- a required key missing, an out-of-range
     action axis, an unknown subentry type -- since both are, structurally,
     the same parse. `validate()` (run separately by the caller, exactly as
-    the YAML path already does -- see `__init__.py`/`config_flow.py`) is
-    still the place for everything that is valid shape but bad config
-    (an orphaned blind, an unreachable rule, ...); this function does not
-    call it. `duplicate_rule_order_problems`, below, covers the one thing
-    `validate()` cannot see once this function returns -- see its docstring.
+    the YAML path already does -- see `__init__.py`/`config_flow.py`/
+    `subentry_flow.py`) is still the place for everything that is valid shape
+    but bad config (an orphaned blind, an unreachable rule, ...); this
+    function does not call it. `duplicate_rule_order_problems`, below, covers
+    the one thing `validate()` cannot see once this function returns -- see
+    its docstring.
     """
     _check_types(entry)
 
@@ -287,7 +288,7 @@ def rule_owner_ids(entry: Any) -> dict[str, str]:
     `validation._rule_owner`) and how `engine._apply_rules` labels a decision,
     but neither can be handed a Home Assistant subentry id -- both work off a
     `Config`, where subentry ids no longer exist. This is the one place the
-    two identities are tied together, so `config_flow` can ask "is the
+    two identities are tied together, so `subentry_flow` can ask "is the
     problem `validate()` just reported about the very subentry being saved?"
     without re-deriving the sort a second time.
 
@@ -339,7 +340,7 @@ def duplicate_rule_order_problems(entry: Any) -> list[Problem]:
 # ---------------------------------------------------------------------------
 
 # The gap left between one rule's or mode's assigned `order` and the next --
-# matches `config_flow._ORDER_GAP`, for the same reason: a user who starts
+# matches `subentry_flow._ORDER_GAP`, for the same reason: a user who starts
 # hand-editing a rule set an import produced can still slip a new row between
 # two existing ones without renumbering either. `Config.rules`/`Config.modes`
 # hold no `order` of their own (see `duplicate_rule_order_problems`'s own
@@ -356,7 +357,7 @@ def _ref_marker(name: str) -> dict[str, str]:
     module builds subentry data -- never `config_schema.RefTag` (the YAML
     spelling), which `_to_reftag` above exists specifically to translate back
     from. Using this marker instead of writing the already-parsed
-    `{"condition": "ref", "name": ...}` shape (as `config_flow.py`'s own
+    `{"condition": "ref", "name": ...}` shape (as `subentry_flow.py`'s own
     `mode`/`rule` forms do, for reasons specific to that UI -- see
     `ModeSubentryFlowHandler._to_data`'s docstring) keeps a subentry an
     imported `import_config` writes indistinguishable from one a human built
@@ -382,7 +383,7 @@ def _condition_body_to_data(name: str, body: Any) -> dict[str, Any]:
     is typed `dict[str, dict]` (see `model.Config`) for exactly this reason;
     a YAML file that names a bare list as one condition's whole body (legal
     for `load_config`, since `_parse_condition` accepts a top-level list, but
-    never produced by anything in `config_flow.py`) cannot become a `condition`
+    never produced by anything in `subentry_flow.py`) cannot become a `condition`
     subentry undistorted, and this raises rather than silently wrapping it in
     an implicit `and` the user did not write.
     """
@@ -398,11 +399,11 @@ def _condition_body_to_data(name: str, body: Any) -> dict[str, Any]:
 class _StubSubentry:
     """The minimal duck-typed subentry `config_from_subentries` needs to read back.
 
-    Same surface as `config_flow._SubentryStub`, redefined here rather than
-    imported from it: `config_flow.py` is the Home Assistant layer (imports
+    Same surface as `subentry_flow._SubentryStub`, redefined here rather than
+    imported from it: `subentry_flow.py` is the Home Assistant layer (imports
     `homeassistant` unconditionally, per its own module docstring), and this
     module stays on the pure side of the split `tests/test_purity.py`
-    enforces -- importing from `config_flow` would drag that import in
+    enforces -- importing from `subentry_flow` would drag that import in
     transitively the moment anything under `custom_components/cover_logic/`
     is loaded from the system-Python test run.
     """
@@ -419,7 +420,7 @@ class _StubEntry:
     """The minimal duck-typed entry `config_from_subentries` needs to read back.
 
     See `_StubSubentry`'s docstring for why this is not imported from
-    `config_flow._EntryStub` instead.
+    `subentry_flow._EntryStub` instead.
     """
 
     __slots__ = ("data", "subentries")

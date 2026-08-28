@@ -1,4 +1,4 @@
-"""Tests for the `blind`/`zone`/`value`/`condition`/`mode` subentry flows in `config_flow.py`.
+"""Tests for the `blind`/`zone`/`value`/`condition`/`mode` subentry flows in `subentry_flow.py`.
 
 Imports Home Assistant, so this module only collects under the Python 3.14
 venv -- see `test_config_flow.py`'s own note.
@@ -29,16 +29,7 @@ import voluptuous as vol
 
 import cover_logic
 from cover_logic.conditions import evaluate_condition
-from cover_logic.config_flow import (
-    SUBENTRY_FLOW_HANDLERS,
-    BlindSubentryFlowHandler,
-    ConditionSubentryFlowHandler,
-    CoverLogicConfigFlow,
-    ModeSubentryFlowHandler,
-    RuleSubentryFlowHandler,
-    ValueSubentryFlowHandler,
-    ZoneSubentryFlowHandler,
-)
+from cover_logic.config_flow import CoverLogicConfigFlow
 from cover_logic.config_schema import (
     _BLIND_KEYS,
     _RULE_KEYS,
@@ -62,6 +53,15 @@ from cover_logic.config_store import (
     rule_owner_ids,
 )
 from cover_logic.model import KEEP, Blind, Ref
+from cover_logic.subentry_flow import (
+    SUBENTRY_FLOW_HANDLERS,
+    BlindSubentryFlowHandler,
+    ConditionSubentryFlowHandler,
+    ModeSubentryFlowHandler,
+    RuleSubentryFlowHandler,
+    ValueSubentryFlowHandler,
+    ZoneSubentryFlowHandler,
+)
 from cover_logic.validation import ERROR, validate
 from cover_logic.world import World
 
@@ -223,7 +223,7 @@ def test_blind_add_is_not_blocked_by_having_no_zone_yet(subentry_entry, subentry
     `no_fallback_mode` -- neither is a problem the blind form's own fields
     (`entity`, `tolerance`, ...) can address, since it has no `members` or
     `when` field, so neither blocks a blind save. See
-    `config_flow._CODE_OWNERS`/`_blocks_on`.
+    `subentry_flow._CODE_OWNERS`/`_blocks_on`.
     """
     entry = subentry_entry()
     flow = _make_flow(BlindSubentryFlowHandler, subentry_hass(entry), BLIND)
@@ -619,7 +619,7 @@ def test_full_build_up_sequence_a_human_would_perform(subentry_entry, subentry_h
 # ---------------------------------------------------------------------------
 # `_CODE_OWNERS`/`_blocks_on`: a problem blocks a save only if the form being
 # submitted is the one whose fields could fix it (see that pair's own
-# docstring in `config_flow.py`, and the task brief this fix pass answers).
+# docstring in `subentry_flow.py`, and the task brief this fix pass answers).
 # This is also the regression coverage for the defect the fix pass exists
 # for: `a143b86` blocked adding a second blind the moment any `zone`
 # subentry existed at all -- an ordering deadlock, since a blind must exist
@@ -641,7 +641,7 @@ def test_no_fallback_mode_never_blocks_a_value_even_once_a_mode_subentry_exists(
     subentry, to prove the point either way: a `value` form has no `when`
     field, so it is not how a user would fix `no_fallback_mode` no matter
     what else exists in the entry, and must not be blocked by it -- see
-    `config_flow._CODE_OWNERS`.
+    `subentry_flow._CODE_OWNERS`.
     """
     entry = subentry_entry()
     entry.add_subentry(
@@ -672,7 +672,7 @@ def test_blind_add_is_never_blocked_by_blind_without_zone(subentry_entry, subent
     so there is no way to satisfy the check for a brand new blind without
     first being allowed to save it unclaimed. The blind form has no
     `members` field; it was never the form that could fix this, at any
-    point, regardless of what else exists -- see `config_flow._CODE_OWNERS`,
+    point, regardless of what else exists -- see `subentry_flow._CODE_OWNERS`,
     which now says so directly instead of tracking zone existence.
     """
     entry = subentry_entry()
@@ -797,7 +797,7 @@ def test_condition_add_shows_a_form_with_the_expected_fields(subentry_entry, sub
 
 def test_condition_add_creates_a_single_condition_subentry(subentry_entry, subentry_hass):
     """One selected condition is stored verbatim, not wrapped -- see
-    `config_flow._flatten_condition_list`'s own docstring for why: the
+    `subentry_flow._flatten_condition_list`'s own docstring for why: the
     merged body a saved condition's `data` becomes (everything but `id`) must
     already look like one condition node, matching the fixture
     `tests/ha/conftest.py`'s `CONFIG_TEXT` and `tests/test_config_store.py`

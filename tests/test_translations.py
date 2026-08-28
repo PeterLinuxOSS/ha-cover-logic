@@ -151,6 +151,12 @@ def _resolve_str(node, constants, *, context):
     if isinstance(node, ast.Name) and node.id in constants:
         return constants[node.id]
     pytest.fail(f"{context}: not a statically resolvable string literal ({ast.dump(node)})")
+    # Unreachable: `pytest.fail` always raises. Spelled out anyway so this
+    # function's control flow is provably total -- every path either returns
+    # a `str` or raises -- to a reader and to a static analyser alike,
+    # neither of which can otherwise see that `pytest.fail` never returns.
+    msg = "pytest.fail() always raises"
+    raise AssertionError(msg)
 
 
 def _translation_keys_from_calls(tree, constants, func_names):
@@ -242,6 +248,11 @@ def _class_node(tree, class_name):
         if isinstance(node, ast.ClassDef) and node.name == class_name:
             return node
     pytest.fail(f"no class named {class_name!r} found")
+    # Unreachable: `pytest.fail` always raises. Spelled out anyway so this
+    # function's control flow is provably total -- see `_resolve_str`'s own
+    # comment for why the same shape is used there.
+    msg = f"no class named {class_name!r} found"
+    raise AssertionError(msg)
 
 
 def _step_method_nodes(class_node):

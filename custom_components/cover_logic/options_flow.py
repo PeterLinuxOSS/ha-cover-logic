@@ -1,7 +1,7 @@
 """The options flow: one main menu over the same subentries the six subentry flows edit.
 
 **Why this exists.** Phase 4 gave every configuration type its own subentry
-flow (`config_flow.py`), but the integration had `supports_options: false`
+flow (`subentry_flow.py`), but the integration had `supports_options: false`
 -- the entry page showed nothing but Home Assistant's own generic flat list
 of "Add blind / Add zone / ..." buttons, no counts, no way to tell an empty
 section from a full one without opening it, and no path back to "everything"
@@ -22,28 +22,37 @@ sort, both "working", silently able to disagree with each other while the
 92,160-scenario migration gate stayed blind to the difference -- see
 `config_store.py`'s own "One grouping, not two" section).
 
-**One owner, two doors.** `config_flow.py`'s six `_SubentryFlowBase`
-subclasses (`BlindSubentryFlowHandler`, ...) already separate "what this
-type's form looks like and how a submission becomes subentry data" (`_build_
-schema`, `_to_data`, `_to_form_values`, `_initial_values`, `_local_problems`,
+**One owner, two doors.** `subentry_flow.py`'s six `_SubentryFlowBase`
+subclasses (`BlindSubentryFlowHandler`, ...) live in a module owned by
+neither this one nor `config_flow.py`, and separate "what this type's form
+looks like and how a submission becomes subentry data" (`_build_schema`,
+`_to_data`, `_to_form_values`, `_initial_values`, `_local_problems`,
 `_candidate_id`, `_title`, `_blocking_errors`) from "how a `ConfigSubentryFlow`
 step turns that into a rendered form and a finished flow" (`_step`,
 `async_step_user`/`async_step_reconfigure`). Every method in the first group
 needs nothing from `self` beyond the `entry` it is explicitly handed --
 `_to_data` was the one exception (`RuleSubentryFlowHandler` read
-`self._get_entry()`), fixed as part of this task so the whole group could be
-called from a bare instance of the class, never registered with Home
-Assistant's flow manager at all. `_render_type_form` below is this module's
-one and only caller of that group, for every one of the six types; it is the
-"two doors" arrangement the task brief asks for, made possible by that one
-constructor-independence property rather than by copying a single field
-label, schema or validation rule. What *is* necessarily different between
-the two doors -- what happens once a submission validates -- cannot be
-shared: a subentry flow step finishes the flow (`async_create_entry`/
+`self._get_entry()`), fixed as part of landing this menu so the whole group
+could be called from a bare instance of the class, never registered with
+Home Assistant's flow manager at all. `_render_type_form` below is this
+module's one and only caller of that group, for every one of the six types;
+it is the "two doors" arrangement the task brief asks for, made possible by
+that one constructor-independence property rather than by copying a single
+field label, schema or validation rule. What *is* necessarily different
+between the two doors -- what happens once a submission validates -- cannot
+be shared: a subentry flow step finishes the flow (`async_create_entry`/
 `async_update_and_abort`), while this flow keeps going (`hass.config_entries.
 async_add_subentry`/`async_update_subentry`, then back to the section menu).
 That handful of lines is genuinely different glue, not a second copy of a
 form.
+
+The classes did not start out in `subentry_flow.py` -- this module used to
+import them straight out of `config_flow.py`, which in turn needed
+`CoverLogicOptionsFlow` from here to hand out an options flow instance, a
+real `py/cyclic-import` worked around at the time by deferring one side to
+call time. Pulling the shared classes into a third module neither door owns
+removes the cycle outright rather than hiding it: `config_flow.py` and this
+module both import `subentry_flow.py`, never each other.
 
 **Why sections track state on `self` instead of encoding it in the step id.**
 A menu's `next_step_id` must name a real `async_step_<name>` method
@@ -78,7 +87,6 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import selector
 import voluptuous as vol
 
-from .config_flow import _NEW_SUBENTRY_ID, SUBENTRY_FLOW_HANDLERS, _axis_to_form, _rule_pick_schema
 from .config_schema import ConfigError, load_config_file
 from .config_store import (
     BLIND,
@@ -103,6 +111,12 @@ from .services import (
     IMPORT_CONFIG_SCHEMA,
     _async_export_config,
     _async_import_config,
+)
+from .subentry_flow import (
+    _NEW_SUBENTRY_ID,
+    SUBENTRY_FLOW_HANDLERS,
+    _axis_to_form,
+    _rule_pick_schema,
 )
 from .validation import ERROR, WARNING, Problem, validate
 
@@ -186,7 +200,7 @@ def _rule_items(entry: Any) -> list[tuple[str, str]]:
 def _rule_action_text(then: dict[str, Any]) -> str:
     """`position`/`tilt` as a human string: a number, `"keep"`, or a value's name.
 
-    Reuses `config_flow._axis_to_form` -- the exact function
+    Reuses `subentry_flow._axis_to_form` -- the exact function
     `RuleSubentryFlowHandler._title` already calls to build a single rule
     subentry's own title -- rather than a second axis-rendering rule that
     could show `keep` or a `!ref` differently from what that title already
@@ -413,7 +427,7 @@ class CoverLogicOptionsFlow(OptionsFlow):
     All navigation state (which section is open, which subentry is being
     edited or removed, the rule-add wizard's first-step pick) lives on
     `self` between steps, the same pattern `RuleSubentryFlowHandler._pick`
-    already uses in `config_flow.py` -- a fresh instance is created per flow
+    already uses in `subentry_flow.py` -- a fresh instance is created per flow
     (`CoverLogicConfigFlow.async_get_options_flow`), so nothing here is
     shared across two users' flows.
     """
@@ -637,7 +651,7 @@ class CoverLogicOptionsFlow(OptionsFlow):
             # Leading-underscore access across modules, deliberately: these
             # are the shared schema/data/validation methods the module
             # docstring's "one owner, two doors" section describes, not an
-            # accidental reach into `config_flow.py`'s own private API.
+            # accidental reach into `subentry_flow.py`'s own private API.
             handler._pick = self._rule_pick  # noqa: SLF001
         subentry = entry.subentries[subentry_id] if subentry_id is not None else None
 

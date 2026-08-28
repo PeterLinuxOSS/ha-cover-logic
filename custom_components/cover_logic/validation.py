@@ -27,11 +27,11 @@ class Problem:
     a `condition` subentry's own fields, a `mode`'s `when`, or a `rule`'s
     `if`, and a dangling ref in one must not block a save of an unrelated
     other. Empty for every other code -- those have exactly one owning type,
-    decided by the code alone (see `config_flow._CODE_OWNERS`), so no
+    decided by the code alone (see `subentry_flow._CODE_OWNERS`), so no
     per-instance attribution is needed. Populated only by
     `_check_unknown_condition_refs`, `_check_condition_shapes` and
     `_check_circular_condition_refs`, the three checks whose codes need it;
-    `config_flow._blocks_on` is the only reader.
+    `subentry_flow._blocks_on` is the only reader.
     """
 
     severity: str
@@ -316,7 +316,7 @@ def _condition_sites(
     """Yield every top-level condition slot: its body, a label, and its owner.
 
     The owner is `(subentry_type, id)` -- `id` matching exactly what that
-    type's own form would submit as `data[id_key]`, so `config_flow._blocks_
+    type's own form would submit as `data[id_key]`, so `subentry_flow._blocks_
     on` can compare it directly against the subentry actually being saved.
     A rule has no such field, so it is named `f"{key}#{index}"` instead --
     see `_rule_owner` for why that shape, and `config_store.rule_owner_ids`
@@ -444,7 +444,7 @@ def check_duplicate_rule_order(orders: dict[str, list[tuple[str, int]]]) -> list
     per rule subentry filed under it -- the owner id being the `_rule_owner`
     string naming that specific rule, so the resulting `Problem` can say
     *which* rules are tied rather than only that some are. Without that, a
-    tie left behind anywhere would block every rule save (`config_flow.
+    tie left behind anywhere would block every rule save (`subentry_flow.
     _blocks_on` would have nothing finer than the type to go on), including
     adding a rule to an unrelated pair that has no tie at all.
 

@@ -6,7 +6,7 @@ imports, tested standalone. Phase 2 adds the Home Assistant layer; this
 module is the config entry's entry point (`async_setup_entry`,
 `async_unload_entry`, and -- since this task -- `async_migrate_entry`, which
 moves an entry created before phase 4 (a config file path, no subentries)
-onto subentries, the shape `config_flow.py`'s subentry flows and
+onto subentries, the shape `subentry_flow.py`'s subentry flows and
 `services.py`'s `import_config`/`export_config` already assume).
 
 Every Home Assistant name this file needs is either deferred behind

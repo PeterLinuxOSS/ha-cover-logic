@@ -506,12 +506,12 @@ def test_bad_condition_shape_message_names_the_offending_condition():
 # `Problem.owners`: which specific subentry a `condition`-body problem is
 # attributable to, not just which subentry *type*. This is the pure-Python
 # half of the fix for the "coarse type-level owner blocks an unrelated save"
-# defect -- `config_flow._blocks_on` (HA-only, driven in
+# defect -- `subentry_flow._blocks_on` (HA-only, driven in
 # `tests/ha/test_subentry_flows.py`) is the reader; these prove the producer
 # side, runnable without `homeassistant` at all. A condition body can
 # originate in three different *places* sharing the same three types
 # (`condition`/`mode`/`rule`, see `_CODE_OWNERS`'s own comment in
-# `config_flow.py`), so knowing the type alone is not enough to say which
+# `subentry_flow.py`), so knowing the type alone is not enough to say which
 # specific subentry save could fix it -- `owners` names the exact one(s).
 # ---------------------------------------------------------------------------
 

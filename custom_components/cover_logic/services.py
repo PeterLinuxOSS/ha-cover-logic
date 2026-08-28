@@ -115,7 +115,7 @@ def _title_for(subentry_type: str, data: dict[str, Any]) -> str:
     """A human-readable title for a subentry `import_config` creates.
 
     Cosmetic only -- `config_from_subentries` never reads `.title` -- so
-    this stays a small, local mirror of `config_flow.py`'s own per-type
+    this stays a small, local mirror of `subentry_flow.py`'s own per-type
     `_title()` methods rather than a shared function: those methods work off
     a submitted form's `user_input`, this off already-built subentry `data`,
     and reconciling the two shapes is not worth it for a display string with

@@ -75,10 +75,11 @@ pytest.importorskip("homeassistant")
 
 from homeassistant.data_entry_flow import FlowManager
 
-from cover_logic.config_flow import SUBENTRY_FLOW_HANDLERS, CoverLogicConfigFlow
+from cover_logic.config_flow import CoverLogicConfigFlow
 from cover_logic.config_store import BLIND, CONDITION, MODE, RULE, VALUE, ZONE
 from cover_logic.const import DOMAIN
 from cover_logic.options_flow import _SECTION_TYPE, CoverLogicOptionsFlow
+from cover_logic.subentry_flow import SUBENTRY_FLOW_HANDLERS
 
 _ENTRY_ID = "entry1"
 

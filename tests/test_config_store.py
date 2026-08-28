@@ -252,7 +252,7 @@ def test_duplicate_order_in_one_mode_zone_is_reported() -> None:
 
 def test_duplicate_order_names_both_tied_rules_and_nobody_else() -> None:
     """The tie is attributed to the two rules that are actually tied, so
-    `config_flow._blocks_on` can refuse to block a save of the third,
+    `subentry_flow._blocks_on` can refuse to block a save of the third,
     untied rule -- or of a rule in a different pair entirely. Without
     `owners`, the only thing knowable about this problem is "some rule
     somewhere", which blocks every rule save in the entry.
@@ -277,14 +277,14 @@ def test_duplicate_order_names_both_tied_rules_and_nobody_else() -> None:
 
 
 def test_rule_owner_ids_match_the_ids_validation_attributes_problems_to() -> None:
-    """The contract `config_flow` depends on and that nothing else pins down.
+    """The contract `subentry_flow` depends on and that nothing else pins down.
 
     `validation` names a rule by its position in the already-`order`-sorted
     tuple (`validation._rule_owner`), because a `Config` no longer carries
     either subentry ids or `order`. `rule_owner_ids` is the only bridge from
     a real Home Assistant subentry id back to that name. If the two ever
     disagree -- a different sort, a different tie-break, a different string
-    -- `config_flow._blocks_on` would silently compare a problem against the
+    -- `subentry_flow._blocks_on` would silently compare a problem against the
     wrong rule, blocking an innocent save or waving a broken one through,
     with nothing else in the suite noticing.
 
