@@ -8,5 +8,6 @@
   "iot_class": "calculated",
   "issue_tracker": "https://github.com/PeterLinuxOSS/ha-cover-logic/issues",
   "requirements": [],
+  "single_config_entry": true,
   "version": "0.1.0"
 }
