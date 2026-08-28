@@ -16,8 +16,10 @@ property and every add/edit/remove screen actually touch, plus
 """
 
 import asyncio
+import datetime as dt
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -565,6 +567,123 @@ def test_check_matrix_submit_returns_to_main_menu(subentry_entry, options_hass, 
     result = _menu(asyncio.run(flow.async_step_check_matrix({})))
 
     assert result["step_id"] == "init"
+
+
+# ---------------------------------------------------------------------------
+# Task 4: a health overview -- validation counts (with attribution), the
+# fixture check, and the coordinator's last recompute -- reachable both as
+# an at-a-glance summary on the main menu and as `check_matrix`'s full
+# report.
+# ---------------------------------------------------------------------------
+
+
+def test_main_menu_health_summary_says_no_problems_for_a_clean_config(subentry_entry, options_hass):
+    """A config with no static problems at all: one mode (the fallback), one
+    zone owning the one blind, one rule for that (mode, zone) pair -- nothing
+    for `validate()`/`duplicate_rule_order_problems` to flag.
+    """
+    entry = subentry_entry()
+    entry.add_subentry(BLIND, {"entity": "cover.a"})
+    entry.add_subentry(ZONE, {"id": "terasa", "members": ["cover.a"]})
+    entry.add_subentry(MODE, {"id": "m", "order": 0})
+    entry.add_subentry(
+        RULE,
+        {"mode": "m", "zone": "terasa", "order": 0, "then": {"position": "keep", "tilt": "keep"}},
+    )
+    flow = _make_flow(options_hass(entry))
+
+    result = _menu(asyncio.run(flow.async_step_init(None)))
+
+    assert result["description_placeholders"]["health_summary"] == "no problems found"
+
+
+def test_main_menu_health_summary_counts_errors_on_an_empty_config(subentry_entry, options_hass):
+    """An entry with nothing configured at all has no fallback mode
+    (`no_fallback_mode`) -- exactly one `ERROR`, no `WARNING` -- so the
+    at-a-glance summary must say "1 error", not "no problems found", the
+    moment a section actually needs attention.
+    """
+    entry = subentry_entry()
+    flow = _make_flow(options_hass(entry))
+
+    result = _menu(asyncio.run(flow.async_step_init(None)))
+
+    assert result["description_placeholders"]["health_summary"] == "1 error"
+
+
+def test_check_matrix_reports_validation_counts_and_attributes_the_problem(
+    subentry_entry, options_hass, monkeypatch
+):
+    """The whole point of Task 4: a count alone is not "findable" -- the
+    report must name *which* subentry a problem belongs to. Here, mode "m1"'s
+    `when` refs a condition that does not exist; `m2` is the fallback (no
+    `when`), so this is the *only* static problem, and it must be attributed
+    to `("mode", "m1")` -- the exact `(subentry_type, id)` pair a user would
+    open the "Modes" section and pick to fix it, not just "some mode,
+    somewhere".
+    """
+    monkeypatch.setattr(options_flow_module, "repo_fixture_path", lambda: None)
+    entry = subentry_entry()
+    entry.add_subentry(
+        MODE, {"id": "m1", "order": 0, "when": {"condition": "ref", "name": "missing"}}
+    )
+    entry.add_subentry(MODE, {"id": "m2", "order": 10})
+    flow = _make_flow(options_hass(entry))
+
+    result = _form(asyncio.run(flow.async_step_check_matrix(None)))
+    text = result["description_placeholders"]["result"]
+
+    assert "Validation: 1 error(s), 0 warning(s)." in text
+    assert "unknown_condition_ref" in text
+    assert "mode 'm1'" in text
+    # Not attributed to the *other* mode -- attribution must be specific.
+    assert "mode 'm2'" not in text
+
+
+def test_check_matrix_reports_not_yet_evaluated_with_no_runtime_data(subentry_entry, options_hass):
+    """A `ConfigEntry` that has not finished `async_setup_entry` (or never
+    will, because `validate()` already refuses it -- see `__init__.py`) has
+    no `runtime_data` at all; the report must say so plainly rather than
+    raising `AttributeError` on the one case it exists to describe.
+    """
+    monkeypatch_free_entry = subentry_entry()
+    flow = _make_flow(options_hass(monkeypatch_free_entry))
+
+    result = _form(asyncio.run(flow.async_step_check_matrix(None)))
+
+    assert "not yet evaluated" in result["description_placeholders"]["result"]
+
+
+def test_check_matrix_reports_the_coordinators_last_success_and_error(subentry_entry, options_hass):
+    """Once the entry has a coordinator, its `last_success`/`last_error`
+    must be surfaced verbatim -- this is the "last successful recomputation,
+    and any error from it" half of Task 4's brief.
+    """
+    entry = subentry_entry()
+    when = dt.datetime(2026, 8, 27, 12, 0, 0, tzinfo=dt.UTC)
+    entry.runtime_data = SimpleNamespace(
+        coordinator=SimpleNamespace(last_success=when, last_error="ValueError: boom")
+    )
+    flow = _make_flow(options_hass(entry))
+
+    result = _form(asyncio.run(flow.async_step_check_matrix(None)))
+    text = result["description_placeholders"]["result"]
+
+    assert when.isoformat() in text
+    assert "ValueError: boom" in text
+
+
+def test_check_matrix_reports_no_error_when_the_coordinator_has_none(subentry_entry, options_hass):
+    entry = subentry_entry()
+    entry.runtime_data = SimpleNamespace(
+        coordinator=SimpleNamespace(last_success=None, last_error=None)
+    )
+    flow = _make_flow(options_hass(entry))
+
+    result = _form(asyncio.run(flow.async_step_check_matrix(None)))
+    text = result["description_placeholders"]["result"]
+
+    assert "last successful recompute never; no error" in text
 
 
 # ---------------------------------------------------------------------------

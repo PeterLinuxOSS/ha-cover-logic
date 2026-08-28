@@ -294,7 +294,7 @@
           "modes": "Modes ({modes_count})",
           "rules": "Rules ({rules_count})",
           "import_export": "Import / export YAML",
-          "check_matrix": "Check against the old matrix"
+          "check_matrix": "Configuration health ({health_summary})"
         }
       },
       "blinds": {
@@ -453,7 +453,7 @@
         }
       },
       "check_matrix": {
-        "title": "Check against the old matrix",
+        "title": "Configuration health",
         "description": "{result}"
       }
     },

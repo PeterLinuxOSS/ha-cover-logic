@@ -90,9 +90,11 @@ from .config_store import (
     ZONE,
     _grouped_rules,
     config_from_subentries,
+    duplicate_rule_order_problems,
 )
 from .conformance import diff_configs, repo_fixture_path
 from .const import DEFAULT_CONFIG_PATH
+from .model import Config
 from .services import (
     ATTR_DRY_RUN,
     ATTR_OVERWRITE,
@@ -102,6 +104,7 @@ from .services import (
     _async_export_config,
     _async_import_config,
 )
+from .validation import ERROR, WARNING, Problem, validate
 
 # The main menu's options, in the order the task brief's own mock-up lays
 # them out column-major (nouns first -- blind/zone/value -- then the logic
@@ -223,6 +226,123 @@ def _rule_overview_text(entry: Any) -> str:
     return "\n".join(lines)
 
 
+def _current_problems(entry: Any) -> tuple[Config | None, list[Problem]]:
+    """Parse `entry`'s subentries and return `(config_or_None, problems)`.
+
+    The one place this task's two health surfaces -- the main menu's
+    at-a-glance summary (`_health_summary_text`) and `check_matrix`'s full
+    report -- both get their problem list from, so a save that fixes (or
+    breaks) something shows the same count in both places rather than two
+    independently-computed answers drifting apart. Calls exactly the checks
+    `_SubentryFlowBase._blocking_errors` already runs before a save
+    (`validate`, `duplicate_rule_order_problems`) -- see that method's own
+    docstring for why together they are one source's complete set -- never
+    a third, re-derived notion of "is this configuration sound".
+
+    `config` is `None` when the entry does not even parse into a `Config` at
+    all; `problems` in that case is a single synthetic `Problem` naming the
+    parse failure, unattributed (no single subentry is "the" cause of a
+    structural error like a missing required key) -- an unreadable
+    configuration is not a healthy one either, and reporting zero problems
+    for it would be worse than misleading.
+    """
+    try:
+        config = config_from_subentries(entry)
+    except ConfigError as err:
+        problem = Problem(ERROR, "config_unparsable", f"configuration does not parse: {err}")
+        return None, [problem]
+    return config, validate(config) + duplicate_rule_order_problems(entry)
+
+
+def _owner_text(owners: frozenset[tuple[str, str]]) -> str:
+    """A `[type 'id', ...]` suffix naming which subentries `problem.owners` points at.
+
+    Empty for a `Problem` `validate()` cannot attribute to one subentry (see
+    `validation.Problem.owners`'s own docstring -- most codes have exactly
+    one owning *type*, not a specific instance). For `condition`/`mode`, the
+    `id` in `owners` is already the value the type's own form and its
+    picker list (`_items`) show as that subentry's title (`_SubentryFlowBase.
+    _title`'s default), so no lookup back to a real subentry id is needed
+    to make it findable. For `rule`, `id` is the `"<mode>.<zone>#<index>"`
+    string `validation._rule_owner`/`config_store.rule_owner_ids` share --
+    the same label `engine._apply_rules` puts in a decision trace -- which
+    names exactly the `(mode, zone)` group and position the "Rules -> See
+    what the house will do" report (`_rule_overview_text`) already lists
+    rules under, so it points at that same screen rather than needing its
+    own second resolution of "which real subentry is this".
+    """
+    if not owners:
+        return ""
+    return " [" + ", ".join(f"{kind} {name!r}" for kind, name in sorted(owners)) + "]"
+
+
+def _problem_line(problem: Problem) -> str:
+    """One problem as `"SEVERITY code: message [owner, ...]"`."""
+    owner_text = _owner_text(problem.owners)
+    return f"{problem.severity.upper()} {problem.code}: {problem.message}{owner_text}"
+
+
+def _severity_counts(problems: list[Problem]) -> tuple[int, int]:
+    """`(errors, warnings)` -- how many of each severity `problems` holds."""
+    errors = sum(1 for p in problems if p.severity == ERROR)
+    warnings = sum(1 for p in problems if p.severity == WARNING)
+    return errors, warnings
+
+
+def _health_summary_text(entry: Any) -> str:
+    """One short phrase for the main menu's `check_matrix` label: is this configuration sound?
+
+    Read fresh on every main-menu render (`_show_main_menu`) -- `entry`'s
+    subentries already live in memory, so this is the same cheap in-process
+    parse-and-validate `check_matrix` itself pays per click, not a cached
+    counter that could go stale relative to it.
+    """
+    config, problems = _current_problems(entry)
+    if config is None:
+        return "configuration does not parse"
+    errors, warnings = _severity_counts(problems)
+    if not errors and not warnings:
+        return "no problems found"
+    parts = []
+    if errors:
+        parts.append(f"{errors} error" + ("s" if errors != 1 else ""))
+    if warnings:
+        parts.append(f"{warnings} warning" + ("s" if warnings != 1 else ""))
+    return ", ".join(parts)
+
+
+def _validation_report_text(problems: list[Problem]) -> str:
+    """`"N error(s), M warning(s)."`, followed by one attributed line per problem."""
+    errors, warnings = _severity_counts(problems)
+    header = f"{errors} error(s), {warnings} warning(s)."
+    if not problems:
+        return header
+    return header + "\n" + "\n".join(_problem_line(p) for p in problems)
+
+
+def _coordinator_status_text(entry: Any) -> str:
+    """Describe the coordinator's last recomputation, or that none has run yet.
+
+    `entry.runtime_data` (`__init__.CoverLogicData`) only exists once
+    `async_setup_entry` has gotten as far as constructing the coordinator --
+    absent for an entry that has not finished starting yet, or that raised
+    `ConfigEntryNotReady` before reaching that point (exactly the case a
+    configuration with `ERROR`-severity problems hits -- see `__init__.py`'s
+    own docstring). `getattr` rather than a plain attribute read is what
+    keeps this screen usable for precisely the entry states the health
+    overview exists to describe, instead of raising `AttributeError` on the
+    one case ("nothing has evaluated yet") it most needs to report on.
+    """
+    data = getattr(entry, "runtime_data", None)
+    coordinator = getattr(data, "coordinator", None)
+    if coordinator is None:
+        return "not yet evaluated (the integration has not finished starting)"
+    when = coordinator.last_success.isoformat() if coordinator.last_success is not None else "never"
+    if coordinator.last_error:
+        return f"last successful recompute {when}; current error: {coordinator.last_error}"
+    return f"last successful recompute {when}; no error"
+
+
 def _pick_schema(items: list[tuple[str, str]]) -> vol.Schema:
     """A single required field: choose one of `items` by id, shown by title.
 
@@ -309,11 +429,17 @@ class CoverLogicOptionsFlow(OptionsFlow):
         return await self._show_main_menu()
 
     async def _show_main_menu(self) -> dict[str, Any]:
-        counts = _counts(self.config_entry)
+        entry = self.config_entry
+        counts = _counts(entry)
         placeholders = {
             f"{section}_count": str(counts[subentry_type])
             for section, subentry_type in _SECTION_TYPE.items()
         }
+        # `health_summary` is Task 4's "at a glance" requirement: shown right
+        # on the `check_matrix` menu option's own label (see strings.json),
+        # not only after opening that screen -- see `_health_summary_text`'s
+        # own docstring for why it is safe to recompute on every render.
+        placeholders["health_summary"] = _health_summary_text(entry)
         return self.async_show_menu(
             step_id="init", menu_options=_MAIN_MENU_OPTIONS, description_placeholders=placeholders
         )
@@ -637,48 +763,80 @@ class CoverLogicOptionsFlow(OptionsFlow):
     async def async_step_check_matrix(
         self, user_input: dict[str, Any] | None = None
     ) -> dict[str, Any]:
-        """Report whether the live subentries still match `fixtures/dom_peter.yaml`.
+        """The full health report: static problems, drift from the fixture, last recompute.
 
-        Reads `conformance.diff_configs`/`repo_fixture_path` -- the exact
-        comparison `__init__.py`'s own `fixture_drift` repair issue already
-        uses -- rather than a second, form-shaped re-implementation of "do
-        these two configs mean the same thing". A richer health overview
-        (`validate()`'s own findings, clickable to the offending subentry) is
-        this plan's Task 4, not this one; this screen only answers the one
-        question its menu label promises.
+        Task 4's deepening of what used to be only a fixture-drift check
+        (see the git history of this method's own docstring for that
+        earlier, narrower version): three independent questions, each
+        answered by reading the one place that already owns the answer,
+        never by a second, form-shaped re-implementation of any of them.
+
+        - **Validation** (`_current_problems`/`_validation_report_text`):
+          reads `validation.validate` and `config_store.
+          duplicate_rule_order_problems` -- together, the exact pipeline
+          `_SubentryFlowBase._blocking_errors` already runs before a save --
+          and reports counts by severity plus one attributed line per
+          problem, from `Problem.owners` (see `_owner_text`), rather than
+          just "ok"/"not ok". That attribution is the whole point: a count
+          with nowhere to click is not "findable" by this task's own
+          standard, so each line names the `(subentry_type, id)` the
+          Rules/Conditions/Modes sections above already list things by,
+          which is where that same problem is fixed.
+        - **Conformance** (`diff_configs`/`repo_fixture_path`): the exact
+          comparison `__init__.py`'s own `fixture_drift` repair issue
+          already uses.
+        - **Last recompute** (`_coordinator_status_text`): reads
+          `CoverLogicCoordinator.last_success`/`last_error` directly off
+          `entry.runtime_data`, never re-evaluates the engine itself here.
+
+        All three read the entry as it stands right now, not a stale copy;
+        parsing (`config_from_subentries`) happens once, not once per
+        section, so a parse failure is reported consistently across all
+        three rather than the conformance section re-deriving its own
+        "could not be read" text independently of `_current_problems`.
         """
         if user_input is not None:
             return await self._show_main_menu()
 
         entry = self.config_entry
-        try:
-            config = config_from_subentries(entry)
-        except ConfigError as err:
-            result = f"The current configuration could not be read: {err}"
-        else:
-            fixture = repo_fixture_path()
-            if fixture is None:
-                result = (
-                    "This installation ships no fixtures/dom_peter.yaml to compare "
-                    "against -- nothing to check here."
-                )
-            else:
-                try:
-                    reference = await self.hass.async_add_executor_job(
-                        load_config_file, str(fixture)
-                    )
-                except (ConfigError, OSError) as err:
-                    result = f"fixtures/dom_peter.yaml could not be read: {err}"
-                else:
-                    diff = diff_configs(config, reference)
-                    result = (
-                        "Matches fixtures/dom_peter.yaml exactly."
-                        if not diff
-                        else f"Differs from fixtures/dom_peter.yaml in: {', '.join(diff)}."
-                    )
+        config, problems = _current_problems(entry)
+        validation_text = _validation_report_text(problems)
+        conformance_text = (
+            await self._conformance_text(config)
+            if config is not None
+            else "not checked -- the configuration does not parse (see Validation above)"
+        )
 
+        result = (
+            f"Validation: {validation_text}\n\n"
+            f"Conformance with fixtures/dom_peter.yaml: {conformance_text}\n\n"
+            f"Recomputation: {_coordinator_status_text(entry)}"
+        )
         return self.async_show_form(
             step_id="check_matrix",
             data_schema=vol.Schema({}),
             description_placeholders={"result": result},
+        )
+
+    async def _conformance_text(self, config: Config) -> str:
+        """Fixture-drift half of `async_step_check_matrix`'s report, given an already-parsed config.
+
+        Split out so parsing (`config_from_subentries`) happens exactly once
+        per render -- see that method's own docstring.
+        """
+        fixture = repo_fixture_path()
+        if fixture is None:
+            return (
+                "This installation ships no fixtures/dom_peter.yaml to compare "
+                "against -- nothing to check here."
+            )
+        try:
+            reference = await self.hass.async_add_executor_job(load_config_file, str(fixture))
+        except (ConfigError, OSError) as err:
+            return f"fixtures/dom_peter.yaml could not be read: {err}"
+        diff = diff_configs(config, reference)
+        return (
+            "Matches fixtures/dom_peter.yaml exactly."
+            if not diff
+            else f"Differs from fixtures/dom_peter.yaml in: {', '.join(diff)}."
         )

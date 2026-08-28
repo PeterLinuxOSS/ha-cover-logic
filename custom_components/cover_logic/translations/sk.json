@@ -294,7 +294,7 @@
           "modes": "Režimy ({modes_count})",
           "rules": "Pravidlá ({rules_count})",
           "import_export": "Import / export YAML",
-          "check_matrix": "Kontrola proti starej matici"
+          "check_matrix": "Zdravie konfigurácie ({health_summary})"
         }
       },
       "blinds": {
@@ -453,7 +453,7 @@
         }
       },
       "check_matrix": {
-        "title": "Kontrola proti starej matici",
+        "title": "Zdravie konfigurácie",
         "description": "{result}"
       }
     },
