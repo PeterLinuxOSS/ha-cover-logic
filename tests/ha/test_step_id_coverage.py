@@ -15,9 +15,9 @@ async_step_x(...))`), by design and for good reason (a working domain
 config-entry storage and the loader; see e.g. `test_config_flow.py`'s own
 module docstring), which means none of them ever go through
 `_raise_if_step_does_not_exist` at all. Exactly this happened once: a rendered
-`step_id="example_not_available"` had no matching method, and the entire
-294-test Python-3.14 suite (at the time) stayed green because nothing in it
-used the manager. Caught by reasoning, fixed by giving that screen its own
+`step_id="example_not_available"` had no matching method, and the whole
+method-calling test suite stayed green because nothing in it used the
+manager. Caught by reasoning, fixed by giving that screen its own
 `async_step_example_not_available` -- but nothing stopped the same mistake
 recurring at the next screen, since the fix was local to that one call site.
 
