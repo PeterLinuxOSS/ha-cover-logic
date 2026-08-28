@@ -224,9 +224,9 @@ async def async_migrate_entry(hass: "HomeAssistant", entry: "CoverLogicConfigEnt
     path any longer.
 
     The file itself is left completely untouched -- it is the user's own
-    backup (`docs/rationale.md`'s own house-config `CLAUDE.md` states this
-    same rule for `automations.yaml`/`scripts.yaml`: never assume permission
-    to remove a file just because its content has been read once), and this
+    backup (the operator's own house-config `CLAUDE.md` states this same
+    rule for `automations.yaml`/`scripts.yaml`: never assume permission to
+    remove a file just because its content has been read once), and this
     function never opens it for anything but reading.
 
     Idempotent, two ways at once:
