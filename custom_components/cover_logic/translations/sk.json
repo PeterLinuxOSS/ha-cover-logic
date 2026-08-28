@@ -251,6 +251,12 @@
       }
     }
   },
+  "issues": {
+    "fixture_drift": {
+      "title": "Konfigurácia sa už nezhoduje s fixtures/dom_peter.yaml",
+      "description": "Žalúzie, zóny, režimy, podmienky, hodnoty alebo pravidlá nastavené tu sa už nezhodujú so súborom `fixtures/dom_peter.yaml` z tohto repozitára -- práve ten meria migračná brána na 92 160 scenároch. Rozdielne polia: {fields}. Naimportuj ten súbor znova (služba `import_config`), aby sa oba stavy opäť zjednotili, alebo uprav fixture podľa toho, čo je skutočne zamýšľané, skôr než sa na bránu opäť spoľahneš."
+    }
+  },
   "services": {
     "import_config": {
       "name": "Importovať konfiguráciu",

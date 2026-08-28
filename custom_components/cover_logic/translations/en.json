@@ -251,6 +251,12 @@
       }
     }
   },
+  "issues": {
+    "fixture_drift": {
+      "title": "Configuration no longer matches fixtures/dom_peter.yaml",
+      "description": "The blinds, zones, modes, conditions, values or rules configured here no longer match this checkout's own `fixtures/dom_peter.yaml` -- the file the 92,160-scenario migration gate measures. Differing: {fields}. Re-import that file (the `import_config` service) to bring the two back together, or update the fixture to match the configuration you actually intend, before trusting the gate again."
+    }
+  },
   "services": {
     "import_config": {
       "name": "Import configuration",

@@ -22,9 +22,12 @@ import pytest
 
 pytest.importorskip("homeassistant")
 
+from homeassistant.config_entries import ConfigSubentry
 from homeassistant.exceptions import ConfigEntryNotReady
 
 from cover_logic import PLATFORMS, CoverLogicData, async_setup_entry, async_unload_entry
+from cover_logic.config_schema import load_config
+from cover_logic.config_store import subentries_from_config
 from cover_logic.const import CONF_CONFIG_PATH
 
 # Zero problems of any severity: one blind, one zone that owns it, one
@@ -203,3 +206,100 @@ def test_reload_rereads_the_file_not_a_cached_parse(tmp_path, make_entry, setup_
     asyncio.run(async_setup_entry(hass, entry))
 
     assert set(entry.runtime_data.config.blinds) == {"cover.b"}
+
+
+# --- reading from subentries, and the fixture-conformance repair issue -----
+#
+# All of these go through `async_setup_entry`'s `if entry.subentries:` branch
+# (see that function's own docstring), which also calls
+# `_check_fixture_conformance` -- and this checkout's own
+# `fixtures/dom_peter.yaml` genuinely exists on disk here (see
+# `conformance.repo_fixture_path`'s docstring), so every test below that
+# takes this branch must stub `homeassistant.helpers.issue_registry`'s two
+# functions rather than let them run against `FakeSetupHass`, which has no
+# `.data` for a real `IssueRegistry` to live in.
+
+
+def _subentries_for_config(config):
+    """Every subentry `config` would produce, wrapped as real `ConfigSubentry`s."""
+    return {
+        f"sub{i}": ConfigSubentry(data=data, subentry_type=kind, title="", unique_id=None)
+        for i, (kind, data) in enumerate(subentries_from_config(config))
+    }
+
+
+def _subentries_for(text):
+    return _subentries_for_config(load_config(text))
+
+
+def test_setup_reads_config_from_subentries_when_present(make_entry, setup_hass):
+    """Once an entry has subentries, `Config` must come from them -- never from
+    `CONF_CONFIG_PATH`, which this entry does not even carry (a version-2
+    entry, per `async_migrate_entry`'s own docstring, drops that key).
+    """
+    entry = make_entry({}, subentries=_subentries_for(VALID_CONFIG))
+    hass = setup_hass()
+
+    with (
+        mock.patch("homeassistant.helpers.issue_registry.async_create_issue"),
+        mock.patch("homeassistant.helpers.issue_registry.async_delete_issue"),
+    ):
+        assert asyncio.run(async_setup_entry(hass, entry)) is True
+
+    assert set(entry.runtime_data.config.blinds) == {"cover.a"}
+
+
+def test_setup_creates_fixture_drift_issue_when_subentries_diverge(make_entry, setup_hass):
+    """The whole point of this task's conformance check: a subentry-backed
+    config that has drifted from this checkout's own `fixtures/dom_peter.yaml`
+    must raise a loud, persistent repair issue, not pass unnoticed.
+    """
+    entry = make_entry({}, subentries=_subentries_for(VALID_CONFIG))
+    hass = setup_hass()
+
+    with (
+        mock.patch("homeassistant.helpers.issue_registry.async_create_issue") as create,
+        mock.patch("homeassistant.helpers.issue_registry.async_delete_issue") as delete,
+    ):
+        asyncio.run(async_setup_entry(hass, entry))
+
+    create.assert_called_once()
+    _hass_arg, domain, issue_id = create.call_args.args
+    assert (domain, issue_id) == ("cover_logic", "fixture_drift")
+    assert create.call_args.kwargs["translation_key"] == "fixture_drift"
+    assert "blinds" in create.call_args.kwargs["translation_placeholders"]["fields"]
+    delete.assert_not_called()
+
+
+def test_check_fixture_conformance_clears_the_issue_when_config_matches_the_real_fixture():
+    """This checkout's own `fixtures/dom_peter.yaml`, loaded back as a `Config`, must
+    compare equal to itself: proof this conformance check does not fire on a
+    false positive, only on a real one.
+
+    Calls `_check_fixture_conformance` directly rather than through the full
+    `async_setup_entry` -> `CoverLogicCoordinator.async_setup` path: the real
+    fixture's many referenced entities would make the coordinator reach for
+    `homeassistant.helpers.event.async_track_state_change_event`, which needs
+    a real `hass.bus`/`hass.data` `FakeSetupHass` does not provide (see
+    `hass_factory`'s own docstring on why `test_coordinator.py` uses a real,
+    minimal `HomeAssistant` for exactly that reason) -- disproportionate for
+    a test about the conformance check alone, which never touches `hass`
+    itself except to pass it through to the two mocked `issue_registry`
+    calls below.
+    """
+    from cover_logic import _check_fixture_conformance  # noqa: PLC0415
+    from cover_logic.config_schema import load_config_file  # noqa: PLC0415
+    from cover_logic.conformance import repo_fixture_path  # noqa: PLC0415
+
+    fixture = repo_fixture_path()
+    assert fixture is not None, "this test suite must run from inside the project checkout"
+    config = load_config_file(fixture)
+
+    with (
+        mock.patch("homeassistant.helpers.issue_registry.async_create_issue") as create,
+        mock.patch("homeassistant.helpers.issue_registry.async_delete_issue") as delete,
+    ):
+        _check_fixture_conformance(mock.sentinel.hass, config)
+
+    create.assert_not_called()
+    delete.assert_called_once_with(mock.sentinel.hass, "cover_logic", "fixture_drift")

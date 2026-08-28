@@ -45,7 +45,14 @@ from .config_store import (
     duplicate_rule_order_problems,
     rule_owner_ids,
 )
-from .const import CONF_CONFIG_PATH, DEFAULT_CONFIG_PATH, DOMAIN, EVENT_ARRIVAL, EVENT_STATE_CHANGE
+from .const import (
+    CONF_CONFIG_PATH,
+    CONFIG_ENTRY_VERSION,
+    DEFAULT_CONFIG_PATH,
+    DOMAIN,
+    EVENT_ARRIVAL,
+    EVENT_STATE_CHANGE,
+)
 from .validation import ERROR, Problem, validate
 
 _LOGGER = logging.getLogger(__name__)
@@ -77,7 +84,7 @@ async def _describe_problems(hass: HomeAssistant, path: str) -> str | None:
 class CoverLogicConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Cover Logic."""
 
-    VERSION = 1
+    VERSION = CONFIG_ENTRY_VERSION
 
     async def async_step_user(
         self, user_input: dict[str, str] | None = None

@@ -15,6 +15,7 @@ PURE_MODULES = [
     "conditions.py",
     "config_schema.py",
     "config_store.py",
+    "conformance.py",
     "engine.py",
     "validation.py",
     "legacy.py",

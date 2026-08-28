@@ -4,7 +4,10 @@ Phase 1 is the decision core (`config_schema`, `model`, `world`,
 `conditions`, `engine`, `validation`) -- pure Python, no Home Assistant
 imports, tested standalone. Phase 2 adds the Home Assistant layer; this
 module is the config entry's entry point (`async_setup_entry`,
-`async_unload_entry`).
+`async_unload_entry`, and -- since this task -- `async_migrate_entry`, which
+moves an entry created before phase 4 (a config file path, no subentries)
+onto subentries, the shape `config_flow.py`'s subentry flows and
+`services.py`'s `import_config`/`export_config` already assume).
 
 Every Home Assistant name this file needs is either deferred behind
 `TYPE_CHECKING` (for annotations, quoted as strings since this project does
@@ -25,7 +28,9 @@ import logging
 from typing import TYPE_CHECKING
 
 from .config_schema import ConfigError, load_config_file
-from .const import CONF_CONFIG_PATH
+from .config_store import config_from_subentries
+from .conformance import diff_configs, repo_fixture_path
+from .const import CONF_CONFIG_PATH, CONFIG_ENTRY_VERSION, DOMAIN
 from .model import Config
 from .validation import ERROR, validate
 
@@ -36,6 +41,10 @@ if TYPE_CHECKING:
     from .coordinator import CoverLogicCoordinator
 
 _LOGGER = logging.getLogger(__name__)
+
+# `issue_registry.async_create_issue`/`async_delete_issue` key this entry's
+# own repair issue; see `_check_fixture_conformance`.
+_FIXTURE_DRIFT_ISSUE = "fixture_drift"
 
 # Plain strings, not `homeassistant.const.Platform.SENSOR` -- an enum import
 # would be one more Home Assistant name at module level, exactly what this
@@ -59,43 +68,62 @@ if TYPE_CHECKING:
 async def async_setup_entry(hass: "HomeAssistant", entry: "CoverLogicConfigEntry") -> bool:
     """Set up cover_logic from a config entry.
 
-    Loads the YAML file named by `entry.data[CONF_CONFIG_PATH]` and runs
-    `validate()` over it. An `ERROR`-severity problem refuses the start --
+    Reads the `Config` from `entry.subentries` if there are any, otherwise
+    from the YAML file named by `entry.data[CONF_CONFIG_PATH]` -- the shape
+    an entry has *before* `async_migrate_entry` (below) ever ran, or a fresh
+    entry created through the still-unchanged `user` step of `config_flow.py`
+    that nobody has added a subentry to yet. `validate()` runs over the
+    result either way. An `ERROR`-severity problem refuses the start --
     `ConfigEntryNotReady`, naming every such problem -- rather than running
     with rules nobody checked; a `WARNING`-severity one is only logged, not
-    fatal. A missing or unparsable file fails the same clean way, not with a
-    raw traceback: both `ConfigError` (bad YAML/schema) and `OSError`
-    (missing file, permissions, ...) become `ConfigEntryNotReady`.
+    fatal. A missing or unparsable file (the YAML branch only -- reading
+    subentries does no I/O and cannot raise `OSError`) fails the same clean
+    way, not with a raw traceback: both `ConfigError` (bad YAML/schema/
+    subentries) and `OSError` become `ConfigEntryNotReady`.
 
-    The file is re-read on every call, including a config entry reload --
-    nothing about the parsed `Config` is cached across calls or stashed at
-    module level. That is deliberate: editing the YAML and reloading the
-    entry is the whole debugging loop for phases 2-4.
+    Both sources are re-read on every call, including a config entry reload
+    -- nothing about the parsed `Config` is cached across calls or stashed at
+    module level. That is deliberate: editing the YAML (or a subentry) and
+    reloading the entry is the whole debugging loop for phases 2-4.
     """
     # Deferred: see the module docstring for why this cannot be a top-level
     # import.
     from homeassistant.exceptions import ConfigEntryNotReady  # noqa: PLC0415
 
-    path = entry.data[CONF_CONFIG_PATH]
-
-    try:
-        config = await hass.async_add_executor_job(load_config_file, path)
-    except ConfigError as err:
-        msg = f"cover_logic: config at {path!r} is invalid: {err}"
-        raise ConfigEntryNotReady(msg) from err
-    except OSError as err:
-        msg = f"cover_logic: config at {path!r} could not be read: {err}"
-        raise ConfigEntryNotReady(msg) from err
+    if entry.subentries:
+        try:
+            config = config_from_subentries(entry)
+        except ConfigError as err:
+            msg = f"cover_logic: this entry's subentries could not be read: {err}"
+            raise ConfigEntryNotReady(msg) from err
+        source = "subentries"
+        # Only meaningful once subentries are the source of truth -- see
+        # that function's own docstring for why a still-legacy, path-based
+        # entry (the `else` branch below) has nothing of this kind to check.
+        _check_fixture_conformance(hass, config)
+    else:
+        path = entry.data[CONF_CONFIG_PATH]
+        try:
+            config = await hass.async_add_executor_job(load_config_file, path)
+        except ConfigError as err:
+            msg = f"cover_logic: config at {path!r} is invalid: {err}"
+            raise ConfigEntryNotReady(msg) from err
+        except OSError as err:
+            msg = f"cover_logic: config at {path!r} could not be read: {err}"
+            raise ConfigEntryNotReady(msg) from err
+        source = f"file {path!r}"
 
     problems = validate(config)
     errors = [problem for problem in problems if problem.severity == ERROR]
     if errors:
         summary = "; ".join(f"{problem.code}: {problem.message}" for problem in errors)
-        msg = f"cover_logic: config at {path!r} has errors: {summary}"
+        msg = f"cover_logic: config from {source} has errors: {summary}"
         raise ConfigEntryNotReady(msg)
 
     for problem in problems:
-        _LOGGER.warning("cover_logic: config at %s: %s: %s", path, problem.code, problem.message)
+        _LOGGER.warning(
+            "cover_logic: config from %s: %s: %s", source, problem.code, problem.message
+        )
 
     # Deferred: see the module docstring for why this cannot be a top-level
     # import.
@@ -118,6 +146,158 @@ async def async_setup_entry(hass: "HomeAssistant", entry: "CoverLogicConfigEntry
 
     async_register_services(hass)
 
+    return True
+
+
+def _check_fixture_conformance(hass: "HomeAssistant", config: Config) -> None:
+    """Raise or clear the `fixture_drift` repair issue for this checkout's own fixture.
+
+    A no-op everywhere `conformance.repo_fixture_path()` returns `None` -- see
+    that function's docstring for why that has to include every installation
+    of this integration except this project's own development host.
+    Deliberately a `Config`-equality comparison (`conformance.diff_configs`),
+    never a re-read of the fixture as text: a difference in comments, key
+    order or quoting is not drift, only a difference in meaning is (see the
+    task report's "meaning, not text" section).
+
+    Called from `async_setup_entry` on every setup of a subentry-backed
+    entry, not just once at migration time -- a subentry can be added,
+    edited or removed at any point after that through the flows in
+    `config_flow.py`, and each of those is exactly the moment this project's
+    own `MODELS.md` (Sec. 5) warns the gate could start measuring something
+    other than what the house runs. A repair issue is Home Assistant's own
+    mechanism for "something needs attention and must stay visible until it
+    doesn't" (Settings -> System -> Repairs), which is what "must not be able
+    to pass unnoticed" (this task's own requirement) means for a live house,
+    as opposed to `tests/parity/test_subentry_conformance.py`'s dev-time
+    version of the same check -- see that module's docstring for why both
+    exist instead of just one.
+    """
+    # Deferred: see the module docstring for why this cannot be a top-level
+    # import.
+    from homeassistant.helpers import issue_registry as ir  # noqa: PLC0415
+
+    fixture = repo_fixture_path()
+    if fixture is None:
+        ir.async_delete_issue(hass, DOMAIN, _FIXTURE_DRIFT_ISSUE)
+        return
+
+    try:
+        reference = load_config_file(fixture)
+    except (ConfigError, OSError):
+        # The fixture's own health is `tests/test_fixture_dom_peter.py`'s
+        # job, not this check's -- a broken fixture is not evidence that the
+        # *live* configuration drifted from it, so this clears rather than
+        # raises the issue.
+        ir.async_delete_issue(hass, DOMAIN, _FIXTURE_DRIFT_ISSUE)
+        return
+
+    diff = diff_configs(config, reference)
+    if not diff:
+        ir.async_delete_issue(hass, DOMAIN, _FIXTURE_DRIFT_ISSUE)
+        return
+
+    _LOGGER.warning("cover_logic: live subentries no longer match %s: %s", fixture, ", ".join(diff))
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        _FIXTURE_DRIFT_ISSUE,
+        is_fixable=False,
+        severity=ir.IssueSeverity.WARNING,
+        translation_key=_FIXTURE_DRIFT_ISSUE,
+        translation_placeholders={"fields": ", ".join(sorted(diff))},
+    )
+
+
+async def async_migrate_entry(hass: "HomeAssistant", entry: "CoverLogicConfigEntry") -> bool:
+    """Migrate an old-shape entry (a config file path, no subentries) onto subentries.
+
+    Home Assistant's own migration mechanism: called automatically before
+    `async_setup_entry` whenever `entry.version` is below this integration's
+    current `config_flow.CoverLogicConfigFlow.VERSION`
+    (`const.CONFIG_ENTRY_VERSION`), never invented as some separate one-off
+    step. Version 1 is the original shape this integration shipped with --
+    `entry.data[CONF_CONFIG_PATH]`, no subentries, `async_setup_entry` reading
+    the YAML file on every start. Version 2 is subentries as the source of
+    truth: the file's content is imported once, and `CONF_CONFIG_PATH` is
+    dropped from `entry.data` so nothing about this entry depends on that
+    path any longer.
+
+    The file itself is left completely untouched -- it is the user's own
+    backup (`docs/rationale.md`'s own house-config `CLAUDE.md` states this
+    same rule for `automations.yaml`/`scripts.yaml`: never assume permission
+    to remove a file just because its content has been read once), and this
+    function never opens it for anything but reading.
+
+    Idempotent, two ways at once:
+
+    - If `entry.subentries` is already non-empty (a previous migration
+      attempt got far enough to import before being interrupted, or the
+      subentry flows / `import_config` populated the entry some other way
+      before the version ever got bumped), the import step is skipped
+      entirely and only the version bump below runs -- never a second import
+      layered on top of a first, which would duplicate every blind, zone,
+      mode, condition, value and rule.
+    - If `entry.version` is already at or above `CONFIG_ENTRY_VERSION`, this
+      returns `True` immediately, doing nothing at all -- the entry is
+      already current, whether this was called because a caller (a test,
+      most concretely) invoked it directly rather than through Home
+      Assistant's own version check.
+
+    Returns `False` (migration failed, entry left at its old version for
+    another attempt on the next start) if the file cannot be read or parsed
+    -- this is the one case with no safe default: importing nothing would
+    silently discard the house's configuration, and there is no fallback
+    file to read instead once this integration decides subentries are the
+    source of truth.
+    """
+    if entry.version >= CONFIG_ENTRY_VERSION:
+        return True
+
+    if not entry.subentries:
+        path = entry.data.get(CONF_CONFIG_PATH)
+        if path is not None:
+            # Deferred: see the module docstring for why this cannot be a
+            # top-level import.
+            from homeassistant.config_entries import ConfigSubentry  # noqa: PLC0415
+
+            from .config_store import subentries_from_config  # noqa: PLC0415
+            from .services import _title_for  # noqa: PLC0415  (reused, not reinvented)
+
+            try:
+                config = await hass.async_add_executor_job(load_config_file, path)
+            except (ConfigError, OSError):
+                _LOGGER.exception(
+                    "cover_logic: migration could not read %s, leaving this entry at "
+                    "version %s for the next attempt",
+                    path,
+                    entry.version,
+                )
+                return False
+
+            for subentry_type, data in subentries_from_config(config):
+                hass.config_entries.async_add_subentry(
+                    entry,
+                    ConfigSubentry(
+                        data=data,
+                        subentry_type=subentry_type,
+                        title=_title_for(subentry_type, data),
+                        unique_id=None,
+                    ),
+                )
+
+            new_data = {k: v for k, v in entry.data.items() if k != CONF_CONFIG_PATH}
+            new_data["guards"] = list(config.guards)
+            hass.config_entries.async_update_entry(
+                entry, data=new_data, version=CONFIG_ENTRY_VERSION
+            )
+            return True
+
+    # Either the import above already ran (subentries non-empty) or there was
+    # never a path to import from -- either way, nothing left to import, only
+    # the version to catch up so this function is not called again.
+    new_data = {k: v for k, v in entry.data.items() if k != CONF_CONFIG_PATH}
+    hass.config_entries.async_update_entry(entry, data=new_data, version=CONFIG_ENTRY_VERSION)
     return True
 
 

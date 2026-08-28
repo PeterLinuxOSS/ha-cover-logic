@@ -100,11 +100,21 @@ class FakeConfigEntry:
     `build_world`. Real `ConfigEntry` has no `__slots__`, so `runtime_data`
     is a plain assignable attribute there too; this fake matches that shape
     by simply not setting it until `async_setup_entry` does.
+
+    `subentries` defaults to `{}` (empty, falsy) so every pre-existing test
+    that only ever passed `data` keeps exercising the legacy, path-based
+    branch of `async_setup_entry` unchanged -- see that function's own
+    docstring for why `entry.subentries` truthy is what switches it onto
+    `config_from_subentries` instead. `version` defaults to `1`, the
+    original shape's version, matching every entry these fixtures built
+    before `async_migrate_entry` existed.
     """
 
-    def __init__(self, data):
-        """Store `data`; `runtime_data` is left unset, matching a fresh entry."""
+    def __init__(self, data, *, subentries=None, version=1):
+        """Store `data`/`subentries`/`version`; `runtime_data` is left unset."""
         self.data = data
+        self.subentries = subentries or {}
+        self.version = version
 
 
 @pytest.fixture
@@ -114,14 +124,19 @@ def make_entry():
 
 
 class FakeEntryConfigEntries:
-    """Stands in for `hass.config_entries` as seen from `async_setup_entry`/`async_unload_entry`.
+    """Stands in for `hass.config_entries` as seen from `async_setup_entry`/`async_unload_entry`
+    and, since this task, `async_migrate_entry`.
 
-    Once `sensor.py` exists, those two functions touch exactly
-    `.async_forward_entry_setups(entry, platforms)` and
+    Once `sensor.py` exists, `async_setup_entry`/`async_unload_entry` touch
+    exactly `.async_forward_entry_setups(entry, platforms)` and
     `.async_unload_platforms(entry, platforms)` -- this fake covers precisely
     that surface, records every call so a test can assert what got forwarded
     or unloaded, and returns `unload_result` (default `True`) the way a real
-    unload does.
+    unload does. `.async_add_subentry`/`.async_update_entry` mirror
+    `FakeServiceConfigEntries`'s identically-named methods below, for
+    `async_migrate_entry`'s own writes -- kept as a separate class rather
+    than reused, since this one, unlike that one, is not also handed a
+    fixed list of pre-wrapped entries to serve back from `.async_entries`.
     """
 
     def __init__(self, *, unload_result=True):
@@ -133,6 +148,19 @@ class FakeEntryConfigEntries:
     async def async_forward_entry_setups(self, entry, platforms):
         """Record the call; a real platform loader would import and set up each platform."""
         self.forwarded.append((entry, list(platforms)))
+
+    def async_add_subentry(self, entry, subentry):
+        """Insert `subentry` keyed by its own `subentry_id`, like the real manager does."""
+        entry.subentries[subentry.subentry_id] = subentry
+        return True
+
+    def async_update_entry(self, entry, *, data=None, version=None, **_ignored):
+        """Replace `entry.data`/`entry.version` in place, like the real manager does."""
+        if data is not None:
+            entry.data = dict(data)
+        if version is not None:
+            entry.version = version
+        return True
 
     async def async_unload_platforms(self, entry, platforms):
         """Record the call and return `unload_result`."""
