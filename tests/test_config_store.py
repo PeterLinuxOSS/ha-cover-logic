@@ -691,8 +691,9 @@ def test_subentries_from_config_preserves_multi_rule_order_within_a_group():
 
 def test_subentries_from_config_round_trips_the_real_fixture(fixtures_dir):
     """The decisive test on the real house's configuration -- 10 blinds, 7
-    zones, 4 modes, 25 conditions, 1 value and 86 rules across 28 `(mode,
-    zone)` groups, several with more than one rule. `subentries_from_config`
+    zones, 4 modes, 20 conditions, 1 value and 80 rules across 22 `(mode,
+    zone)` groups (one of them the `noc` mode's shared `"*"` default, phase 6
+    task 3), several with more than one rule. `subentries_from_config`
     already runs this same equality check on every call (see its own
     docstring's "Before returning" paragraph); this test is what actually
     exercises that self-check against configuration of this size and

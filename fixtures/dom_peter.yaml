@@ -95,7 +95,10 @@ conditions:
     entity_id: binary_sensor.obyvacka_dvere_senzor
     state: "off"
 
-  kvety_on:     {condition: state, entity_id: input_boolean.kvety_on, state: "on"}
+  # `kvety_on` (bez `nie_`) sa nikde nepoužíva -- žiadne pravidlo sa naň
+  # neodkazuje, len jeho opak `nie_kvety_on` nižšie. Odstránené (fáza 6,
+  # task 3): pomenovaná podmienka, na ktorú sa nič neodkazuje, nie je ani
+  # skratka, ani dokumentácia, len mŕtva položka v zozname 25 podmienok.
   nie_kvety_on: {condition: state, entity_id: input_boolean.kvety_on, state: "off"}
 
   rucne_kuchyna:
@@ -104,7 +107,10 @@ conditions:
     state: "on"
 
   hocikto_doma:     {condition: state, entity_id: binary_sensor.is_home, state: "on"}
-  nikto_doma:       {condition: state, entity_id: binary_sensor.is_home, state: "off"}
+  # `nikto_doma` (opak vyššie) sa použil len raz (`horucava.spolocne`) a
+  # nemení polaritu ani nekombinuje nič -- inlinované priamo do toho
+  # pravidla (fáza 6, task 3): meno tu neniesie nič, čo by `entity_id`/`state`
+  # na mieste použitia nepovedali rovnako jasne.
 
   # "Všetci už vstali" — riadi automation.sleeping z postele.
   vstali: {condition: state, entity_id: input_boolean.some_sleeping, state: "off"}
@@ -124,11 +130,12 @@ conditions:
       - {condition: state, entity_id: binary_sensor.pavel_home, state: "off"}
       - {condition: state, entity_id: binary_sensor.majka_home, state: "off"}
 
-  akt_peter:     {condition: state, entity_id: input_boolean.zaluzie_aktivna_peter,  state: "on"}
+  # `akt_peter`/`akt_mimka`/`akt_spalna` (bez `nie_`) boli tiež nepoužité --
+  # odstránené z toho istého dôvodu ako `kvety_on` vyššie. Ich opaky
+  # (`nie_akt_*`) sa používajú dvakrát každý (`horucava.*` aj `bezny_den.*`),
+  # takže tie zostávajú pomenované.
   nie_akt_peter: {condition: state, entity_id: input_boolean.zaluzie_aktivna_peter,  state: "off"}
-  akt_mimka:     {condition: state, entity_id: input_boolean.zaluzie_aktivna_mimka,  state: "on"}
   nie_akt_mimka: {condition: state, entity_id: input_boolean.zaluzie_aktivna_mimka,  state: "off"}
-  akt_spalna:    {condition: state, entity_id: input_boolean.zaluzie_aktivna_spalna, state: "on"}
   nie_akt_spalna: {condition: state, entity_id: input_boolean.zaluzie_aktivna_spalna, state: "off"}
 
 modes:
@@ -139,17 +146,29 @@ modes:
 
 rules:
   # ---- NOC: nič sa nehýbe, ani po príchode ------------------------------
-  noc.spolocne: [{then: {position: keep, tilt: keep}}]
-  noc.kvety:    [{then: {position: keep, tilt: keep}}]
-  noc.terasa:   [{then: {position: keep, tilt: keep}}]
-  noc.terasa2:  [{then: {position: keep, tilt: keep}}]
-  noc.peter:    [{then: {position: keep, tilt: keep}}]
-  noc.mimka:    [{then: {position: keep, tilt: keep}}]
-  noc.spalna:   [{then: {position: keep, tilt: keep}}]
+  # Bolo tu 7 zoznamov, jeden na zónu, všetky s tým istým jediným pravidlom
+  # -- v noci sa nič nehýbe, bez ohľadu na zónu. Odkedy pravidlo bez zóny
+  # (kľúč "*", `const.RULE_DEFAULT_ZONE`) platí ako default pre celý režim
+  # (fáza 6, task 1: `engine._apply_rules`), stačí ho napísať raz. Žiadna zóna
+  # v `noc` nemá vlastný zoznam, takže default nič nezatieni -- `validate()`
+  # na tomto prepise hlási 0 chýb aj 0 varovaní, presne ako predtým.
+  "noc.*": [{then: {position: keep, tilt: keep}}]
 
   # ---- DOVOLENKA: spálne úplne zavreté, spoločné lamely 50 -------------
   # Príchodová varianta je zhodná so stavovou (zp = z), preto žiadne
   # `events:` pravidlá.
+  # `spolocne`/`terasa`/`terasa2` majú identický jednoriadkový zoznam a rovnako
+  # `peter`/`mimka`/`spalna` -- vyzerá to ako ten istý prípad ako `noc` vyššie.
+  # NEKOLABUJE do defaultu -- overené (fáza 6, task 3), že pridanie "*" defaultu sem zakaždým
+  # zdvihne `validate()` varovanie `unreachable_rule` na `dovolenka.kvety`,
+  # lebo tá zóna má vlastný nepodmienený catch-all (`!ref kvety_poz`) s inou
+  # hodnotou než ktorýkoľvek z dvoch kandidátov na default -- `_check_default_
+  # shadowed_by_zone` naň zareaguje bez ohľadu na to, ktorá skupina sa zvolí
+  # za default, a rovnako by zareagoval aj na tú skupinu, čo defaultom
+  # nebude. Zero-warnings je tu tvrdá podmienka (Task 3), takže tieto dva
+  # zoznamy zostávajú explicitné aj po tejto fáze -- vidno tri rôzne koncové
+  # akcie (keep/50, 0/0, kvety_poz/50) v jednom režime a model default vie
+  # niesť len jednu z nich naraz.
   dovolenka.spolocne: [{then: {position: keep, tilt: 50}}]
   dovolenka.kvety:
     - {if: !ref nie_kvety_on, then: {position: keep, tilt: keep}}
@@ -167,7 +186,8 @@ rules:
   horucava.spolocne:
     - {events: [arrival], if: !ref pocasie_otvorene, then: {position: keep, tilt: 100}}
     - {events: [arrival], then: {position: keep, tilt: 50}}
-    - {if: !ref nikto_doma, then: {position: 0, tilt: 0}}
+    - {if: {condition: state, entity_id: binary_sensor.is_home, state: "off"},
+       then: {position: 0, tilt: 0}}
     - {if: !ref pocasie_otvorene, then: {position: keep, tilt: 100}}
     - {if: {condition: sun_hits_target}, then: {position: keep, tilt: 50}}
     - {then: {position: keep, tilt: 100}}
@@ -262,6 +282,11 @@ rules:
     - {if: !ref vecer,         then: {position: !ref kvety_poz, tilt: 0}}
     - {then: {position: !ref kvety_poz, tilt: 100}}
 
+  # `terasa` a `terasa2` sú identické, rovnaký prípad ako `dovolenka` vyššie:
+  # `bezny_den.kvety` má vlastný nepodmienený catch-all (`!ref kvety_poz`,
+  # iná hodnota než čokoľvek tu), takže "*" default pre `bezny_den` by
+  # rovnako zdvihol `unreachable_rule` na `kvety` bez ohľadu na obsah --
+  # overené rovnako ako pri `dovolenka`. Zostáva explicitné zdvojenie.
   bezny_den.terasa:
     - {if: !ref vecer, then: {position: keep, tilt: keep}}
     - {then: {position: 100, tilt: keep}}

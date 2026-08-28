@@ -5,6 +5,7 @@ import datetime as dt
 import pytest
 
 from cover_logic.config_schema import load_config_file
+from cover_logic.const import RULE_DEFAULT_ZONE
 from cover_logic.engine import evaluate
 from cover_logic.validation import ERROR, validate
 from cover_logic.world import Event, World
@@ -50,9 +51,17 @@ def test_fixture_covers_all_ten_blinds(config):
 
 
 def test_every_mode_zone_pair_has_rules(config):
+    """Every (mode, zone) must be decided -- either by its own rule list or by
+    the mode's inherited default (fixture's `noc` collapsed its 7 identical
+    zone lists into a single `noc.*` default, phase 6 task 3), never by
+    neither.
+    """
     for mode in config.modes:
+        default_key = f"{mode.id}.{RULE_DEFAULT_ZONE}"
+        has_default = default_key in config.rules
         for zone_id in config.zones:
-            assert f"{mode.id}.{zone_id}" in config.rules, f"{mode.id}.{zone_id}"
+            own_key = f"{mode.id}.{zone_id}"
+            assert own_key in config.rules or has_default, own_key
 
 
 @pytest.mark.parametrize(
