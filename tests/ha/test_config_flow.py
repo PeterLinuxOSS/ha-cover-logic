@@ -265,7 +265,9 @@ def test_from_example_creates_the_example_house_subentries(flow_hass):
     result = asyncio.run(flow.async_step_from_example({}))
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert result["data"] == {}
+    # `guards` is carried through in `entry.data`, not as a subentry -- see
+    # `config_store.py`'s own docstring; the example config has none today.
+    assert result["data"] == {"guards": []}
     blind_entities = {
         entry["data"]["entity"] for entry in result["subentries"] if entry["subentry_type"] == BLIND
     }

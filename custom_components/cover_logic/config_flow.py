@@ -305,7 +305,16 @@ class CoverLogicConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     _subentry_data(subentry_type, data, _title_for(subentry_type, data))
                     for subentry_type, data in items
                 ]
-                return self.async_create_entry(title="Cover Logic", data={}, subentries=subentries)
+                # `guards` (see `config_store.py`'s own docstring) is not a
+                # subentry type -- it is carried through in `entry.data`
+                # unchanged, the same way `services._async_import_config`
+                # carries it for an import onto an *existing* entry. The
+                # example config has none today, but a future one might.
+                return self.async_create_entry(
+                    title="Cover Logic",
+                    data={"guards": list(config.guards)},
+                    subentries=subentries,
+                )
 
         return self.async_show_form(
             step_id=_STEP_FROM_EXAMPLE,
