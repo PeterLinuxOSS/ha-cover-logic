@@ -2,7 +2,7 @@
 
 This is the single place an AI assistant should read to understand this
 project before making changes. It is derived from the code, the tests and
-`docs/` in this repository as of commit `5f6c228` (branch `main`). Where a
+`docs/` in this repository as of commit `ea044eb` (branch `main`). Where a
 claim could not be verified against something in the repo, that is said
 explicitly rather than guessed.
 
@@ -45,12 +45,24 @@ test:
 - `conditions.py` — evaluates one condition body against a `World`.
 - `config_schema.py` — parses YAML text into a `Config`.
 - `config_store.py` — builds the same `Config` from Home Assistant config
-  subentries, so the UI and a YAML file are two doors into one representation
-  rather than two representations. It duck-types the entry rather than
-  importing `homeassistant`, which is what keeps it on this list.
+  subentries (`config_from_subentries`), so the UI and a YAML file are two
+  doors into one representation, and writes the inverse
+  (`subentries_from_config`, used by `import_config` and by first-run
+  setup), self-checked by round-tripping back through
+  `config_from_subentries` before trusting it. Duck-types the entry rather
+  than importing `homeassistant`, which is what keeps it on this list.
+  Also the one place that groups and sorts rule subentries by
+  `(mode, zone, order)` (`_grouped_rules`) — every other rule-ordering
+  consumer reads that function instead of re-deriving the sort (§9).
+- `conformance.py` — `diff_configs(live, reference)`, a field-by-field
+  `Config` equality check, no YAML/text comparison. Used both by
+  `__init__.py`'s startup repair-issue check and by the options-flow
+  health overview to detect drift from `fixtures/dom_peter.yaml`.
 - `engine.py` — `evaluate(config, world) -> Decision`, the decision core.
 - `validation.py` — static checks over a `Config` (`validate(config) ->
-  list[Problem]`).
+  list[Problem]`), including which subentry(ies) a problem is attributable
+  to (`Problem.owners`, read by `subentry_flow.py`'s form-blocking logic
+  and by the options-flow health report).
 - `legacy.py` — translates the *old* Jinja matrix's action vocabulary into
   `(position, tilt)`, shared by the migration gate and the live comparison
   sensor so the two can never define "matches" differently.
@@ -65,15 +77,51 @@ test:
   evaluation.
 - `sensor.py` — `sensor.cover_logic_mode`, a diagnostic entity: mode,
   per-blind targets, trace, and a live diff against the old matrix.
-- `config_flow.py` — a one-field setup flow (the config file path);
-  validates on submit.
+- `config_flow.py` — the setup flow: a menu of four ways to start (set up
+  blinds now, load a YAML file, start from the bundled example, start
+  empty), each ending in `async_create_entry`; also registers the six
+  subentry flow handlers (`async_get_supported_subentry_types`) and hands
+  out the options flow (`async_get_options_flow`).
+- `subentry_flow.py` — the six subentry-type flow handlers (`blind`, `zone`,
+  `value`, `condition`, `mode`, `rule`): one `ConfigSubentryFlow` subclass
+  per type, plus the schema/data-conversion/validation machinery
+  `options_flow.py` reuses rather than duplicates ("one owner, two doors",
+  below). Also where a save is blocked or allowed: an `ERROR`-severity
+  `Problem` only blocks the specific subentry save that could actually fix
+  it (`_CODE_OWNERS`/`_blocks_on`, reading `Problem.owners` where one type
+  alone cannot disambiguate) — see §9.
+- `options_flow.py` — the main menu (`CoverLogicOptionsFlow`): per-type
+  add/edit/remove over counts read off `entry.subentries`, a read-only
+  "rules in real evaluation order" report, import/export, and a health
+  overview (validation error/warning counts attributed to the causing
+  subentry, conformance against `fixtures/dom_peter.yaml`, the
+  coordinator's last recompute). "One owner, two doors": it never
+  re-implements a subentry type's form, it builds a bare instance of the
+  matching `subentry_flow.py` class and calls its shared methods directly —
+  every one of those methods needs nothing from `self` but the `entry` it
+  is explicitly handed.
+- `services.py` — the `cover_logic.import_config`/`export_config` services:
+  the bridge between the YAML representation and subentries.
+  `import_config` validates first, then either replaces every existing
+  subentry or refuses outright (never a partial merge); `export_config`
+  refuses a symlink, a directory, a missing parent, or a target that
+  already has whole-line comments (`dump_config` cannot reproduce them, so
+  overwriting one would silently discard them).
+- `const.py` — the few names shared across the split (`DOMAIN`, the config
+  entry data key, the current `CONFIG_ENTRY_VERSION`, the non-HA-native
+  condition-type strings), so the config-flow version bump and
+  `async_migrate_entry`'s target version can never drift apart. No
+  `homeassistant` import, but not in the purity-tested list below — it is
+  imported by both sides.
 - `__init__.py` — the config entry's `async_setup_entry`/
-  `async_unload_entry`.
+  `async_unload_entry`/`async_migrate_entry` (moves a version-1, file-path
+  entry onto subentries without touching the original file) and the
+  `fixture_drift` repair-issue check.
 
 `tests/test_purity.py` enforces the split with an AST walk: it parses
 `model.py`, `world.py`, `conditions.py`, `config_schema.py`,
-`config_store.py`, `engine.py`, `validation.py` and `legacy.py` and fails if
-any of them imports anything
+`config_store.py`, `conformance.py`, `engine.py`, `validation.py` and
+`legacy.py` and fails if any of them imports anything
 starting with `homeassistant`. This is what makes exhaustive testing of the
 decision logic possible without an HA runtime, event loop or I/O — the whole
 `tests/test_scenarios.py` / `tests/parity/` machinery depends on the core
@@ -90,7 +138,8 @@ every one of those imports, not just this module's own tests. So
 (quoted, since the project does not use `from __future__ import
 annotations`) or imports it inside the function that needs it, at call
 time — see the module's own docstring for the full reasoning.
-`coordinator.py`, `sensor.py`, `ha_world.py` and `config_flow.py` import
+`coordinator.py`, `sensor.py`, `ha_world.py`, `config_flow.py`,
+`subentry_flow.py`, `options_flow.py` and `services.py` import
 `homeassistant` unconditionally at module level instead, because none of
 them is ever imported by `cover_logic/__init__.py` itself — only by Home
 Assistant's own loader, or by `tests/ha/` behind an explicit
@@ -188,6 +237,19 @@ A worked example for a different, invented house is at
 translation of `fixtures/dom_peter.yaml` and is not used by any parity
 check.
 
+**The same seven keys, as Home Assistant config-entry subentries.** Since
+phase 4, a config entry can hold this same `Config` as six subentry types
+(`blind`, `zone`, `value`, `condition`, `mode`, `rule` — one per YAML key
+that is naturally "many small items"; `guards` is carried through in
+`entry.data` unchanged, its schema still unsettled) instead of, or as well
+as, a YAML file. `config_store.config_from_subentries` reads that shape into
+the identical `Config` `config_schema.load_config` builds from text;
+`config_store.subentries_from_config` is the inverse. A `mode`/`rule`
+subentry carries an explicit integer `order` field YAML does not need —
+subentries are an unordered flat mapping, so first-match-wins resolution
+needs that field to mean anything. The live house's entry has 133 subentries
+today (10 blinds, 7 zones, 1 value, 25 conditions, 4 modes, 86 rules).
+
 ## 5. The migration gate
 
 `tests/parity/test_migration_gate.py` is, in its own words, "THE migration
@@ -280,13 +342,33 @@ corresponding section:
   correct code.
 - **Phase 3 — execution. Not started.** No module in this repository
   issues a Home Assistant service call anywhere yet (that is exactly what
-  phase 2's guard proves).
-- **Phase 4 — UI (full rule-editing config flow / subentries). Not
-  started.** The current `config_flow.py` is deliberately minimal — one
-  field, the config file path — with a comment saying so explicitly.
-  `docs/spike-condition-selector.md` is exploratory research for this
-  phase (whether Home Assistant's native `condition` selector can be used
-  in a subentry flow); it is a spike record, not implemented code.
+  phase 2's guard proves) — `tests/test_no_movement.py` is still in the
+  repo and still passing.
+- **Phase 4 — UI: configuration through Home Assistant config-entry
+  subentries. Complete, deployed, and live on the house.** Configuration
+  now lives as six subentry types (`blind`, `zone`, `value`, `condition`,
+  `mode`, `rule` — §4); `config_store.py` reads/writes them into the same
+  `Config` the YAML path builds. `subentry_flow.py` gives each type its own
+  add/edit/remove flow; `services.py` adds `import_config`/`export_config`
+  (§2); `conformance.py` compares the live configuration against
+  `fixtures/dom_peter.yaml`, surfaced as a `fixture_drift` repair issue on
+  every setup and as a standalone test. `__init__.async_migrate_entry`
+  moves a version-1 (file-path) entry onto subentries without deleting the
+  original file. `docs/spike-condition-selector.md`, this phase's starting
+  research question (can HA's native `condition` selector be reused in a
+  subentry flow), was answered yes.
+- **Phase 5 — making the phase 4 UI usable. Complete, deployed, and live.**
+  Phase 4 shipped with `supports_options: false`: the entry page was Home
+  Assistant's own generic flat "Add blind / Add zone / …" list, no counts,
+  no way to tell an empty section from a full one — the owner's verbatim
+  verdict was "vôbec to teraz nie je intuitívne". `options_flow.py` (§2) is
+  the answer: a main menu with real counts, add/edit/remove per section, a
+  "rules in real evaluation order" report, import/export, and a health
+  overview. `config_flow.py`'s first-run step became a menu of four
+  starting points instead of one bare file-path field. `tests/ha/
+  test_step_id_coverage.py` drives every flow through Home Assistant's real
+  `FlowManager`, catching a dangling `step_id` no other test in this
+  package can see — see §9.
 
 `docs/phase-2-findings.md` records eight findings from a review conducted
 during phase 1, tracked as issues #3–#10. Checked against the code as it
@@ -318,7 +400,7 @@ Two interpreters, on purpose:
   already has, with no `homeassistant` package installed at all. As of
   this writing, run from this checkout (which sits inside the Home
   Assistant host's `/config`, so `tests/parity` finds `matica.py` and runs
-  — see §5): **232 passed, 5 skipped**. The 5 skips are the five
+  — see §5): **302 passed, 11 skipped**. The 11 skips are the eleven
   `tests/ha/*` modules, each behind its own module-level
   `pytest.importorskip("homeassistant")` — nothing under `homeassistant`
   is installed for this interpreter. On a checkout that is not this host,
@@ -327,9 +409,14 @@ Two interpreters, on purpose:
   tests/ -q`. `homeassistant==2026.8.0` itself requires Python ≥3.14.2;
   this venv exists so `tests/ha/` (everything behind
   `pytest.importorskip("homeassistant")`) actually runs instead of being
-  skipped. As of this writing, same checkout: **281 passed**, no skips —
+  skipped. As of this writing, same checkout: **534 passed**, no skips —
   `tests/ha/*` runs because `homeassistant` is installed in `.venv`, and
   `tests/parity` runs for the same host-adjacency reason as above.
+  **This venv's `homeassistant==2026.8.0` is one version behind the house
+  itself, which runs `2026.9.0b1`** — a known gap, not unnoticed drift: the
+  integration has kept working across the host's own version bumps
+  untouched. Re-pinning the venv is a separate task; do not "fix" it by
+  accident while touching `pyproject.toml` or the venv.
 
 Both must be run, and both must stay green — they are not redundant with
 each other. `tests/test_purity.py` and `tests/test_no_movement.py` collect
@@ -357,17 +444,63 @@ manifest and structure. All three jobs live in the one workflow file,
   standing rule from the operator's own `CLAUDE.md`, stated there as
   something that has already been gotten wrong before.
 - **Keep the pure/HA split.** New code in `model.py`, `world.py`,
-  `conditions.py`, `config_schema.py`, `engine.py`, `validation.py` or
-  `legacy.py` must not import `homeassistant`, directly or transitively —
-  `tests/test_purity.py` enforces this per-module.
+  `conditions.py`, `config_schema.py`, `config_store.py`, `conformance.py`,
+  `engine.py`, `validation.py` or `legacy.py` must not import
+  `homeassistant`, directly or transitively — `tests/test_purity.py`
+  enforces this per-module.
 - **Do not touch `fixtures/dom_peter.yaml`** for anything other than
   keeping it in sync with the real house it describes. It is
   simultaneously the live configuration this repository's author runs and
   the migration gate's fixture; changing it for a documentation or example
-  purpose breaks both.
+  purpose breaks both. `services.py`'s `export_config` may write to it
+  directly (that is a legitimate re-export after editing through the UI),
+  but never through `/config/cover_logic.yaml`, which is a symlink to it —
+  see that module's own "Path safety" docstring section.
 - **Consult `docs/rationale.md` before "fixing" anything that looks odd**
   in the pure core — it is the collected record of exactly this class of
   trap, organised by module.
+- **A validation problem may block a subentry save only if that specific
+  save could fix it.** Gotten wrong three times running — a hard-coded
+  exemption list, then an exemption derived from which subentry *types*
+  existed yet, which still deadlocked (adding a house's first zone made it
+  permanently impossible to add another blind — a blind needs no zone to
+  exist, but the exemption logic could no longer tell that apart from
+  "zones aren't supported yet"). The fix, `subentry_flow._CODE_OWNERS` /
+  `_blocks_on`, checks the *problem's own attribution* (`Problem.owners`,
+  from `validation.py`) instead of inferring intent from what else is
+  configured. Adding a new `ERROR`-severity `Problem` code means deciding
+  which subentry type(s) can fix it (`_CODE_OWNERS`), or, if one instance
+  of a type is not interchangeable with another (a dangling ref named by a
+  specific `mode`/`rule`/`condition`), adding it to `_ATTRIBUTED_CODES`
+  instead, matched against `Problem.owners` by identity. A code in neither
+  dict silently never blocks anything — caught by a test asserting each
+  owning form actually blocks, not by a crash.
+- **A sort that decides behaviour must have exactly one implementation.**
+  `config_store.py`'s rule grouping (`_grouped_rules`) used to be written
+  twice — once for `Config.rules`, once for attributing a validation
+  problem back to a subentry — kept equal only by the two authors' care,
+  and diverged once, silently. The 92,160-scenario migration gate could
+  not have caught it either way: it exercises what the engine *decides*,
+  never which subentry a validation message points at. Anything needing
+  rules (or modes) in order must read `_grouped_rules` (or `Config.modes`'s
+  tuple order), never re-derive the sort.
+- **`[%key:component::...%]`/`[%key:common::...%]` translation references
+  do not resolve in a custom integration** — that syntax is core's own
+  build-time indirection, and a custom component ships no such build step,
+  so Home Assistant renders the raw placeholder on screen instead of a
+  label. All three of `strings.json`, `translations/en.json` and
+  `translations/sk.json` had 118 such references each, agreeing with each
+  other on being broken — a test comparing only key *sets* across the
+  files cannot catch this, since all three passed by being wrong together.
+  Write literal text (English in `en.json`, Slovak in `sk.json`); never a
+  `[%key:...%]` reference, however core's own strings look.
+- **A `step_id` with no matching `async_step_<id>` method fails silently
+  in every test that calls flow methods directly**, since none of them
+  goes through Home Assistant's own
+  `FlowManager._raise_if_step_does_not_exist`. `tests/ha/
+  test_step_id_coverage.py` drives the real `FlowManager` to catch exactly
+  this; keep it passing, and give a new screen its own `async_step_<id>`
+  method rather than special-casing this test.
 - **Run both interpreters' test suites (§8) before claiming green**, and
   run the migration gate locally (`tests/parity`, only possible on the
   Home Assistant host — see §5) before trusting any change to `engine.py`,
