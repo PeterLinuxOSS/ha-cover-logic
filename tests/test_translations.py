@@ -120,6 +120,37 @@ def test_no_translation_string_is_an_unresolved_key_reference(path):
     assert unresolved == []
 
 
+@pytest.mark.parametrize("path", [_STRINGS, *_TRANSLATIONS], ids=lambda path: path.name)
+def test_no_string_mixes_a_placeholder_with_an_apostrophe(path):
+    """A `'` anywhere in a string carrying a `{placeholder}` breaks substitution.
+
+    These render through an ICU-style formatter, where the apostrophe is the
+    *escape* character: a lone `'` quotes everything after it, and a matched
+    pair quotes everything between. Either way a `{placeholder}` caught
+    inside is emitted literally -- the user reads `{mode}` instead of the
+    name of the mode.
+
+    Hassfest rejects only the paired shape ("placeholders inside single
+    quotes"). That is how `options.error.rule_is_inherited` was caught, but
+    only in CI and only after it had been pushed. Hassfest says nothing
+    about the lone-quote shape, and nothing about two possessives in one
+    sentence (`{zone}'s own rules ... that mode's shared default`) quoting
+    the span between them. Both shapes shipped here at once, so this checks
+    for the character itself rather than for either pattern.
+
+    English possessives are the usual source, which is why `sk.json` never
+    tripped it. ICU does escape a literal apostrophe as `''`, but rewording
+    is clearer than relying on every later reader knowing that.
+    """
+    doc = _load(path)
+    offenders = [
+        "::".join(keys)
+        for keys in sorted(_key_paths(doc))
+        if "{" in str(_reach(doc, keys)) and "'" in str(_reach(doc, keys))
+    ]
+    assert offenders == []
+
+
 # ---------------------------------------------------------------------------
 # Derived checks: services, service fields, exceptions, repair issues.
 #

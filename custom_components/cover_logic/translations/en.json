@@ -373,7 +373,7 @@
       },
       "zone_rules": {
         "title": "One zone's rules",
-        "description": "{zone}'s own rules under mode {mode}, followed by that mode's shared default rules (marked \"inherited from mode default\") for anything {zone} has none of its own to decide -- in the exact order the engine tries them, or nothing yet if none apply. An inherited rule belongs to the mode, not this zone: picking it here only tells you where to edit it instead.",
+        "description": "The rules that {zone} has of its own under mode {mode}, followed by the shared default rules of that mode (marked \"inherited from mode default\") for anything {zone} has no rule of its own to decide -- in the exact order the engine tries them, or nothing yet if none apply. An inherited rule belongs to the mode, not to this zone: picking it here only tells you where to edit it instead.",
         "data": {
           "subentry_id": "Which one?",
           "confirm": "Remove instead of edit"
@@ -481,13 +481,13 @@
       "invalid_config": "This file could not be used: {error_detail}",
       "confirmation_required": "Check the confirmation box to remove it.",
       "import_export_failed": "This could not be completed: {error_detail}",
-      "rule_is_inherited": "This rule belongs to mode '{mode}''s shared default list, not to this zone -- it decides every zone in that mode with no matching rule of its own. Edit or remove it from Rules -> zone \"*\" for mode '{mode}' instead."
+      "rule_is_inherited": "This rule belongs to the shared default list of mode {mode}, not to this zone -- it decides every zone in that mode that has no matching rule of its own. Edit or remove it from Rules -> zone \"*\" for mode {mode} instead."
     }
   },
   "issues": {
     "fixture_drift": {
       "title": "Configuration no longer matches fixtures/dom_peter.yaml",
-      "description": "The blinds, zones, modes, conditions, values or rules configured here no longer match this checkout's own `fixtures/dom_peter.yaml` -- the file the 92,160-scenario migration gate measures. Differing: {fields}. Re-import that file (the `import_config` service) to bring the two back together, or update the fixture to match the configuration you actually intend, before trusting the gate again."
+      "description": "The blinds, zones, modes, conditions, values or rules configured here no longer match `fixtures/dom_peter.yaml` in this checkout -- the file the 92,160-scenario migration gate measures. Differing: {fields}. Re-import that file (the `import_config` service) to bring the two back together, or update the fixture to match the configuration you actually intend, before trusting the gate again."
     }
   },
   "services": {
