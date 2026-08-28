@@ -199,6 +199,20 @@ def test_options_flow_every_reachable_step_id_is_dispatchable(subentry_entry, op
             session.choose(section)
             session.choose("list")
 
+        if section == "rules":
+            # `zone` delegates to `zone_rules` (picking the pair), which in
+            # turn delegates to `edit_form` (picking the pair's own, non-
+            # inherited row) -- two renders-from-a-different-step in one
+            # journey, the exact bug class this file exists to catch.
+            session.start()
+            session.choose(section)
+            session.choose("zone")
+            session.configure({"mode": "m", "zone": "z"})
+            existing_rule_id = next(
+                sid for sid, sub in entry.subentries.items() if sub.subentry_type == RULE
+            )
+            session.configure({"subentry_id": existing_rule_id, "confirm": False})
+
         session.start()
         session.choose(section)
         session.choose("edit")

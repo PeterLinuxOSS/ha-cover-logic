@@ -99,9 +99,10 @@ from .config_store import (
     _grouped_rules,
     config_from_subentries,
     duplicate_rule_order_problems,
+    effective_rule_items,
 )
 from .conformance import diff_configs, repo_fixture_path
-from .const import DEFAULT_CONFIG_PATH
+from .const import DEFAULT_CONFIG_PATH, RULE_DEFAULT_ZONE
 from .model import Config
 from .services import (
     ATTR_DRY_RUN,
@@ -114,8 +115,11 @@ from .services import (
 )
 from .subentry_flow import (
     _NEW_SUBENTRY_ID,
+    _RULE_MODE_FIELD,
+    _RULE_ZONE_FIELD,
     SUBENTRY_FLOW_HANDLERS,
     _axis_to_form,
+    _configured_ids,
     _rule_pick_schema,
 )
 from .validation import ERROR, WARNING, Problem, validate
@@ -210,33 +214,80 @@ def _rule_action_text(then: dict[str, Any]) -> str:
     return f"position={_axis_to_form(then.get('position'))}, tilt={_axis_to_form(then.get('tilt'))}"
 
 
+def _rule_overview_line(data: dict[str, Any], *, is_default: bool) -> str:
+    """One rule row of `_rule_overview_text`'s report, marked when it is an inherited default."""
+    then = data.get("then") or {}
+    line = f"  {data.get('order')}: {_rule_action_text(then)}"
+    name = data.get("name")
+    if name:
+        line = f"{line} ({name})"
+    if is_default:
+        line = f"{line} [inherited from mode default]"
+    return line
+
+
 def _rule_overview_text(entry: Any) -> str:
     """Every rule subentry as the house will actually evaluate it: grouped, ordered, visible.
 
-    Reads `config_store._grouped_rules` directly -- the one place that groups
-    rule subentries by `(mode, zone)` and sorts them by `(order, subentry id)`
-    -- and renders its output as-is, in the order it comes back. Nothing here
-    re-groups or re-sorts: see that function's own "One grouping, not two"
-    docstring section, and `_rule_items` above, which already makes the same
-    choice for the edit picker. Within a `(mode, zone)` pair the engine tries
-    rules in exactly this order and stops at the first match, so a summary
-    that reordered them -- even to look tidier, e.g. alphabetically by pair --
-    would show a house behaviour that is not the one that actually runs.
+    Reads `config_store._grouped_rules` directly for which `(mode, zone)`
+    pairs have their own rule subentries at all, but a real zone's own block
+    is rendered through `config_store.effective_rule_items` -- its own rules,
+    then the mode's shared defaults, marked `[inherited from mode default]`
+    -- not `groups[key]` alone, or a zone whose blinds are entirely decided
+    by a mode-wide default would show as if nothing decided it. Neither
+    function re-sorts anything `_grouped_rules` already sorted: see that
+    function's own "One grouping, not two" docstring section, and `_rule_
+    items` above, which already makes the same choice for the edit picker.
+    Within a `(mode, zone)` pair the engine tries rules in exactly this
+    order and stops at the first match, so a summary that reordered them --
+    even to look tidier, e.g. alphabetically by pair -- would show a house
+    behaviour that is not the one that actually runs.
+
+    A mode's default group (`f"{mode}.{RULE_DEFAULT_ZONE}"`) is shown once,
+    under its own key, exactly as `groups` holds it (nothing to inherit from
+    a further default -- see `effective_rule_items`'s own docstring) -- and
+    then again under every real zone that has no rule subentry of its own at
+    all, which `_grouped_rules` alone would never surface: no rule subentry
+    names that (mode, zone) pair's key, so it is invisible to a report that
+    only walks `groups.items()`.
     """
     groups = _grouped_rules(entry)
     if not groups:
         return "No rules configured yet."
 
     lines: list[str] = []
+    seen_pairs: set[str] = set()
+    default_modes: set[str] = set()
+    for key in groups:
+        mode_id, _dot, zone_id = key.partition(".")
+        if zone_id == RULE_DEFAULT_ZONE:
+            default_modes.add(mode_id)
+
     for key, items in groups.items():
+        mode_id, _dot, zone_id = key.partition(".")
+        seen_pairs.add(key)
+        if zone_id == RULE_DEFAULT_ZONE:
+            lines.append(f"{key} (default for every zone in this mode):")
+            lines += [_rule_overview_line(data, is_default=False) for _sid, data in items]
+            continue
         lines.append(f"{key}:")
-        for _subentry_id, data in items:
-            then = data.get("then") or {}
-            line = f"  {data.get('order')}: {_rule_action_text(then)}"
-            name = data.get("name")
-            if name:
-                line = f"{line} ({name})"
-            lines.append(line)
+        lines += [
+            _rule_overview_line(data, is_default=is_default)
+            for _sid, data, is_default in effective_rule_items(entry, mode_id, zone_id)
+        ]
+
+    for zone_id in _configured_ids(entry, ZONE):
+        for mode_id in sorted(default_modes):
+            pair_key = f"{mode_id}.{zone_id}"
+            if pair_key in seen_pairs:
+                continue
+            seen_pairs.add(pair_key)
+            lines.append(f"{pair_key}:")
+            lines += [
+                _rule_overview_line(data, is_default=is_default)
+                for _sid, data, is_default in effective_rule_items(entry, mode_id, zone_id)
+            ]
+
     return "\n".join(lines)
 
 
@@ -379,6 +430,40 @@ def _pick_schema(items: list[tuple[str, str]]) -> vol.Schema:
     )
 
 
+def _zone_rule_schema(entry: Any, items: list[tuple[str, dict, bool]]) -> vol.Schema:
+    """Pick one rule out of `items` (own rules, then the mode's inherited defaults), plus remove.
+
+    `sort=False`, like `_pick_schema` already does for `rule` -- `items`
+    already carries the real evaluation order (`config_store.
+    effective_rule_items`: this pair's own rules, then the mode's shared
+    defaults), and alphabetising it would show a house behaviour that is not
+    the one that actually runs. The label suffix is the "obvious
+    distinction" between the two kinds this screen exists to make -- a title
+    alone (`"10 noc.* -> keep/keep"`) does not say *from this zone's point of
+    view* that the row is not this zone's own.
+
+    A single boolean, not a second confirm-picker screen the way the
+    section-wide `remove` step needs one: this picker already asks "which
+    row", so "and remove it" is one more field on the same form rather than
+    a second round trip, mirroring `_pick_schema(...).extend(...)` in
+    `async_step_remove` but folded into one function since this picker's
+    options are never reused for anything but this screen.
+    """
+    options = []
+    for subentry_id, _data, is_default in items:
+        title = entry.subentries[subentry_id].title or subentry_id
+        label = f"{title} (inherited from mode default)" if is_default else title
+        options.append(selector.SelectOptionDict(value=subentry_id, label=label))
+    return vol.Schema(
+        {
+            vol.Required(_PICK_FIELD): selector.SelectSelector(
+                selector.SelectSelectorConfig(options=options, sort=False)
+            ),
+            vol.Optional(_CONFIRM_FIELD, default=False): selector.BooleanSelector(),
+        }
+    )
+
+
 class _ServiceCallData:
     """Minimal duck-typed stand-in for `homeassistant.core.ServiceCall`.
 
@@ -435,6 +520,12 @@ class CoverLogicOptionsFlow(OptionsFlow):
     _section: str | None = None
     _pending_id: str | None = None
     _rule_pick: dict[str, Any] | None = None
+    # Set by `async_step_zone`, read by `async_step_zone_rules` -- which
+    # `(mode, zone)` pair the per-zone rule screen is currently showing.
+    # Kept on `self` for the same reason `_rule_pick` already is: a menu
+    # step and the step it delegates to are two different `async_step_*`
+    # dispatches, with no argument-passing between them but the instance.
+    _zone_pick: dict[str, Any] | None = None
 
     # -- Main menu -----------------------------------------------------
 
@@ -490,13 +581,14 @@ class CoverLogicOptionsFlow(OptionsFlow):
         """Record which section is now active and show its list menu.
 
         Clears the per-item state left over from a previous visit
-        (`_pending_id`, `_rule_pick`) -- a user who backs out of an edit in
-        one section and opens a different one must not carry that pick
-        along.
+        (`_pending_id`, `_rule_pick`, `_zone_pick`) -- a user who backs out
+        of an edit in one section and opens a different one must not carry
+        that pick along.
         """
         self._section = section
         self._pending_id = None
         self._rule_pick = None
+        self._zone_pick = None
         return await self._show_section_menu()
 
     async def _show_section_menu(self) -> dict[str, Any]:
@@ -504,14 +596,17 @@ class CoverLogicOptionsFlow(OptionsFlow):
         subentry_type = _SECTION_TYPE[self._section]
         items = _items(entry, subentry_type)
         options = ["add"]
-        # `list` (a read-only "what will the house actually do" report) only
-        # ever makes sense for `rules` -- see `_rule_overview_text`'s own
+        # `list` (a read-only "what will the house actually do" report) and
+        # `zone` (one `(mode, zone)` pair's own screen, own rules and
+        # inherited defaults together -- see `async_step_zone_rules`) only
+        # ever make sense for `rules` -- see `_rule_overview_text`'s own
         # docstring for why order and grouping are the whole point there in
         # a way they are not for the other five, simpler types, whose own
         # titles (shown in the `edit`/`remove` picker) already say everything
         # a summary would.
         if self._section == _RULES_SECTION and items:
             options.append("list")
+            options.append("zone")
         if items:
             options.extend(["edit", "remove"])
         options.append("back")
@@ -526,6 +621,7 @@ class CoverLogicOptionsFlow(OptionsFlow):
         self._section = None
         self._pending_id = None
         self._rule_pick = None
+        self._zone_pick = None
         return await self._show_main_menu()
 
     # -- Rules: read-only evaluation-order report --------------------------
@@ -546,6 +642,94 @@ class CoverLogicOptionsFlow(OptionsFlow):
         result = _rule_overview_text(self.config_entry)
         return self.async_show_form(
             step_id="list", data_schema=vol.Schema({}), description_placeholders={"result": result}
+        )
+
+    # -- Rules: one zone's own screen, own rules and inherited defaults ----
+    #
+    # `list` above answers "what does the whole configuration do"; this
+    # answers "what does *this* zone do" -- the question a user actually has
+    # once a mode's defaults exist, since a zone with no rules of its own is
+    # invisible to a picker built only from subentries that name it (see
+    # `config_store.effective_rule_items`'s own docstring). Two steps for the
+    # same "pick the pair, then act" shape `add` already uses for `rule`:
+    # `zone` picks `(mode, zone)` (reusing `subentry_flow._rule_pick_schema`
+    # unchanged -- the same question the rule-add wizard's own first step
+    # asks, extended by phase 6 task 1 to also offer `"*"`, so this screen
+    # doubles as "show me this mode's own default list" for free); `zone_
+    # rules` shows that pair's effective list and, for a row a user picks,
+    # either opens it for editing (own) or refuses with a route onward
+    # (inherited) -- never silently no-ops, per the task brief: an inherited
+    # rule belongs to the mode, and this screen is scoped to one zone, so it
+    # is not this screen's save to make.
+
+    async def async_step_zone(self, user_input: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Pick the `(mode, zone)` pair whose effective rule list to look at."""
+        entry = self.config_entry
+        if user_input is None:
+            return self.async_show_form(step_id="zone", data_schema=_rule_pick_schema(entry))
+        self._zone_pick = dict(user_input)
+        return await self.async_step_zone_rules(None)
+
+    async def async_step_zone_rules(
+        self, user_input: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Show one `(mode, zone)` pair's effective rule list; block editing an inherited row.
+
+        `items` (`config_store.effective_rule_items`) is this pair's own
+        rules, then the mode's shared defaults, in the exact order
+        `engine._apply_rules` would try them -- the same function `_rule_
+        overview_text`'s per-pair blocks read from, so this screen and that
+        report cannot disagree about what "this zone's effective list" is.
+
+        Picking an inherited (`is_default`) row is refused, not silently
+        ignored and not passed through to a real edit: the row is a real
+        subentry, but it belongs to the mode's default group, not to this
+        zone, and letting this screen save it would let one zone's edit
+        change every other zone that inherits the same row without saying
+        so. The error message is this screen's route onward -- pick `"*"` as
+        the zone here (or from `zone`'s own picker) to reach the exact same
+        row as its actual owner.
+
+        Picking an own row edits it in place (`async_step_edit_form`, the
+        same generic edit machinery every other type already uses) or, with
+        `confirm` ticked, removes it -- both act on the real subentry id, so
+        nothing here is a second copy of what `edit`/`remove` already do,
+        only a different, zone-scoped way to reach the same subentry.
+        """
+        entry = self.config_entry
+        mode_id = self._zone_pick[_RULE_MODE_FIELD]
+        zone_id = self._zone_pick[_RULE_ZONE_FIELD]
+        items = effective_rule_items(entry, mode_id, zone_id)
+        placeholders = {"mode": mode_id, "zone": zone_id}
+
+        if not items:
+            if user_input is not None:
+                return await self._show_section_menu()
+            return self.async_show_form(
+                step_id="zone_rules",
+                data_schema=vol.Schema({}),
+                description_placeholders=placeholders,
+            )
+
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            subentry_id = user_input[_PICK_FIELD]
+            is_default = next(is_default for sid, _data, is_default in items if sid == subentry_id)
+            if is_default:
+                errors["base"] = "rule_is_inherited"
+            elif user_input.get(_CONFIRM_FIELD):
+                self.hass.config_entries.async_remove_subentry(entry, subentry_id)
+                return await self._show_section_menu()
+            else:
+                self._pending_id = subentry_id
+                return await self.async_step_edit_form(None)
+
+        schema = self.add_suggested_values_to_schema(_zone_rule_schema(entry, items), user_input)
+        return self.async_show_form(
+            step_id="zone_rules",
+            data_schema=schema,
+            errors=errors,
+            description_placeholders=placeholders,
         )
 
     # -- Add ------------------------------------------------------------

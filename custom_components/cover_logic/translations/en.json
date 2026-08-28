@@ -353,6 +353,7 @@
         "menu_options": {
           "add": "Add",
           "list": "See what the house will do",
+          "zone": "Look at one zone's real list (including inherited defaults)",
           "edit": "Edit an existing one",
           "remove": "Remove an existing one",
           "back": "Back to the main menu"
@@ -361,6 +362,25 @@
       "list": {
         "title": "Rules in evaluation order",
         "description": "Grouped by mode and zone, in the exact order the engine tries them within each pair -- the first rule whose condition matches decides that pair.\n\n{result}"
+      },
+      "zone": {
+        "title": "Choose a zone",
+        "description": "Pick the mode and zone whose rules you want to see. Picking \"*\" as the zone shows that mode's own default list directly.",
+        "data": {
+          "mode": "Mode",
+          "zone": "Zone"
+        }
+      },
+      "zone_rules": {
+        "title": "One zone's rules",
+        "description": "{zone}'s own rules under mode {mode}, followed by that mode's shared default rules (marked \"inherited from mode default\") for anything {zone} has none of its own to decide -- in the exact order the engine tries them, or nothing yet if none apply. An inherited rule belongs to the mode, not this zone: picking it here only tells you where to edit it instead.",
+        "data": {
+          "subentry_id": "Which one?",
+          "confirm": "Remove instead of edit"
+        },
+        "data_description": {
+          "confirm": "Tick to remove the picked rule instead of opening it for editing. Has no effect on an inherited rule -- refused either way."
+        }
       },
       "add": {
         "title": "Add",
@@ -460,7 +480,8 @@
     "error": {
       "invalid_config": "This file could not be used: {error_detail}",
       "confirmation_required": "Check the confirmation box to remove it.",
-      "import_export_failed": "This could not be completed: {error_detail}"
+      "import_export_failed": "This could not be completed: {error_detail}",
+      "rule_is_inherited": "This rule belongs to mode '{mode}''s shared default list, not to this zone -- it decides every zone in that mode with no matching rule of its own. Edit or remove it from Rules -> zone \"*\" for mode '{mode}' instead."
     }
   },
   "issues": {

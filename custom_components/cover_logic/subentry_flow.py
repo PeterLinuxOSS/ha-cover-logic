@@ -72,7 +72,7 @@ from .config_store import (
     duplicate_rule_order_problems,
     rule_owner_ids,
 )
-from .const import EVENT_ARRIVAL, EVENT_STATE_CHANGE
+from .const import EVENT_ARRIVAL, EVENT_STATE_CHANGE, RULE_DEFAULT_ZONE
 from .validation import ERROR, Problem, validate
 
 _LOGGER = logging.getLogger(__name__)
@@ -969,13 +969,32 @@ def _configured_ids(entry: Any, subentry_type: str) -> list[str]:
     )
 
 
+def _zone_options(entry: Any) -> list[str]:
+    """Every real zone id, plus `const.RULE_DEFAULT_ZONE` ("*"): a rule's whole choice of "zone".
+
+    One function, used everywhere a rule's `zone` field is built (this
+    module's own `_rule_pick_schema`/`RuleSubentryFlowHandler._build_schema`,
+    and `options_flow.py`'s zone-browsing picker), so "a rule can target any
+    configured zone, or the mode-wide default" is stated once rather than
+    the option list and the wildcard being assembled separately at each call
+    site. `"*"` sorts before every zone id under plain string ordering
+    (`sort=True` on the selector), which is a reasonable side effect --
+    "apply to the whole mode" reads as the first, most general choice -- but
+    incidental, not the reason it is included.
+    """
+    return [*_configured_ids(entry, ZONE), RULE_DEFAULT_ZONE]
+
+
 def _rule_pick_schema(entry: Any) -> vol.Schema:
     """Step one of adding a rule: the `(mode, zone)` list it will join.
 
     A free function, not inlined into `RuleSubentryFlowHandler.async_step_user`
     below, so `options_flow.py`'s own rule-add step can render the identical
     form -- see that module's docstring for why the phase 5 menu must read
-    this rather than grow a second copy of it.
+    this rather than grow a second copy of it. Also reused, unchanged, by
+    `options_flow.py`'s per-zone rule-browsing screen: picking "which
+    `(mode, zone)` pair" is the same question whether the next step adds a
+    rule or shows one, so it is asked with the same form both times.
     """
     return vol.Schema(
         {
@@ -983,7 +1002,7 @@ def _rule_pick_schema(entry: Any) -> vol.Schema:
                 selector.SelectSelectorConfig(options=_configured_ids(entry, MODE), sort=True)
             ),
             vol.Required(_RULE_ZONE_FIELD): selector.SelectSelector(
-                selector.SelectSelectorConfig(options=_configured_ids(entry, ZONE), sort=True)
+                selector.SelectSelectorConfig(options=_zone_options(entry), sort=True)
             ),
         }
     )
@@ -1058,14 +1077,18 @@ class RuleSubentryFlowHandler(_SubentryFlowBase):
     which is visible in the field and, if it collides, blocked by
     `duplicate_rule_order` rather than silently applied.
 
-    `mode` and `zone` are `SelectSelector`s over what is actually configured,
-    never free text, so a rule cannot be filed under a pair that does not
-    exist. That also means modes and zones must exist before any rule can be
-    added, which is not a deadlock of the kind
+    `mode` and `zone` are `SelectSelector`s over what is actually configured
+    (`_zone_options`, which is `zone`'s real choices plus `const.
+    RULE_DEFAULT_ZONE`, "*"), never free text, so a rule cannot be filed
+    under a pair that does not exist. That also means modes and zones must
+    exist before any rule can be added, which is not a deadlock of the kind
     `test_full_build_up_sequence_a_human_would_perform` guards against: a
     rule is *about* a mode and a zone, so there is nothing to add first and
     fix later, and no save is being refused -- the form simply has nothing to
-    offer yet.
+    offer yet. Picking `"*"` for `zone` makes this rule a *default* for the
+    whole mode instead of one zone (phase 6 task 1, `engine._apply_rules`):
+    every zone in that mode without a matching rule of its own falls
+    through to it.
 
     The condition is `if_ref` (a named `condition` subentry) or `if` (built
     inline with the native selector), exactly as `mode` splits `condition_ref`
@@ -1125,7 +1148,7 @@ class RuleSubentryFlowHandler(_SubentryFlowBase):
                     selector.SelectSelectorConfig(options=_configured_ids(entry, MODE), sort=True)
                 ),
                 vol.Required(_RULE_ZONE_FIELD): selector.SelectSelector(
-                    selector.SelectSelectorConfig(options=_configured_ids(entry, ZONE), sort=True)
+                    selector.SelectSelectorConfig(options=_zone_options(entry), sort=True)
                 ),
                 vol.Required(_RULE_ORDER_FIELD): selector.NumberSelector(
                     selector.NumberSelectorConfig(step=1, mode=_BOX)

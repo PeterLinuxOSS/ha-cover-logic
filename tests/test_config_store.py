@@ -23,6 +23,7 @@ from cover_logic.config_schema import ConfigError, load_config, load_config_file
 from cover_logic.config_store import (
     config_from_subentries,
     duplicate_rule_order_problems,
+    effective_rule_items,
     entry_from_subentry_items,
     rule_owner_ids,
     subentries_from_config,
@@ -444,6 +445,78 @@ def test_subentries_from_config_round_trips_a_default_rule() -> None:
     rebuilt = config_from_subentries(entry_from_subentry_items(items, original.guards))
     assert rebuilt == original
     assert rebuilt.rules["m.*"][0].then.position == 0
+
+
+def test_effective_rule_items_is_own_rules_then_the_mode_default_tagged() -> None:
+    """The subentry-level counterpart of `engine._apply_rules`'s own list.
+
+    Not a re-sort: this reads `_grouped_rules(entry)` for `"m.z"` and `"m.*"`
+    and concatenates the two lists in that order, own rules untagged
+    (`is_default=False`), the mode's shared defaults tagged
+    (`is_default=True`) -- exactly what `options_flow.py`'s per-zone rule
+    screen needs to both order and label its picker.
+    """
+    entry = make_entry(
+        [
+            ("blind", {"entity": "cover.a"}),
+            ("zone", {"id": "z", "members": ["cover.a"]}),
+            ("mode", {"id": "m", "order": 0}),
+            ("rule", {"mode": "m", "zone": "z", "order": 20, "then": {"position": 0}}),
+            ("rule", {"mode": "m", "zone": "*", "order": 0, "then": {"position": 100}}),
+        ]
+    )
+
+    items = effective_rule_items(entry, "m", "z")
+
+    assert [(sid, is_default) for sid, _data, is_default in items] == [
+        ("s3", False),
+        ("s4", True),
+    ]
+    assert items[0][1]["then"] == {"position": 0}
+    assert items[1][1]["then"] == {"position": 100}
+
+
+def test_effective_rule_items_for_a_zone_with_none_of_its_own_is_just_the_default() -> None:
+    """A zone with no own rule subentry at all is invisible to any picker
+    built only from `_grouped_rules(entry)["m.<that zone>"]` -- this is the
+    function that makes a purely-inheriting zone visible anyway, which is
+    the whole point of showing it in `options_flow.py`'s zone screen.
+    """
+    entry = make_entry(
+        [
+            ("blind", {"entity": "cover.a"}),
+            ("mode", {"id": "m", "order": 0}),
+            ("rule", {"mode": "m", "zone": "*", "order": 0, "then": {"position": 100}}),
+        ]
+    )
+
+    items = effective_rule_items(entry, "m", "spalna")
+
+    assert [(sid, is_default) for sid, _data, is_default in items] == [("s2", True)]
+
+
+def test_effective_rule_items_for_the_wildcard_zone_itself_is_never_tagged_inherited() -> None:
+    """Viewing the mode's default list on its own terms (`zone_id ==
+    RULE_DEFAULT_ZONE`): there is no further default to fall back to, so
+    every row is the zone's "own", not inherited from anything.
+    """
+    entry = make_entry(
+        [
+            ("blind", {"entity": "cover.a"}),
+            ("mode", {"id": "m", "order": 0}),
+            ("rule", {"mode": "m", "zone": "*", "order": 0, "then": {"position": 100}}),
+        ]
+    )
+
+    items = effective_rule_items(entry, "m", "*")
+
+    assert [(sid, is_default) for sid, _data, is_default in items] == [("s2", False)]
+
+
+def test_effective_rule_items_for_a_pair_with_nothing_at_all_is_empty() -> None:
+    entry = make_entry([("blind", {"entity": "cover.a"})])
+
+    assert effective_rule_items(entry, "m", "z") == []
 
 
 def _assert_owner_ids_point_at_the_rules_they_claim_to(entry: Any) -> None:

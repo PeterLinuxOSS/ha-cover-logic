@@ -29,6 +29,7 @@ from homeassistant.data_entry_flow import FlowResultType
 
 from cover_logic.config_flow import CoverLogicConfigFlow
 from cover_logic.config_store import BLIND, MODE, RULE, VALUE, ZONE
+from cover_logic.const import RULE_DEFAULT_ZONE
 from cover_logic.options_flow import CoverLogicOptionsFlow
 
 _ENTRY_ID = "entry1"
@@ -332,7 +333,7 @@ def test_rules_section_offers_list_only_once_a_rule_exists(subentry_entry, optio
         RULE, {"mode": "m", "zone": "z", "order": 0, "then": {"position": "keep", "tilt": "keep"}}
     )
     nonempty_menu = _menu(asyncio.run(flow.async_step_rules(None)))
-    assert nonempty_menu["menu_options"] == ["add", "list", "edit", "remove", "back"]
+    assert nonempty_menu["menu_options"] == ["add", "list", "zone", "edit", "remove", "back"]
 
 
 def test_rules_list_shows_every_rule_grouped_in_real_order_with_action_visible(
@@ -402,6 +403,51 @@ def test_rules_list_reports_no_rules_configured_when_the_section_is_empty(
     assert "No rules configured" in result["description_placeholders"]["result"]
 
 
+def test_rules_list_merges_a_mode_default_into_every_zone_that_inherits_it(
+    subentry_entry, options_hass
+):
+    """The task brief's own words: "if inheritance is invisible [in the
+    list], the list lies about evaluation order." A zone with its own rule
+    shows both, own first; a zone with none of its own -- invisible to a
+    report that only walked `_grouped_rules(entry).items()`, since no rule
+    subentry names its key at all -- must still show the inherited default.
+    """
+    entry = subentry_entry()
+    entry.add_subentry(
+        RULE,
+        {"mode": "noc", "zone": "terasa", "order": 20, "then": {"position": 0, "tilt": "keep"}},
+    )
+    entry.add_subentry(
+        RULE,
+        {
+            "mode": "noc",
+            "zone": RULE_DEFAULT_ZONE,
+            "order": 0,
+            "then": {"position": "keep", "tilt": "keep"},
+        },
+    )
+    entry.add_subentry(ZONE, {"id": "spalna", "members": []})
+    flow = _make_flow(options_hass(entry))
+    asyncio.run(flow.async_step_rules(None))
+
+    result = _form(asyncio.run(flow.async_step_list(None)))
+    text = result["description_placeholders"]["result"]
+
+    # `terasa` has its own rule, then the inherited default after it.
+    terasa_index = text.index("noc.terasa:")
+    own_line = text.index("20: position=0, tilt=keep")
+    inherited_line_under_terasa = text.index(
+        "0: position=keep, tilt=keep [inherited from mode default]"
+    )
+    assert terasa_index < own_line < inherited_line_under_terasa
+
+    # `spalna` has no rule subentry of its own at all -- only the inherited
+    # default, which must still show up under its own key.
+    spalna_index = text.index("noc.spalna:")
+    assert spalna_index > 0
+    assert text.count("[inherited from mode default]") == 2
+
+
 def test_rules_list_submit_returns_to_the_rules_section_menu(subentry_entry, options_hass):
     entry = subentry_entry()
     entry.add_subentry(
@@ -414,6 +460,234 @@ def test_rules_list_submit_returns_to_the_rules_section_menu(subentry_entry, opt
     result = _menu(asyncio.run(flow.async_step_list({})))
 
     assert result["step_id"] == "rules"
+
+
+# ---------------------------------------------------------------------------
+# Rule: adding a mode-wide default (phase 6 task 2)
+# ---------------------------------------------------------------------------
+
+
+def test_the_rule_pair_picker_offers_the_wildcard_zone_for_a_mode_default(
+    subentry_entry, options_hass
+):
+    """The same picker `add`'s first step already shows must offer
+    `const.RULE_DEFAULT_ZONE` ("*") alongside real zones -- this is the whole
+    mechanism the task brief's "a way to add a default for a mode" asks for,
+    not a second form.
+    """
+    entry = subentry_entry()
+    entry.add_subentry(MODE, {"id": "noc", "order": 0})
+    entry.add_subentry(ZONE, {"id": "terasa", "members": []})
+    flow = _make_flow(options_hass(entry))
+    asyncio.run(flow.async_step_rules(None))
+
+    pair_form = _form(asyncio.run(flow.async_step_add(None)))
+
+    zone_options = pair_form["data_schema"].schema["zone"].config["options"]
+    assert RULE_DEFAULT_ZONE in zone_options
+    assert "terasa" in zone_options
+
+
+def test_adding_a_rule_with_the_wildcard_zone_creates_a_mode_default(subentry_entry, options_hass):
+    entry = subentry_entry()
+    entry.add_subentry(MODE, {"id": "noc", "order": 0})
+    flow = _make_flow(options_hass(entry))
+    asyncio.run(flow.async_step_rules(None))
+    asyncio.run(flow.async_step_add(None))
+
+    result = _menu(
+        asyncio.run(
+            flow.async_step_add_rule_fields(
+                {
+                    "mode": "noc",
+                    "zone": RULE_DEFAULT_ZONE,
+                    "order": 0,
+                    "position": "keep",
+                    "tilt": "keep",
+                }
+            )
+        )
+    )
+
+    assert result["step_id"] == "rules"
+    [rule] = [s for s in entry.subentries.values() if s.subentry_type == RULE]
+    assert rule.data["zone"] == RULE_DEFAULT_ZONE
+
+
+# ---------------------------------------------------------------------------
+# Rule: one zone's own screen -- own rules plus inherited defaults
+# (phase 6 task 2)
+# ---------------------------------------------------------------------------
+
+
+def _zone_options(result):
+    return result["data_schema"].schema["subentry_id"].config["options"]
+
+
+def test_zone_screen_shows_own_rules_then_inherited_defaults_in_real_order(
+    subentry_entry, options_hass
+):
+    entry = subentry_entry()
+    own = entry.add_subentry(
+        RULE,
+        {"mode": "noc", "zone": "terasa", "order": 20, "then": {"position": 0, "tilt": "keep"}},
+    )
+    default = entry.add_subentry(
+        RULE,
+        {
+            "mode": "noc",
+            "zone": RULE_DEFAULT_ZONE,
+            "order": 0,
+            "then": {"position": "keep", "tilt": "keep"},
+        },
+    )
+    flow = _make_flow(options_hass(entry))
+    asyncio.run(flow.async_step_rules(None))
+    asyncio.run(flow.async_step_zone(None))
+
+    result = _form(asyncio.run(flow.async_step_zone({"mode": "noc", "zone": "terasa"})))
+
+    assert result["step_id"] == "zone_rules"
+    options = _zone_options(result)
+    assert [option["value"] for option in options] == [own, default]
+    assert "(inherited from mode default)" not in options[0]["label"]
+    assert "(inherited from mode default)" in options[1]["label"]
+
+
+def test_zone_with_no_own_rules_shows_only_the_inherited_defaults(subentry_entry, options_hass):
+    entry = subentry_entry()
+    default = entry.add_subentry(
+        RULE,
+        {
+            "mode": "noc",
+            "zone": RULE_DEFAULT_ZONE,
+            "order": 0,
+            "then": {"position": "keep", "tilt": "keep"},
+        },
+    )
+    entry.add_subentry(ZONE, {"id": "spalna", "members": []})
+    flow = _make_flow(options_hass(entry))
+    asyncio.run(flow.async_step_rules(None))
+    asyncio.run(flow.async_step_zone(None))
+
+    result = _form(asyncio.run(flow.async_step_zone({"mode": "noc", "zone": "spalna"})))
+
+    options = _zone_options(result)
+    assert [option["value"] for option in options] == [default]
+    assert "(inherited from mode default)" in options[0]["label"]
+
+
+def test_zone_pair_with_no_rules_at_all_says_so_and_returns_to_the_section_menu(
+    subentry_entry, options_hass
+):
+    entry = subentry_entry()
+    entry.add_subentry(MODE, {"id": "noc", "order": 0})
+    entry.add_subentry(ZONE, {"id": "spalna", "members": []})
+    flow = _make_flow(options_hass(entry))
+    asyncio.run(flow.async_step_rules(None))
+    asyncio.run(flow.async_step_zone(None))
+
+    empty_result = _form(asyncio.run(flow.async_step_zone({"mode": "noc", "zone": "spalna"})))
+    assert empty_result["step_id"] == "zone_rules"
+    assert _schema_keys(empty_result) == set()
+
+    back_result = _menu(asyncio.run(flow.async_step_zone_rules({})))
+    assert back_result["step_id"] == "rules"
+
+
+def test_picking_an_inherited_rule_on_the_zone_screen_is_refused_with_a_route_onward(
+    subentry_entry, options_hass
+):
+    """The rule the task brief cares about most: an inherited row is a real
+    subentry, but not this zone's to save -- picking it must neither edit it
+    silently nor no-op silently, it must say why and where to go instead.
+    """
+    entry = subentry_entry()
+    default = entry.add_subentry(
+        RULE,
+        {
+            "mode": "noc",
+            "zone": RULE_DEFAULT_ZONE,
+            "order": 0,
+            "then": {"position": "keep", "tilt": "keep"},
+        },
+    )
+    original_data = dict(entry.subentries[default].data)
+    flow = _make_flow(options_hass(entry))
+    asyncio.run(flow.async_step_rules(None))
+    asyncio.run(flow.async_step_zone(None))
+    asyncio.run(flow.async_step_zone({"mode": "noc", "zone": "terasa"}))
+
+    result = _form(
+        asyncio.run(flow.async_step_zone_rules({"subentry_id": default, "confirm": False}))
+    )
+
+    assert result["step_id"] == "zone_rules"
+    assert result["errors"]["base"] == "rule_is_inherited"
+    assert result["description_placeholders"]["mode"] == "noc"
+    # Refused, not silently applied: the subentry this would have "edited"
+    # (there was nothing else to submit) is untouched, and it still exists.
+    assert entry.subentries[default].data == original_data
+
+
+def test_picking_an_inherited_rule_to_remove_on_the_zone_screen_is_also_refused(
+    subentry_entry, options_hass
+):
+    entry = subentry_entry()
+    default = entry.add_subentry(
+        RULE,
+        {
+            "mode": "noc",
+            "zone": RULE_DEFAULT_ZONE,
+            "order": 0,
+            "then": {"position": "keep", "tilt": "keep"},
+        },
+    )
+    flow = _make_flow(options_hass(entry))
+    asyncio.run(flow.async_step_rules(None))
+    asyncio.run(flow.async_step_zone(None))
+    asyncio.run(flow.async_step_zone({"mode": "noc", "zone": "terasa"}))
+
+    result = _form(
+        asyncio.run(flow.async_step_zone_rules({"subentry_id": default, "confirm": True}))
+    )
+
+    assert result["errors"]["base"] == "rule_is_inherited"
+    assert default in entry.subentries
+
+
+def test_picking_the_zone_s_own_rule_opens_it_for_editing(subentry_entry, options_hass):
+    entry = subentry_entry()
+    own = entry.add_subentry(
+        RULE,
+        {"mode": "noc", "zone": "terasa", "order": 20, "then": {"position": 0, "tilt": "keep"}},
+    )
+    flow = _make_flow(options_hass(entry))
+    asyncio.run(flow.async_step_rules(None))
+    asyncio.run(flow.async_step_zone(None))
+    asyncio.run(flow.async_step_zone({"mode": "noc", "zone": "terasa"}))
+
+    result = _form(asyncio.run(flow.async_step_zone_rules({"subentry_id": own, "confirm": False})))
+
+    assert result["step_id"] == "edit_form"
+    assert _schema_keys(result) >= {"mode", "zone", "order", "position", "tilt"}
+
+
+def test_removing_the_zone_s_own_rule_from_the_zone_screen(subentry_entry, options_hass):
+    entry = subentry_entry()
+    own = entry.add_subentry(
+        RULE,
+        {"mode": "noc", "zone": "terasa", "order": 20, "then": {"position": 0, "tilt": "keep"}},
+    )
+    flow = _make_flow(options_hass(entry))
+    asyncio.run(flow.async_step_rules(None))
+    asyncio.run(flow.async_step_zone(None))
+    asyncio.run(flow.async_step_zone({"mode": "noc", "zone": "terasa"}))
+
+    result = _menu(asyncio.run(flow.async_step_zone_rules({"subentry_id": own, "confirm": True})))
+
+    assert result["step_id"] == "rules"
+    assert own not in entry.subentries
 
 
 # ---------------------------------------------------------------------------
@@ -806,8 +1080,9 @@ def test_section_menu_options_all_have_labels():
         menu = _strings()["options"]["step"][section]["menu_options"]
         expected = {"add", "edit", "remove", "back"}
         if section == "rules":
-            # `rules` alone also offers `list` -- the read-only evaluation-
-            # order report; see `options_flow._show_section_menu`'s own
-            # reasoning for why the other five types do not.
-            expected.add("list")
+            # `rules` alone also offers `list` (the read-only evaluation-
+            # order report) and `zone` (one zone's own screen, own rules
+            # plus inherited defaults); see `options_flow._show_section_
+            # menu`'s own reasoning for why the other five types do not.
+            expected.update({"list", "zone"})
         assert set(menu) == expected

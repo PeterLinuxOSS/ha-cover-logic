@@ -80,6 +80,7 @@ from .config_schema import (
     _zone_to_dict,
     unparse_condition,
 )
+from .const import RULE_DEFAULT_ZONE
 from .model import Config, Mode, Zone
 from .validation import Problem, check_duplicate_rule_order
 
@@ -238,6 +239,45 @@ def _grouped_rules(entry: Any) -> dict[str, list[tuple[str, dict]]]:
     for items in groups.values():
         items.sort(key=lambda item: (_order(item[1], "rule subentry"), item[0]))
     return groups
+
+
+def effective_rule_items(entry: Any, mode_id: str, zone_id: str) -> list[tuple[str, dict, bool]]:
+    """Every rule subentry deciding `zone_id`'s blinds under `mode_id`, as `(id, data, is_default)`.
+
+    Own rules first, then the mode's shared defaults, each tagged whether it
+    is inherited -- the same "own list runs to completion, only then fall
+    back to the mode's defaults" rule `engine._apply_rules` evaluates over
+    parsed `Rule` tuples (`Config.rules`), applied one layer up over raw
+    subentry data instead. Built from `_grouped_rules(entry)` -- the single
+    place that groups and sorts rule subentries -- by reading the zone's own
+    key and the mode's default key (`f"{mode_id}.{RULE_DEFAULT_ZONE}"`) and
+    concatenating the two lists in that order. Neither list is re-sorted:
+    `_grouped_rules` already sorted each one internally, so this is a plain
+    concatenation, not a second sort -- see that function's own "One
+    grouping, not two" docstring section for why a second sort is exactly
+    the mistake this project has already paid for once.
+
+    `options_flow.py`'s per-zone rule screen is the one caller today, but
+    this lives here (not in `options_flow.py` itself) so a future second
+    presentation of "what does this zone actually decide with" reads the
+    same definition instead of re-deriving the concatenation a third time
+    (`engine._apply_rules` and `validation._check_rule_lists` are the other
+    two places this exact sequence already exists, both over `Config`-level
+    `Rule` tuples that carry no subentry id -- this is the subentry-level
+    counterpart the UI needs).
+
+    `zone_id == RULE_DEFAULT_ZONE` views a mode's default list on its own
+    terms: there is no further default to fall back to, so every row comes
+    back tagged `False` -- inherited is relative to a *real* zone, not to
+    itself.
+    """
+    groups = _grouped_rules(entry)
+    own = groups.get(f"{mode_id}.{zone_id}", [])
+    items: list[tuple[str, dict, bool]] = [(sid, data, False) for sid, data in own]
+    if zone_id != RULE_DEFAULT_ZONE:
+        defaults = groups.get(f"{mode_id}.{RULE_DEFAULT_ZONE}", [])
+        items += [(sid, data, True) for sid, data in defaults]
+    return items
 
 
 def _build_rules(

@@ -1712,6 +1712,9 @@ def _suggested(shown):
 def test_rule_step_one_offers_only_configured_modes_and_zones(subentry_entry, subentry_hass):
     """Never free text: a rule filed under a pair that does not exist is
     `unknown_rule_key`, and there is no reason to let the UI produce one.
+    `zone` also always offers `const.RULE_DEFAULT_ZONE` ("*") alongside the
+    real, configured zones -- picking it is how a rule becomes a mode-wide
+    default (phase 6 task 2) rather than one zone's own.
     """
     entry = _rule_scaffold(subentry_entry())
     entry.add_subentry(MODE, {"id": "noc", "order": 10})
@@ -1726,7 +1729,7 @@ def test_rule_step_one_offers_only_configured_modes_and_zones(subentry_entry, su
     options = {
         key.schema: val.config["options"] for key, val in shown["data_schema"].schema.items()
     }
-    assert options == {"mode": ["bezny", "noc"], "zone": ["spalna", "terasa"]}
+    assert options == {"mode": ["bezny", "noc"], "zone": ["spalna", "terasa", "*"]}
 
 
 def test_rule_step_two_shows_every_field(subentry_entry, subentry_hass):

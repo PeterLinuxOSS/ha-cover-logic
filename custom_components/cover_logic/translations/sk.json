@@ -353,6 +353,7 @@
         "menu_options": {
           "add": "Pridať",
           "list": "Zobraziť, čo dom naozaj urobí",
+          "zone": "Pozrieť si zoznam jednej zóny (vrátane zdedených)",
           "edit": "Upraviť existujúce",
           "remove": "Odstrániť existujúce",
           "back": "Späť do hlavnej ponuky"
@@ -361,6 +362,25 @@
       "list": {
         "title": "Pravidlá v poradí vyhodnocovania",
         "description": "Zoskupené podľa režimu a zóny, presne v poradí, v akom ich engine v rámci dvojice skúša -- rozhoduje prvé pravidlo, ktorého podmienka sedí.\n\n{result}"
+      },
+      "zone": {
+        "title": "Vybrať zónu",
+        "description": "Vyberte režim a zónu, ktorých pravidlá chcete vidieť. Voľba zóny „*“ ukáže priamo predvolený zoznam daného režimu.",
+        "data": {
+          "mode": "Režim",
+          "zone": "Zóna"
+        }
+      },
+      "zone_rules": {
+        "title": "Pravidlá jednej zóny",
+        "description": "Vlastné pravidlá zóny {zone} v režime {mode}, a za nimi zdedené predvolené pravidlá režimu (označené „zdedené z predvoleného pravidla režimu“) pre všetko, čo si zóna {zone} sama nerieši -- presne v poradí, v akom ich engine skúša, alebo nič, ak sa zatiaľ nič nevzťahuje. Zdedené pravidlo patrí režimu, nie tejto zóne: jeho výber tu iba povie, kde sa dá upraviť.",
+        "data": {
+          "subentry_id": "Ktoré?",
+          "confirm": "Odstrániť namiesto úpravy"
+        },
+        "data_description": {
+          "confirm": "Zaškrtnite, ak sa má vybrané pravidlo odstrániť namiesto otvorenia na úpravu. Pri zdedenom pravidle nemá účinok -- aj tak sa odmietne."
+        }
       },
       "add": {
         "title": "Pridať",
@@ -460,7 +480,8 @@
     "error": {
       "invalid_config": "Tento súbor sa nedá použiť: {error_detail}",
       "confirmation_required": "Zaškrtnite potvrdenie, aby sa položka odstránila.",
-      "import_export_failed": "Toto sa nepodarilo dokončiť: {error_detail}"
+      "import_export_failed": "Toto sa nepodarilo dokončiť: {error_detail}",
+      "rule_is_inherited": "Toto pravidlo patrí do zdieľaného predvoleného zoznamu režimu „{mode}“, nie tejto zóne -- rozhoduje o každej zóne v tomto režime, ktorá nemá vlastné zodpovedajúce pravidlo. Upraviť alebo odstrániť ho môžete cez Pravidlá -> zóna „*“ pre režim „{mode}“."
     }
   },
   "issues": {
