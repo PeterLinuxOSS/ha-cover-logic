@@ -251,6 +251,183 @@
       }
     }
   },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Cover Logic",
+        "description": "What do you want to look at or change?",
+        "menu_options": {
+          "blinds": "Blinds ({blinds_count})",
+          "zones": "Zones ({zones_count})",
+          "values": "Values ({values_count})",
+          "conditions": "Conditions ({conditions_count})",
+          "modes": "Modes ({modes_count})",
+          "rules": "Rules ({rules_count})",
+          "import_export": "Import / export YAML",
+          "check_matrix": "Check against the old matrix"
+        }
+      },
+      "blinds": {
+        "title": "Blinds",
+        "description": "{count} configured.",
+        "menu_options": {
+          "add": "Add",
+          "edit": "Edit an existing one",
+          "remove": "Remove an existing one",
+          "back": "Back to the main menu"
+        }
+      },
+      "zones": {
+        "title": "Zones",
+        "description": "{count} configured.",
+        "menu_options": {
+          "add": "[%key:component::cover_logic::options::step::blinds::menu_options::add%]",
+          "edit": "[%key:component::cover_logic::options::step::blinds::menu_options::edit%]",
+          "remove": "[%key:component::cover_logic::options::step::blinds::menu_options::remove%]",
+          "back": "[%key:component::cover_logic::options::step::blinds::menu_options::back%]"
+        }
+      },
+      "values": {
+        "title": "Values",
+        "description": "{count} configured.",
+        "menu_options": {
+          "add": "[%key:component::cover_logic::options::step::blinds::menu_options::add%]",
+          "edit": "[%key:component::cover_logic::options::step::blinds::menu_options::edit%]",
+          "remove": "[%key:component::cover_logic::options::step::blinds::menu_options::remove%]",
+          "back": "[%key:component::cover_logic::options::step::blinds::menu_options::back%]"
+        }
+      },
+      "conditions": {
+        "title": "Conditions",
+        "description": "{count} configured.",
+        "menu_options": {
+          "add": "[%key:component::cover_logic::options::step::blinds::menu_options::add%]",
+          "edit": "[%key:component::cover_logic::options::step::blinds::menu_options::edit%]",
+          "remove": "[%key:component::cover_logic::options::step::blinds::menu_options::remove%]",
+          "back": "[%key:component::cover_logic::options::step::blinds::menu_options::back%]"
+        }
+      },
+      "modes": {
+        "title": "Modes",
+        "description": "{count} configured.",
+        "menu_options": {
+          "add": "[%key:component::cover_logic::options::step::blinds::menu_options::add%]",
+          "edit": "[%key:component::cover_logic::options::step::blinds::menu_options::edit%]",
+          "remove": "[%key:component::cover_logic::options::step::blinds::menu_options::remove%]",
+          "back": "[%key:component::cover_logic::options::step::blinds::menu_options::back%]"
+        }
+      },
+      "rules": {
+        "title": "Rules",
+        "description": "{count} configured, across every mode-and-zone pair. The first rule in a pair whose condition matches decides that pair; order within a pair is what the engine actually tries first.",
+        "menu_options": {
+          "add": "[%key:component::cover_logic::options::step::blinds::menu_options::add%]",
+          "edit": "[%key:component::cover_logic::options::step::blinds::menu_options::edit%]",
+          "remove": "[%key:component::cover_logic::options::step::blinds::menu_options::remove%]",
+          "back": "[%key:component::cover_logic::options::step::blinds::menu_options::back%]"
+        }
+      },
+      "add": {
+        "title": "Add",
+        "description": "Fill in the fields below. Only the fields for the kind of item you are adding matter; leave anything you are unsure about at its default.",
+        "data": {
+          "entity": "Entity",
+          "id": "Id",
+          "facade_azimuth": "[%key:component::cover_logic::config_subentries::blind::step::user::data::facade_azimuth%]",
+          "tolerance": "[%key:component::cover_logic::config_subentries::blind::step::user::data::tolerance%]",
+          "travel_time": "[%key:component::cover_logic::config_subentries::blind::step::user::data::travel_time%]",
+          "has_tilt": "[%key:component::cover_logic::config_subentries::blind::step::user::data::has_tilt%]",
+          "tilt_after_arrival": "[%key:component::cover_logic::config_subentries::blind::step::user::data::tilt_after_arrival%]",
+          "members": "[%key:component::cover_logic::config_subentries::zone::step::user::data::members%]",
+          "occupants": "[%key:component::cover_logic::config_subentries::zone::step::user::data::occupants%]",
+          "default": "[%key:component::cover_logic::config_subentries::value::step::user::data::default%]",
+          "condition": "[%key:component::cover_logic::config_subentries::condition::step::user::data::condition%]",
+          "numeric_state_default": "[%key:component::cover_logic::config_subentries::condition::step::user::data::numeric_state_default%]",
+          "order": "[%key:component::cover_logic::config_subentries::mode::step::user::data::order%]",
+          "condition_ref": "[%key:component::cover_logic::config_subentries::mode::step::user::data::condition_ref%]",
+          "when": "[%key:component::cover_logic::config_subentries::mode::step::user::data::when%]",
+          "mode": "[%key:component::cover_logic::config_subentries::rule::step::user::data::mode%]",
+          "zone": "[%key:component::cover_logic::config_subentries::rule::step::user::data::zone%]"
+        }
+      },
+      "add_rule_fields": {
+        "title": "[%key:component::cover_logic::config_subentries::rule::step::rule::title%]",
+        "description": "[%key:component::cover_logic::config_subentries::rule::step::rule::description%]",
+        "data": {
+          "mode": "[%key:component::cover_logic::config_subentries::rule::step::rule::data::mode%]",
+          "zone": "[%key:component::cover_logic::config_subentries::rule::step::rule::data::zone%]",
+          "order": "[%key:component::cover_logic::config_subentries::rule::step::rule::data::order%]",
+          "if_ref": "[%key:component::cover_logic::config_subentries::rule::step::rule::data::if_ref%]",
+          "if": "[%key:component::cover_logic::config_subentries::rule::step::rule::data::if%]",
+          "position": "[%key:component::cover_logic::config_subentries::rule::step::rule::data::position%]",
+          "tilt": "[%key:component::cover_logic::config_subentries::rule::step::rule::data::tilt%]",
+          "events": "[%key:component::cover_logic::config_subentries::rule::step::rule::data::events%]",
+          "name": "[%key:component::cover_logic::config_subentries::rule::step::rule::data::name%]"
+        },
+        "data_description": {
+          "order": "[%key:component::cover_logic::config_subentries::rule::step::rule::data_description::order%]",
+          "position": "[%key:component::cover_logic::config_subentries::rule::step::rule::data_description::position%]",
+          "tilt": "[%key:component::cover_logic::config_subentries::rule::step::rule::data_description::tilt%]",
+          "events": "[%key:component::cover_logic::config_subentries::rule::step::rule::data_description::events%]"
+        }
+      },
+      "edit": {
+        "title": "Choose what to edit",
+        "data": {
+          "subentry_id": "Which one?"
+        }
+      },
+      "edit_form": {
+        "title": "Edit",
+        "description": "[%key:component::cover_logic::options::step::add::description%]",
+        "data": {
+          "entity": "[%key:component::cover_logic::options::step::add::data::entity%]",
+          "id": "[%key:component::cover_logic::options::step::add::data::id%]",
+          "facade_azimuth": "[%key:component::cover_logic::options::step::add::data::facade_azimuth%]",
+          "tolerance": "[%key:component::cover_logic::options::step::add::data::tolerance%]",
+          "travel_time": "[%key:component::cover_logic::options::step::add::data::travel_time%]",
+          "has_tilt": "[%key:component::cover_logic::options::step::add::data::has_tilt%]",
+          "tilt_after_arrival": "[%key:component::cover_logic::options::step::add::data::tilt_after_arrival%]",
+          "members": "[%key:component::cover_logic::options::step::add::data::members%]",
+          "occupants": "[%key:component::cover_logic::options::step::add::data::occupants%]",
+          "default": "[%key:component::cover_logic::options::step::add::data::default%]",
+          "condition": "[%key:component::cover_logic::options::step::add::data::condition%]",
+          "numeric_state_default": "[%key:component::cover_logic::options::step::add::data::numeric_state_default%]",
+          "order": "[%key:component::cover_logic::options::step::add::data::order%]",
+          "condition_ref": "[%key:component::cover_logic::options::step::add::data::condition_ref%]",
+          "when": "[%key:component::cover_logic::options::step::add::data::when%]",
+          "mode": "[%key:component::cover_logic::options::step::add::data::mode%]",
+          "zone": "[%key:component::cover_logic::options::step::add::data::zone%]"
+        }
+      },
+      "remove": {
+        "title": "Remove",
+        "data": {
+          "subentry_id": "[%key:component::cover_logic::options::step::edit::data::subentry_id%]",
+          "confirm": "Yes, remove it"
+        }
+      },
+      "import_export": {
+        "title": "Import / export configuration",
+        "description": "Reads or writes the whole configuration as a YAML file -- the same import_config/export_config services Developer Tools can call directly.",
+        "data": {
+          "action": "Action",
+          "path": "[%key:component::cover_logic::services::import_config::fields::path::name%]",
+          "dry_run": "[%key:component::cover_logic::services::import_config::fields::dry_run::name%]",
+          "overwrite": "[%key:component::cover_logic::services::import_config::fields::overwrite::name%]"
+        }
+      },
+      "check_matrix": {
+        "title": "Check against the old matrix",
+        "description": "{result}"
+      }
+    },
+    "error": {
+      "invalid_config": "[%key:component::cover_logic::config::error::invalid_config%]",
+      "confirmation_required": "Check the confirmation box to remove it.",
+      "import_export_failed": "This could not be completed: {error_detail}"
+    }
+  },
   "issues": {
     "fixture_drift": {
       "title": "Configuration no longer matches fixtures/dom_peter.yaml",

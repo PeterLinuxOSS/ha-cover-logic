@@ -133,6 +133,26 @@ class CoverLogicConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Return the subentry flows this integration supports."""
         return SUBENTRY_FLOW_HANDLERS
 
+    @staticmethod
+    @callback
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,
+    ) -> config_entries.OptionsFlow:
+        """Return the options flow: the main menu over the same subentries.
+
+        Imported locally, not at module level -- `options_flow.py` imports
+        several names back out of *this* module (`SUBENTRY_FLOW_HANDLERS`,
+        `_NEW_SUBENTRY_ID`, the per-type schema/data/validation methods) to
+        satisfy the phase 5 brief's "one owner, two doors" requirement (see
+        that module's own docstring), which would make a top-level import
+        here a circular one. Deferring it to call time -- after both modules
+        have finished loading -- sidesteps that without the fragility of a
+        bottom-of-file import order dependency between the two.
+        """
+        from .options_flow import CoverLogicOptionsFlow  # noqa: PLC0415
+
+        return CoverLogicOptionsFlow()
+
 
 # ---------------------------------------------------------------------------
 # Subentry flows, one per member of `config_store.SUBENTRY_TYPES`: `blind`,
@@ -328,11 +348,17 @@ class _SubentryFlowBase(config_entries.ConfigSubentryFlow):
 
     A subclass may also override these, all no-ops by default:
 
-    - `_to_data(user_input)`: reshape a raw, schema-coerced submission into
-      the exact `dict` `config_store` expects for this type's `data`.
+    - `_to_data(entry, user_input)`: reshape a raw, schema-coerced submission
+      into the exact `dict` `config_store` expects for this type's `data`.
       `blind`/`zone`/`value` submit already in that shape, so they never
       override this; `condition`/`mode`/`rule` do -- see their own classes
       for why a native HA selector's output is not, quite, that shape yet.
+      Takes `entry` explicitly (only `rule` reads it, for `_configured_ids`)
+      rather than reaching for `self._get_entry()` -- that is what lets
+      `options_flow.py` drive this exact method from a bare instance of the
+      class, outside any running `ConfigSubentryFlow`, for the phase 5 menu;
+      see that module's own docstring for why "one owner, two doors" depends
+      on this method needing nothing from `self` at all.
     - `_to_form_values(data)`: the inverse, for prefilling a reconfigure form
       from a saved subentry's `data`.
     - `_initial_values(entry)`: what to prefill an *add* form with, for a
@@ -366,10 +392,11 @@ class _SubentryFlowBase(config_entries.ConfigSubentryFlow):
         """Return this type's form schema. Overridden per subclass."""
         raise NotImplementedError
 
-    def _to_data(self, user_input: dict[str, Any]) -> dict[str, Any]:
+    def _to_data(self, entry: Any, user_input: dict[str, Any]) -> dict[str, Any]:
         """Reshape a coerced submission into `config_store`'s expected `data`.
 
-        Identity by default.
+        Identity by default; `entry` is unused here, only threaded through
+        for the one override (`rule`) that needs it.
         """
         return user_input
 
@@ -476,7 +503,7 @@ class _SubentryFlowBase(config_entries.ConfigSubentryFlow):
             problems = self._local_problems(user_input)
             data: dict[str, Any] | None = None
             if not problems:
-                data = self._to_data(user_input)
+                data = self._to_data(entry, user_input)
                 problems = self._blocking_errors(entry, subentry_id, data)
             if not problems:
                 title = self._title(data)
@@ -789,8 +816,12 @@ class ConditionSubentryFlowHandler(_SubentryFlowBase):
         """Return the static condition schema; it needs nothing from `entry`."""
         return _CONDITION_SCHEMA
 
-    def _to_data(self, user_input: dict[str, Any]) -> dict[str, Any]:
+    def _to_data(self, entry: Any, user_input: dict[str, Any]) -> dict[str, Any]:
         """Normalize and flatten the selector's list into `config_store`'s expected body.
+
+        `entry` is unused here (this type needs nothing from it) -- part of
+        the uniform `_to_data(entry, user_input)` signature every subclass
+        shares; see `_SubentryFlowBase._to_data`'s own docstring for why.
 
         `_NUMERIC_STATE_DEFAULT_FIELD` is merged in as the flattened body's
         `default` key, but only when the flattened body's own top-level
@@ -900,8 +931,11 @@ class ModeSubentryFlowHandler(_SubentryFlowBase):
             return ["mode: choose either a named condition or an inline condition, not both"]
         return []
 
-    def _to_data(self, user_input: dict[str, Any]) -> dict[str, Any]:
+    def _to_data(self, entry: Any, user_input: dict[str, Any]) -> dict[str, Any]:
         """Fold `condition_ref`/`when` into the single `when` key `config_store` reads.
+
+        `entry` is unused here -- see `_SubentryFlowBase._to_data`'s
+        docstring for why every subclass shares this signature regardless.
 
         A bare list is what `config_store._build_modes` already expects
         directly (`_parse_condition`/`evaluate_condition` both treat a
@@ -1008,6 +1042,26 @@ def _configured_ids(entry: Any, subentry_type: str) -> list[str]:
         sub.data[_ID_KEY]
         for sub in entry.subentries.values()
         if sub.subentry_type == subentry_type and _ID_KEY in sub.data
+    )
+
+
+def _rule_pick_schema(entry: Any) -> vol.Schema:
+    """Step one of adding a rule: the `(mode, zone)` list it will join.
+
+    A free function, not inlined into `RuleSubentryFlowHandler.async_step_user`
+    below, so `options_flow.py`'s own rule-add step can render the identical
+    form -- see that module's docstring for why the phase 5 menu must read
+    this rather than grow a second copy of it.
+    """
+    return vol.Schema(
+        {
+            vol.Required(_RULE_MODE_FIELD): selector.SelectSelector(
+                selector.SelectSelectorConfig(options=_configured_ids(entry, MODE), sort=True)
+            ),
+            vol.Required(_RULE_ZONE_FIELD): selector.SelectSelector(
+                selector.SelectSelectorConfig(options=_configured_ids(entry, ZONE), sort=True)
+            ),
+        }
     )
 
 
@@ -1122,23 +1176,7 @@ class RuleSubentryFlowHandler(_SubentryFlowBase):
             self._pick = dict(user_input)
             return await self._step(None, step_id="rule")
 
-        return self.async_show_form(
-            step_id="user",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(_RULE_MODE_FIELD): selector.SelectSelector(
-                        selector.SelectSelectorConfig(
-                            options=_configured_ids(entry, MODE), sort=True
-                        )
-                    ),
-                    vol.Required(_RULE_ZONE_FIELD): selector.SelectSelector(
-                        selector.SelectSelectorConfig(
-                            options=_configured_ids(entry, ZONE), sort=True
-                        )
-                    ),
-                }
-            ),
-        )
+        return self.async_show_form(step_id="user", data_schema=_rule_pick_schema(entry))
 
     async def async_step_rule(
         self, user_input: dict[str, Any] | None = None
@@ -1205,8 +1243,13 @@ class RuleSubentryFlowHandler(_SubentryFlowBase):
             return ["rule: choose either a named condition or an inline condition, not both"]
         return []
 
-    def _to_data(self, user_input: dict[str, Any]) -> dict[str, Any]:
+    def _to_data(self, entry: Any, user_input: dict[str, Any]) -> dict[str, Any]:
         """Reshape the submission into the keys `config_store._grouped_rules`/`_rule_body` read.
+
+        Takes `entry` explicitly, unlike every other override, because this
+        is the one type that reads it (`_configured_ids(entry, VALUE)`); see
+        `_SubentryFlowBase._to_data`'s own docstring for why the signature is
+        uniform across every subclass regardless.
 
         `then` is always written, because `config_schema._parse_rule` requires
         it; an axis left at `keep` is written as `"keep"` rather than omitted,
@@ -1227,7 +1270,7 @@ class RuleSubentryFlowHandler(_SubentryFlowBase):
         so blocking every save of every type the moment the named condition
         is deleted, instead of one attributable `unknown_condition_ref`.
         """
-        value_ids = _configured_ids(self._get_entry(), VALUE)
+        value_ids = _configured_ids(entry, VALUE)
         data: dict[str, Any] = {
             _RULE_MODE_FIELD: user_input[_RULE_MODE_FIELD],
             _RULE_ZONE_FIELD: user_input[_RULE_ZONE_FIELD],

@@ -251,6 +251,183 @@
       }
     }
   },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Cover Logic",
+        "description": "Čo chcete pozrieť alebo zmeniť?",
+        "menu_options": {
+          "blinds": "Žalúzie ({blinds_count})",
+          "zones": "Zóny ({zones_count})",
+          "values": "Hodnoty ({values_count})",
+          "conditions": "Podmienky ({conditions_count})",
+          "modes": "Režimy ({modes_count})",
+          "rules": "Pravidlá ({rules_count})",
+          "import_export": "Import / export YAML",
+          "check_matrix": "Kontrola proti starej matici"
+        }
+      },
+      "blinds": {
+        "title": "Žalúzie",
+        "description": "Nastavených: {count}.",
+        "menu_options": {
+          "add": "Pridať",
+          "edit": "Upraviť existujúce",
+          "remove": "Odstrániť existujúce",
+          "back": "Späť do hlavnej ponuky"
+        }
+      },
+      "zones": {
+        "title": "Zóny",
+        "description": "Nastavených: {count}.",
+        "menu_options": {
+          "add": "[%key:component::cover_logic::options::step::blinds::menu_options::add%]",
+          "edit": "[%key:component::cover_logic::options::step::blinds::menu_options::edit%]",
+          "remove": "[%key:component::cover_logic::options::step::blinds::menu_options::remove%]",
+          "back": "[%key:component::cover_logic::options::step::blinds::menu_options::back%]"
+        }
+      },
+      "values": {
+        "title": "Hodnoty",
+        "description": "Nastavených: {count}.",
+        "menu_options": {
+          "add": "[%key:component::cover_logic::options::step::blinds::menu_options::add%]",
+          "edit": "[%key:component::cover_logic::options::step::blinds::menu_options::edit%]",
+          "remove": "[%key:component::cover_logic::options::step::blinds::menu_options::remove%]",
+          "back": "[%key:component::cover_logic::options::step::blinds::menu_options::back%]"
+        }
+      },
+      "conditions": {
+        "title": "Podmienky",
+        "description": "Nastavených: {count}.",
+        "menu_options": {
+          "add": "[%key:component::cover_logic::options::step::blinds::menu_options::add%]",
+          "edit": "[%key:component::cover_logic::options::step::blinds::menu_options::edit%]",
+          "remove": "[%key:component::cover_logic::options::step::blinds::menu_options::remove%]",
+          "back": "[%key:component::cover_logic::options::step::blinds::menu_options::back%]"
+        }
+      },
+      "modes": {
+        "title": "Režimy",
+        "description": "Nastavených: {count}.",
+        "menu_options": {
+          "add": "[%key:component::cover_logic::options::step::blinds::menu_options::add%]",
+          "edit": "[%key:component::cover_logic::options::step::blinds::menu_options::edit%]",
+          "remove": "[%key:component::cover_logic::options::step::blinds::menu_options::remove%]",
+          "back": "[%key:component::cover_logic::options::step::blinds::menu_options::back%]"
+        }
+      },
+      "rules": {
+        "title": "Pravidlá",
+        "description": "Nastavených: {count}, naprieč všetkými dvojicami režim-zóna. V rámci dvojice rozhoduje prvé pravidlo, ktorého podmienka sedí -- poradie v dvojici je presne to, čo engine skúša ako prvé.",
+        "menu_options": {
+          "add": "[%key:component::cover_logic::options::step::blinds::menu_options::add%]",
+          "edit": "[%key:component::cover_logic::options::step::blinds::menu_options::edit%]",
+          "remove": "[%key:component::cover_logic::options::step::blinds::menu_options::remove%]",
+          "back": "[%key:component::cover_logic::options::step::blinds::menu_options::back%]"
+        }
+      },
+      "add": {
+        "title": "Pridať",
+        "description": "Vyplňte polia nižšie. Platia len polia pre typ položky, ktorú pridávate; čo neviete, nechajte na predvolenej hodnote.",
+        "data": {
+          "entity": "Entita",
+          "id": "Id",
+          "facade_azimuth": "[%key:component::cover_logic::config_subentries::blind::step::user::data::facade_azimuth%]",
+          "tolerance": "[%key:component::cover_logic::config_subentries::blind::step::user::data::tolerance%]",
+          "travel_time": "[%key:component::cover_logic::config_subentries::blind::step::user::data::travel_time%]",
+          "has_tilt": "[%key:component::cover_logic::config_subentries::blind::step::user::data::has_tilt%]",
+          "tilt_after_arrival": "[%key:component::cover_logic::config_subentries::blind::step::user::data::tilt_after_arrival%]",
+          "members": "[%key:component::cover_logic::config_subentries::zone::step::user::data::members%]",
+          "occupants": "[%key:component::cover_logic::config_subentries::zone::step::user::data::occupants%]",
+          "default": "[%key:component::cover_logic::config_subentries::value::step::user::data::default%]",
+          "condition": "[%key:component::cover_logic::config_subentries::condition::step::user::data::condition%]",
+          "numeric_state_default": "[%key:component::cover_logic::config_subentries::condition::step::user::data::numeric_state_default%]",
+          "order": "[%key:component::cover_logic::config_subentries::mode::step::user::data::order%]",
+          "condition_ref": "[%key:component::cover_logic::config_subentries::mode::step::user::data::condition_ref%]",
+          "when": "[%key:component::cover_logic::config_subentries::mode::step::user::data::when%]",
+          "mode": "[%key:component::cover_logic::config_subentries::rule::step::user::data::mode%]",
+          "zone": "[%key:component::cover_logic::config_subentries::rule::step::user::data::zone%]"
+        }
+      },
+      "add_rule_fields": {
+        "title": "[%key:component::cover_logic::config_subentries::rule::step::rule::title%]",
+        "description": "[%key:component::cover_logic::config_subentries::rule::step::rule::description%]",
+        "data": {
+          "mode": "[%key:component::cover_logic::config_subentries::rule::step::rule::data::mode%]",
+          "zone": "[%key:component::cover_logic::config_subentries::rule::step::rule::data::zone%]",
+          "order": "[%key:component::cover_logic::config_subentries::rule::step::rule::data::order%]",
+          "if_ref": "[%key:component::cover_logic::config_subentries::rule::step::rule::data::if_ref%]",
+          "if": "[%key:component::cover_logic::config_subentries::rule::step::rule::data::if%]",
+          "position": "[%key:component::cover_logic::config_subentries::rule::step::rule::data::position%]",
+          "tilt": "[%key:component::cover_logic::config_subentries::rule::step::rule::data::tilt%]",
+          "events": "[%key:component::cover_logic::config_subentries::rule::step::rule::data::events%]",
+          "name": "[%key:component::cover_logic::config_subentries::rule::step::rule::data::name%]"
+        },
+        "data_description": {
+          "order": "[%key:component::cover_logic::config_subentries::rule::step::rule::data_description::order%]",
+          "position": "[%key:component::cover_logic::config_subentries::rule::step::rule::data_description::position%]",
+          "tilt": "[%key:component::cover_logic::config_subentries::rule::step::rule::data_description::tilt%]",
+          "events": "[%key:component::cover_logic::config_subentries::rule::step::rule::data_description::events%]"
+        }
+      },
+      "edit": {
+        "title": "Vyberte, čo upraviť",
+        "data": {
+          "subentry_id": "Ktoré?"
+        }
+      },
+      "edit_form": {
+        "title": "Upraviť",
+        "description": "[%key:component::cover_logic::options::step::add::description%]",
+        "data": {
+          "entity": "[%key:component::cover_logic::options::step::add::data::entity%]",
+          "id": "[%key:component::cover_logic::options::step::add::data::id%]",
+          "facade_azimuth": "[%key:component::cover_logic::options::step::add::data::facade_azimuth%]",
+          "tolerance": "[%key:component::cover_logic::options::step::add::data::tolerance%]",
+          "travel_time": "[%key:component::cover_logic::options::step::add::data::travel_time%]",
+          "has_tilt": "[%key:component::cover_logic::options::step::add::data::has_tilt%]",
+          "tilt_after_arrival": "[%key:component::cover_logic::options::step::add::data::tilt_after_arrival%]",
+          "members": "[%key:component::cover_logic::options::step::add::data::members%]",
+          "occupants": "[%key:component::cover_logic::options::step::add::data::occupants%]",
+          "default": "[%key:component::cover_logic::options::step::add::data::default%]",
+          "condition": "[%key:component::cover_logic::options::step::add::data::condition%]",
+          "numeric_state_default": "[%key:component::cover_logic::options::step::add::data::numeric_state_default%]",
+          "order": "[%key:component::cover_logic::options::step::add::data::order%]",
+          "condition_ref": "[%key:component::cover_logic::options::step::add::data::condition_ref%]",
+          "when": "[%key:component::cover_logic::options::step::add::data::when%]",
+          "mode": "[%key:component::cover_logic::options::step::add::data::mode%]",
+          "zone": "[%key:component::cover_logic::options::step::add::data::zone%]"
+        }
+      },
+      "remove": {
+        "title": "Odstrániť",
+        "data": {
+          "subentry_id": "[%key:component::cover_logic::options::step::edit::data::subentry_id%]",
+          "confirm": "Áno, odstrániť"
+        }
+      },
+      "import_export": {
+        "title": "Import / export konfigurácie",
+        "description": "Načíta alebo zapíše celú konfiguráciu ako YAML súbor -- tie isté služby import_config/export_config, ktoré sa dajú zavolať aj priamo z Nástrojov pre vývojárov.",
+        "data": {
+          "action": "Akcia",
+          "path": "[%key:component::cover_logic::services::import_config::fields::path::name%]",
+          "dry_run": "[%key:component::cover_logic::services::import_config::fields::dry_run::name%]",
+          "overwrite": "[%key:component::cover_logic::services::import_config::fields::overwrite::name%]"
+        }
+      },
+      "check_matrix": {
+        "title": "Kontrola proti starej matici",
+        "description": "{result}"
+      }
+    },
+    "error": {
+      "invalid_config": "[%key:component::cover_logic::config::error::invalid_config%]",
+      "confirmation_required": "Zaškrtnite potvrdenie, aby sa položka odstránila.",
+      "import_export_failed": "Toto sa nepodarilo dokončiť: {error_detail}"
+    }
+  },
   "issues": {
     "fixture_drift": {
       "title": "Konfigurácia sa už nezhoduje s fixtures/dom_peter.yaml",

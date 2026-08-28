@@ -571,3 +571,88 @@ class FakeServiceCall:
 def service_call():
     """Factory: `service_call({"path": ...})` -> a fake `ServiceCall`."""
     return FakeServiceCall
+
+
+class FakeOptionsConfigEntries:
+    """Stands in for `hass.config_entries`, as seen from inside the options flow.
+
+    A superset of `FakeSubentryConfigEntries`'s surface: the options flow
+    itself needs `.async_get_known_entry` (its own `config_entry` property)
+    plus `.async_add_subentry`/`.async_update_subentry`/`.async_remove_
+    subentry` (every add/edit/remove screen); `services._async_import_config`/
+    `_async_export_config`, which the import/export screen calls directly
+    (see `options_flow.async_step_import_export`'s own docstring for why not
+    through the service-call bus), additionally need `.async_entries` and
+    `.async_update_entry`. One fake covers both call sites because both are
+    exercised from the same flow in `test_options_flow.py`.
+    """
+
+    def __init__(self, entry):
+        """Wrap the one entry this fake ever returns."""
+        self._entry = entry
+
+    def async_get_known_entry(self, entry_id):
+        """Return the wrapped entry regardless of `entry_id` -- there is only ever one."""
+        return self._entry
+
+    def async_entries(self, domain):
+        """Return the wrapped entry as a one-element list, like the real manager does."""
+        return [self._entry]
+
+    def async_add_subentry(self, entry, subentry):
+        """Insert `subentry` keyed by its own `subentry_id`, like the real manager does."""
+        entry.subentries[subentry.subentry_id] = subentry
+        return True
+
+    def async_update_subentry(self, entry, subentry, *, data=None, title=None, unique_id=None):
+        """Write `data`/`title` onto `subentry` in place, like the real update does."""
+        if data is not None:
+            subentry.data = dict(data)
+        if title is not None:
+            subentry.title = title
+        return True
+
+    def async_remove_subentry(self, entry, subentry_id):
+        """Drop `subentry_id`, like the real manager does."""
+        del entry.subentries[subentry_id]
+        return True
+
+    def async_update_entry(self, entry, *, data=None, **_ignored):
+        """Replace `entry.data`; every other keyword the real signature accepts is unused here."""
+        if data is not None:
+            entry.data = dict(data)
+        return True
+
+
+class FakeOptionsHass:
+    """Stands in for `hass` as seen from inside the options flow.
+
+    `.config_entries` (above) and `.async_add_executor_job` (the "check
+    against the old matrix" screen's blocking `load_config_file`, and
+    `services._async_load_and_validate`'s equivalent read for import/export)
+    -- no `.services`, unlike `FakeServiceHass`: the options flow deliberately
+    never dispatches through `hass.services.async_call` (see `options_flow.
+    async_step_import_export`'s own docstring), so nothing here ever reads
+    that attribute.
+    """
+
+    def __init__(self, entry):
+        """Wrap `entry` behind a `FakeOptionsConfigEntries`."""
+        self.config_entries = FakeOptionsConfigEntries(entry)
+
+    async def async_add_executor_job(self, target, *args):
+        """Genuinely run `target` off the current thread -- see `FakeSetupHass`'s
+        identical method for why this cannot be a same-thread stub.
+        """
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, target, *args)
+
+
+@pytest.fixture
+def options_hass():
+    """Factory: `options_hass(entry)` -> hass as seen from inside the options flow."""
+
+    def _make(entry):
+        return FakeOptionsHass(entry)
+
+    return _make
