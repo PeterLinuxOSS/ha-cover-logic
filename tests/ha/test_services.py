@@ -9,6 +9,23 @@ genuine `ServiceCall` needs a running `ServiceRegistry` this project does
 not otherwise need to stand up; `tests/ha/conftest.py`'s
 `FakeServiceHass`/`FakeServiceEntry`/`FakeServiceCall` stub exactly the
 surface those two functions touch.
+
+One test near the bottom of this file, `test_registered_service_handlers_
+are_awaited_as_coroutines`, deliberately does not make that tradeoff. It
+exists because a real bug shipped past every other test here: both services
+were registered as `lambda call: _async_import_config(hass, call)`, which
+Home Assistant's job-type detection does not recognise as a coroutine
+function (a lambda wrapping an `async def` is not itself one), so it ran the
+handler through an executor and returned the unawaited coroutine object as
+the response -- `HomeAssistantError: ... expected a dictionary, but got
+<class 'coroutine'>` against the live house, for every caller going through
+the service bus (the UI, an automation, Developer Tools). `FakeServiceRegistry`
+never asks what job type a handler is, so no test driving it could ever have
+caught this; only Home Assistant's own `ServiceRegistry`, on a real
+`HomeAssistant` (`tests/ha/conftest.py`'s `hass_factory`), actually exercises
+that check. See that test's own docstring for how it tells "awaited
+correctly" apart from "not awaited at all" without needing a fully wired
+config entry.
 """
 
 import asyncio
@@ -34,7 +51,7 @@ from cover_logic.services import (
     async_register_services,
     async_unregister_services,
 )
-from tests.ha.conftest import FakeServiceEntry
+from tests.ha.conftest import FakeServiceConfigEntries, FakeServiceEntry
 
 # Zero problems of any severity: one blind, one zone that owns it, one
 # fallback mode, and a rule list for that (mode, zone) pair ending in an
@@ -544,3 +561,56 @@ def test_async_unregister_services_removes_both(service_hass):
 
     assert not hass.services.has_service(DOMAIN, SERVICE_IMPORT_CONFIG)
     assert not hass.services.has_service(DOMAIN, SERVICE_EXPORT_CONFIG)
+
+
+def test_registered_service_handlers_are_awaited_as_coroutines(hass_factory):
+    """Regression test for the lambda-registration bug -- see this module's
+    own docstring for the full story.
+
+    Dispatches both services through a real `hass.services.async_call(...,
+    blocking=True, return_response=True)`, the exact call shape that failed
+    against the live house, on a real, minimal `HomeAssistant` (`hass_factory`)
+    so Home Assistant's own `get_hassjob_callable_job_type` -- not a fake that
+    never asks the question -- decides how each handler gets dispatched.
+
+    `hass.config_entries` is swapped for `FakeServiceConfigEntries([])` (the
+    same fake `_async_import_config`/`_async_export_config`'s "no entry yet"
+    tests already use) purely so the awaited coroutine has something
+    deterministic to fail on. That failure is the load-bearing assertion,
+    not an afterthought:
+
+    - Dispatched correctly (this fix), `_get_entry` runs *inside* the
+      awaited coroutine and raises `ServiceValidationError(translation_key=
+      "no_config_entry")` -- our own code, reached only because the handler
+      was actually awaited.
+    - Dispatched the broken way (a lambda), the handler is never awaited at
+      all: `ServiceRegistry.async_call` gets the unawaited coroutine object
+      back as "the response", and raises its own plain `HomeAssistantError`
+      (`translation_key="service_reponse_invalid"`) one level up, before
+      `_get_entry` ever runs. `HomeAssistantError` is `ServiceValidationError`'s
+      *parent*, not a subclass of it, so `pytest.raises(ServiceValidationError)`
+      does not swallow it -- the test errors out instead of merely failing an
+      assertion, which is exactly what was seen reverting the fix locally
+      (lambda back in -> this test fails; inner `async def` restored -> it
+      passes again).
+    """
+
+    async def _run() -> None:
+        hass = hass_factory()
+        hass.config_entries = FakeServiceConfigEntries([])
+        try:
+            async_register_services(hass)
+            for service in (SERVICE_IMPORT_CONFIG, SERVICE_EXPORT_CONFIG):
+                with pytest.raises(ServiceValidationError) as excinfo:
+                    await hass.services.async_call(
+                        DOMAIN,
+                        service,
+                        {"path": "/nonexistent/does-not-matter.yaml"},
+                        blocking=True,
+                        return_response=True,
+                    )
+                assert excinfo.value.translation_key == "no_config_entry"
+        finally:
+            await hass.async_stop(force=True)
+
+    asyncio.run(_run())

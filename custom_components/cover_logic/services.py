@@ -412,19 +412,44 @@ def async_register_services(hass: HomeAssistant) -> None:
     `has_service` so a config entry reload does not try to register the same
     service twice.
     """
+    # Home Assistant decides how to dispatch a registered handler by asking
+    # `inspect.iscoroutinefunction` (see `HassJob`/`get_hassjob_callable_job_type`
+    # in `homeassistant/core.py`), not by trying it and seeing what comes
+    # back. A `lambda call: _async_import_config(hass, call)` fails that
+    # check -- a lambda is never a coroutine function, even though calling
+    # it produces one -- so the registry classified it as a plain blocking
+    # callable and ran it through `hass.async_add_executor_job`, which
+    # returns the *coroutine object* the lambda handed back without ever
+    # awaiting it. With `supports_response=OPTIONAL` that unawaited coroutine
+    # is then handed to the caller as the response payload, which is exactly
+    # the `expected a dictionary, but got <class 'coroutine'>` error this
+    # fixes: nothing was wrong with `_async_import_config`/`_async_export_config`
+    # themselves, only with how the handler passed to `async_register` failed
+    # to *look like* a coroutine function to that check. An inner `async def`
+    # that awaits the real function is a coroutine function in its own
+    # right, so `inspect.iscoroutinefunction` says yes and the registry
+    # awaits it like every other async service handler in Home Assistant.
     if not hass.services.has_service(DOMAIN, SERVICE_IMPORT_CONFIG):
+
+        async def _import_config(call: ServiceCall) -> ServiceResponse:
+            return await _async_import_config(hass, call)
+
         hass.services.async_register(
             DOMAIN,
             SERVICE_IMPORT_CONFIG,
-            lambda call: _async_import_config(hass, call),
+            _import_config,
             schema=IMPORT_CONFIG_SCHEMA,
             supports_response=SupportsResponse.OPTIONAL,
         )
     if not hass.services.has_service(DOMAIN, SERVICE_EXPORT_CONFIG):
+
+        async def _export_config(call: ServiceCall) -> ServiceResponse:
+            return await _async_export_config(hass, call)
+
         hass.services.async_register(
             DOMAIN,
             SERVICE_EXPORT_CONFIG,
-            lambda call: _async_export_config(hass, call),
+            _export_config,
             schema=EXPORT_CONFIG_SCHEMA,
             supports_response=SupportsResponse.OPTIONAL,
         )
