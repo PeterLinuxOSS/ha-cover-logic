@@ -335,6 +335,117 @@ def test_no_duplicate_order_across_different_mode_zone_keys() -> None:
     assert duplicate_rule_order_problems(entry) == []
 
 
+# --- Inherited (default) rules ------------------------------------------
+#
+# A `rule` subentry's `zone` field is already required (`_require`), so
+# `zone: "*"` (`const.RULE_DEFAULT_ZONE`) needs no new subentry shape -- it
+# is grouped by `_grouped_rules` under `f"{mode}.*"` the same way any other
+# zone value would be, purely by string concatenation. These tests pin that
+# "no special case needed" claim rather than assume it.
+
+
+def test_a_wildcard_zone_rule_groups_under_the_mode_default_key():
+    entry = make_entry(
+        [
+            ("blind", {"entity": "cover.a"}),
+            ("zone", {"id": "z", "members": ["cover.a"]}),
+            ("mode", {"id": "m", "order": 0}),
+            ("rule", {"mode": "m", "zone": "*", "order": 0, "then": {"position": 0}}),
+        ]
+    )
+    config = config_from_subentries(entry)
+    assert "m.*" in config.rules
+    assert config.rules["m.*"][0].then.position == 0
+    # No `m.z` own list was declared -- confirmed absent, not just unread.
+    assert "m.z" not in config.rules
+
+
+def test_rule_owner_ids_names_a_default_rule_by_its_wildcard_key():
+    entry = make_entry(
+        [
+            ("blind", {"entity": "cover.a"}),
+            ("zone", {"id": "z", "members": ["cover.a"]}),
+            ("mode", {"id": "m", "order": 0}),
+            ("rule", {"mode": "m", "zone": "*", "order": 0, "then": {"position": 0}}),
+        ]
+    )
+    assert rule_owner_ids(entry) == {"s3": "m.*#0"}
+
+
+def test_two_defaults_sharing_an_order_is_a_reported_tie():
+    """`duplicate_rule_order_problems` groups by the literal `"mode.zone"`
+    key `_grouped_rules` produces -- `"m.*"` for defaults -- so a tie among
+    default rows is caught exactly like a tie among a zone's own rows,
+    without a second check.
+    """
+    entry = make_entry(
+        [
+            ("blind", {"entity": "cover.a"}),
+            ("zone", {"id": "z", "members": ["cover.a"]}),
+            ("mode", {"id": "m", "order": 0}),
+            ("rule", {"mode": "m", "zone": "*", "order": 0, "then": {"position": 0}}),
+            ("rule", {"mode": "m", "zone": "*", "order": 0, "then": {"position": 100}}),
+        ]
+    )
+    problems = duplicate_rule_order_problems(entry)
+    assert len(problems) == 1
+    assert "m.*" in problems[0].message
+
+
+def test_a_zone_rules_order_number_relative_to_the_default_does_not_matter() -> None:
+    """A zone's own rule always runs before its mode's defaults, regardless
+    of what `order` a human assigned to either one -- `order` numbers a rule
+    against others in the *same* `(mode, zone)` group only (see
+    `config_store`'s own "Ordering" docstring section); it is never compared
+    across groups. Given a zone rule numbered *after* a default rule that
+    would otherwise win, the zone rule still wins.
+    """
+    entry = make_entry(
+        [
+            ("blind", {"entity": "cover.a"}),
+            ("zone", {"id": "z", "members": ["cover.a"]}),
+            ("mode", {"id": "m", "order": 0}),
+            # A human editing this by hand might reasonably expect `order: 1`
+            # to run before `order: 100` -- that intuition only holds within
+            # one group; `m.z` and `m.*` are different groups entirely.
+            ("rule", {"mode": "m", "zone": "*", "order": 1, "then": {"position": 0}}),
+            ("rule", {"mode": "m", "zone": "z", "order": 100, "then": {"position": 100}}),
+        ]
+    )
+    config = config_from_subentries(entry)
+    assert config.rules["m.z"][0].then.position == 100
+    assert config.rules["m.*"][0].then.position == 0
+
+
+def test_a_zone_named_asterisk_is_rejected() -> None:
+    entry = make_entry([("zone", {"id": "*", "members": []})])
+    with pytest.raises(ConfigError, match=r"\*"):
+        config_from_subentries(entry)
+
+
+def test_subentries_from_config_round_trips_a_default_rule() -> None:
+    """The write side (`subentries_from_config`, used by `import_config`)
+    must also carry a wildcard rule key through -- `key.partition(".")` in
+    `subentries_from_config` splits `"m.*"` into `mode_id="m"`,
+    `zone_id="*"` by plain string operations, the same as any other key, so
+    this is confirming that claim rather than assuming it.
+    """
+    original = config_from_subentries(
+        make_entry(
+            [
+                ("blind", {"entity": "cover.a"}),
+                ("zone", {"id": "z", "members": ["cover.a"]}),
+                ("mode", {"id": "m", "order": 0}),
+                ("rule", {"mode": "m", "zone": "*", "order": 0, "then": {"position": 0}}),
+            ]
+        )
+    )
+    items = subentries_from_config(original)
+    rebuilt = config_from_subentries(entry_from_subentry_items(items, original.guards))
+    assert rebuilt == original
+    assert rebuilt.rules["m.*"][0].then.position == 0
+
+
 def _assert_owner_ids_point_at_the_rules_they_claim_to(entry: Any) -> None:
     """Decode `rule_owner_ids(entry)` back onto `entry.subentries` and check it names,
     subentry for subentry, the exact tuple `config_from_subentries(entry).rules[key]` holds.

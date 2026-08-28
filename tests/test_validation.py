@@ -1,5 +1,5 @@
 from cover_logic.config_schema import load_config
-from cover_logic.validation import validate
+from cover_logic.validation import WARNING, validate
 
 BASE = """
 blinds:
@@ -100,6 +100,103 @@ rules:
     - {then: {position: 0}}
 """
     assert "unreachable_rule" not in codes(text)
+
+
+# --- Inherited (default) rules -------------------------------------------
+#
+# A rule filed under zone "*" (`const.RULE_DEFAULT_ZONE`) is a mode-wide
+# default -- see `validation._check_rule_lists`'s own docstring for how
+# `missing_rule_list`/`no_catch_all`/`unreachable_rule` each account for it.
+
+DEFAULT_ONLY = """
+blinds: [{entity: cover.a}, {entity: cover.b}]
+zones:
+  one: {members: [cover.a]}
+  two: {members: [cover.b]}
+modes: [{id: noc}]
+conditions: {}
+values: {}
+rules:
+  "noc.*":
+    - {then: {position: 0}}
+"""
+
+
+def test_a_zone_with_no_rules_of_its_own_but_a_default_is_not_missing():
+    assert "missing_rule_list" not in codes(DEFAULT_ONLY)
+
+
+def test_a_zone_covered_only_by_the_defaults_catch_all_has_no_catch_all_warning():
+    assert "no_catch_all" not in codes(DEFAULT_ONLY)
+
+
+def test_the_default_key_itself_is_not_an_unknown_rule_key():
+    assert "unknown_rule_key" not in codes(DEFAULT_ONLY)
+
+
+SHADOWED = """
+blinds: [{entity: cover.a}]
+zones: {z: {members: [cover.a]}}
+modes: [{id: noc}]
+conditions: {}
+values: {}
+rules:
+  noc.z: [{then: {position: 100}}]
+  "noc.*": [{then: {position: 0}}]
+"""
+
+
+def test_a_default_the_zones_own_catch_all_already_shadows_is_a_warning():
+    problems = validate(load_config(SHADOWED))
+    matches = [p for p in problems if p.code == "unreachable_rule"]
+    assert len(matches) == 1
+    assert matches[0].severity == WARNING
+    assert "noc.*#0" in matches[0].message
+
+
+NOT_SHADOWED = """
+blinds: [{entity: cover.a}]
+zones: {z: {members: [cover.a]}}
+modes: [{id: noc}]
+conditions:
+  never: {condition: state, entity_id: nothing.here, state: "on"}
+values: {}
+rules:
+  noc.z: [{if: !ref never, then: {position: 100}}]
+  "noc.*": [{then: {position: 0}}]
+"""
+
+
+def test_a_default_is_not_shadowed_when_the_zones_own_rule_is_conditional():
+    assert "unreachable_rule" not in codes(NOT_SHADOWED)
+
+
+SHARED_DEFAULT_WITH_AN_INTERNAL_ISSUE = """
+blinds: [{entity: cover.a}, {entity: cover.b}]
+zones:
+  one: {members: [cover.a]}
+  two: {members: [cover.b]}
+modes: [{id: noc}]
+conditions:
+  vzdy: {condition: state, entity_id: x, state: "on"}
+values: {}
+rules:
+  "noc.*":
+    - {then: {position: 0}}
+    - {if: !ref vzdy, then: {position: 50}}
+"""
+
+
+def test_an_unreachable_row_inside_a_shared_default_is_reported_once_not_per_zone():
+    """Two zones ('one', 'two') inherit the same default list, which has an
+    unreachable row entirely on its own account (a catch-all before it, no
+    zone involved). That is one fact about one subentry group, not one fact
+    per zone that happens to inherit it.
+    """
+    problems = validate(load_config(SHARED_DEFAULT_WITH_AN_INTERNAL_ISSUE))
+    matches = [p for p in problems if p.code == "unreachable_rule"]
+    assert len(matches) == 1
+    assert "noc.*#1" in matches[0].message
 
 
 def test_direct_self_referencing_condition_is_an_error():

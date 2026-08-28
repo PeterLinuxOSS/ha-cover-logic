@@ -12,7 +12,7 @@ from typing import Any
 import yaml
 
 from .conditions import DEFAULT_AZIMUTH_ENTITY, SUN_ENTITY
-from .const import COND_REF, COND_SUN_HITS_TARGET
+from .const import COND_REF, COND_SUN_HITS_TARGET, RULE_DEFAULT_ZONE
 from .model import KEEP, Action, Blind, Config, Mode, Ref, Rule, Value, Zone
 
 
@@ -83,6 +83,25 @@ def _reject_dot(identifier: Any, where: str) -> None:
         raise ConfigError(msg)
 
 
+def _reject_zone_id(zone_id: Any, where: str) -> None:
+    """A zone id must not contain '.' (see `_reject_dot`) and must not be `"*"`.
+
+    `"*"` in the zone half of a `"<mode>.<zone>"` rules key is reserved to
+    mean "the default rule list for this mode" (`const.RULE_DEFAULT_ZONE`,
+    read by `engine.evaluate`) -- a real zone allowed to claim that name
+    would make `f"{mode}.{zone_id}"` collide with `f"{mode}.{RULE_DEFAULT_ZONE}"`
+    and silently steal every mode's default rules as if they were that one
+    zone's own. Checked wherever a zone id is declared: here for the YAML
+    path (`load_config`'s zone loop) and again in `config_store._build_zones`
+    for the subentry path, so a zone cannot be named this through either
+    door into `Config`.
+    """
+    _reject_dot(zone_id, where)
+    if zone_id == RULE_DEFAULT_ZONE:
+        msg = f"{where} must not be {RULE_DEFAULT_ZONE!r}: reserved for a mode's default rules"
+        raise ConfigError(msg)
+
+
 class RefTag:
     """Placeholder produced by the `!ref` YAML tag.
 
@@ -132,7 +151,7 @@ def load_config(text: str) -> Config:
     raw_zones = _expect_mapping(raw.get("zones") or {}, "'zones'")
     zones = {}
     for zone_id, raw_body in raw_zones.items():
-        _reject_dot(zone_id, "zone id")
+        _reject_zone_id(zone_id, "zone id")
         body = _expect_mapping(raw_body, f"zone {zone_id!r}")
         _check_keys(body, _ZONE_KEYS, f"zone {zone_id!r}")
         zones[zone_id] = Zone(

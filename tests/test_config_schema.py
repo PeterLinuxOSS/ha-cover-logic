@@ -344,6 +344,18 @@ def test_mode_id_containing_dot_raises_config_error():
         load_config(bad)
 
 
+def test_zone_id_of_a_literal_asterisk_raises_config_error():
+    """`"*"` in the zone half of a rules key is reserved to mean "this mode's
+    default rule list" (`const.RULE_DEFAULT_ZONE`, read by `engine.evaluate`).
+    A real zone allowed to claim that name would make its own key collide
+    with the mode's default key and silently steal the default rules meant
+    for every zone.
+    """
+    bad = MINIMAL.replace("terasa:\n    members: [cover.a]", '"*":\n    members: [cover.a]')
+    with pytest.raises(ConfigError, match=r"\*"):
+        load_config(bad)
+
+
 def test_same_short_name_in_both_namespaces_resolves_independently():
     text = (
         MINIMAL.replace(
@@ -544,6 +556,22 @@ def test_dump_config_preserves_rule_order_within_a_group():
     rules = reloaded.rules["bezny_den.terasa"]
     assert rules[0].when == {"condition": "ref", "name": "cover_down"}
     assert rules[1].name == "kvety fallback"
+
+
+def test_dump_config_round_trips_a_default_rule_key():
+    """`"<mode>.*"` (`const.RULE_DEFAULT_ZONE`) is just another string key in
+    `Config.rules` -- `dump_config`/`load_config` need no special case for
+    it, but that is a claim worth pinning, not assuming: a round trip
+    through YAML text must still carry the wildcard rule and its shape.
+    """
+    text = MINIMAL.replace(
+        "rules:\n  noc.terasa:",
+        'rules:\n  "noc.*":\n    - {then: {position: 0, tilt: 0}}\n  noc.terasa:',
+    )
+    original = load_config(text)
+    reloaded = load_config(dump_config(original))
+    assert reloaded == original
+    assert reloaded.rules["noc.*"][0].then == Action(position=0, tilt=0)
 
 
 def test_dump_config_round_trips_a_shared_name_used_as_both_a_condition_and_a_value_ref():

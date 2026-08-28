@@ -8,7 +8,7 @@ anything. Runs in the test suite and again on import in the UI.
 from collections.abc import Iterator
 from dataclasses import dataclass
 
-from .const import COND_EVENT_TARGETS_ZONE, COND_REF, COND_SUN_HITS_TARGET
+from .const import COND_EVENT_TARGETS_ZONE, COND_REF, COND_SUN_HITS_TARGET, RULE_DEFAULT_ZONE
 from .model import Config
 
 ERROR = "error"
@@ -137,7 +137,7 @@ def _check_rule_keys(config: Config) -> list[Problem]:
     mode_ids = {m.id for m in config.modes}
     for key, rules in config.rules.items():
         mode, _, zone = key.partition(".")
-        if mode not in mode_ids or zone not in config.zones:
+        if mode not in mode_ids or (zone != RULE_DEFAULT_ZONE and zone not in config.zones):
             # Every rule filed under this key carries the offending
             # `mode`/`zone` pair in its own subentry data, and each one's own
             # form is where it is repointed at a pair that exists -- so all
@@ -157,12 +157,42 @@ def _check_rule_keys(config: Config) -> list[Problem]:
 
 
 def _check_rule_lists(config: Config) -> list[Problem]:
+    """Per (mode, zone): is there anything to decide it, and can every row of it fire.
+
+    A zone's *effective* list, since inheritance landed, is its own rules
+    followed by the mode's default rules (`f"{mode}.{RULE_DEFAULT_ZONE}"`,
+    see `engine._apply_rules`) -- `missing_rule_list` and `no_catch_all` are
+    judged against that concatenation, not the zone's own list in isolation,
+    or a zone with no rules of its own but a mode-wide default would wrongly
+    warn about having none. Unreachability, though, is checked in three
+    separate passes rather than once over the concatenation, to avoid
+    reporting the same fact more than once or attributing it to the wrong
+    subentry:
+
+    - a default list's own internal unreachability is checked once per
+      mode (`_check_unreachable_within(default_key, ...)` below, outside the
+      zone loop) -- it is one subentry group's problem regardless of how
+      many zones inherit it, so checking it once per zone that does would
+      report the identical complaint N times;
+    - a zone's own list's internal unreachability is checked per zone
+      (unchanged from before inheritance existed);
+    - a default row a *specific* zone's own catch-all shadows is new
+      (`_check_default_shadowed_by_zone` below) and is a warning attributed
+      to that zone, not the default -- the same default row may still be
+      reachable through a different zone that has no catch-all of its own.
+    """
     out: list[Problem] = []
     for mode in config.modes:
+        default_key = f"{mode.id}.{RULE_DEFAULT_ZONE}"
+        default_rules = config.rules.get(default_key)
+        if default_rules:
+            out += _check_unreachable_within(default_key, default_rules)
+
         for zone_id in config.zones:
             key = f"{mode.id}.{zone_id}"
-            rules = config.rules.get(key)
-            if not rules:
+            own_rules = config.rules.get(key)
+            effective = (own_rules or ()) + (default_rules or ())
+            if not effective:
                 out.append(
                     Problem(
                         WARNING,
@@ -171,12 +201,33 @@ def _check_rule_lists(config: Config) -> list[Problem]:
                     )
                 )
                 continue
-            out += _check_reachability(key, rules)
+            if own_rules:
+                out += _check_unreachable_within(key, own_rules)
+            if default_rules:
+                out += _check_default_shadowed_by_zone(key, own_rules, default_key, default_rules)
+            if not any(r.when is None and r.events is None for r in effective):
+                out.append(
+                    Problem(
+                        WARNING,
+                        "no_catch_all",
+                        f"{key} has no final rule without a condition; "
+                        f"some states fall through to keep/keep silently",
+                    )
+                )
     return out
 
 
-def _check_reachability(key: str, rules) -> list[Problem]:
-    """A rule with no `if` swallows everything after it in the same event scope."""
+def _check_unreachable_within(key: str, rules) -> list[Problem]:
+    """A rule with no `if` swallows everything after it in the same event scope, within one list.
+
+    The single traversal every reachability check in this module runs, so
+    that a rule list checked for internal unreachability -- a zone's own
+    list, or a mode's shared default list -- is walked the same way whether
+    inheritance is involved for that particular (mode, zone) or not. See
+    `_check_default_shadowed_by_zone` for the other half: a default row a
+    *specific zone's* own catch-all shadows, which is not internal to either
+    list and so cannot be found by walking one list alone.
+    """
     out: list[Problem] = []
     catch_all_scopes: list[frozenset | None] = []
 
@@ -195,15 +246,43 @@ def _check_reachability(key: str, rules) -> list[Problem]:
         if rule.when is None:
             catch_all_scopes.append(rule.events)
 
-    if not any(r.when is None and r.events is None for r in rules):
-        out.append(
-            Problem(
-                WARNING,
-                "no_catch_all",
-                f"{key} has no final rule without a condition; "
-                f"some states fall through to keep/keep silently",
-            )
-        )
+    return out
+
+
+def _check_default_shadowed_by_zone(
+    zone_key: str, own_rules: tuple | None, default_key: str, default_rules: tuple
+) -> list[Problem]:
+    """A default row this zone's own catch-all(s) already make unreachable, for this zone only.
+
+    Deliberately a warning, not an error, and deliberately the
+    `unreachable_rule` code rather than a new one -- see `engine._apply_rules`
+    for why a zone's own list runs to completion before its mode's defaults
+    are ever considered, which is what makes an unconditional rule in
+    `own_rules` swallow every default row it is not narrower than. This is
+    the *zone's* rule shadowing the mode's shared default, not a mistake in
+    the default itself: a different zone with no catch-all of its own, or a
+    narrower one, may still reach the identical default row -- so this is
+    reported once per shadowing zone, attributed to that zone's key, not to
+    `default_key` (see `_check_unreachable_within` above for the default
+    list's own, zone-independent internal check).
+    """
+    catch_all_scopes = [rule.events for rule in (own_rules or ()) if rule.when is None]
+    if not catch_all_scopes:
+        return []
+
+    out: list[Problem] = []
+    for index, rule in enumerate(default_rules):
+        for scope in catch_all_scopes:
+            if scope is None or (rule.events is not None and rule.events <= scope):
+                out.append(
+                    Problem(
+                        WARNING,
+                        "unreachable_rule",
+                        f"{default_key}#{index} can never fire for {zone_key!r}: "
+                        f"its own rules already have a catch-all",
+                    )
+                )
+                break
     return out
 
 

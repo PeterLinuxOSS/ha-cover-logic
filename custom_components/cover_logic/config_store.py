@@ -75,6 +75,7 @@ from .config_schema import (
     _parse_rule as _yaml_parse_rule,
     _parse_values,
     _reject_dot,
+    _reject_zone_id,
     _rule_to_dict,
     _zone_to_dict,
     unparse_condition,
@@ -157,7 +158,7 @@ def _build_zones(entry: Any) -> dict[str, Zone]:
     zones = {}
     for data in _of_type(entry, ZONE):
         zone_id = _require(data, _ID_KEY, "zone subentry")
-        _reject_dot(zone_id, "zone id")
+        _reject_zone_id(zone_id, "zone id")
         zones[zone_id] = Zone(
             id=zone_id,
             members=tuple(data.get("members") or ()),

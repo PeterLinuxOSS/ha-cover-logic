@@ -277,3 +277,145 @@ def test_equal_but_separately_built_worlds_give_the_same_decision():
     w2 = world(dict(DEN))
     assert w1 is not w2
     assert evaluate(CFG, w1) == evaluate(CFG, w2)
+
+
+# --- Inherited (default) rules -----------------------------------------
+#
+# A rule filed under the zone "*" (`const.RULE_DEFAULT_ZONE`) applies to
+# every zone in that mode that does not shadow it with a rule of its own.
+# See `engine._apply_rules`'s own docstring for the "own list runs to
+# completion before the defaults are ever considered" design this pins.
+
+
+def test_a_zone_with_no_rules_of_its_own_gets_the_mode_default():
+    cfg = load_config("""
+blinds: [{entity: cover.a}]
+zones: {z: {members: [cover.a]}}
+modes: [{id: noc}]
+conditions: {}
+values: {}
+rules:
+  "noc.*": [{then: {position: 0, tilt: 0}}]
+""")
+    d = evaluate(cfg, world({}))
+    assert d.targets["cover.a"] == Action(position=0, tilt=0)
+    assert d.trace["cover.a"] == "noc.*#0"
+
+
+def test_a_zones_own_rule_is_tried_before_the_default():
+    cfg = load_config("""
+blinds: [{entity: cover.a}]
+zones: {z: {members: [cover.a]}}
+modes: [{id: noc}]
+conditions: {}
+values: {}
+rules:
+  noc.z: [{then: {position: 42}}]
+  "noc.*": [{then: {position: 0}}]
+""")
+    d = evaluate(cfg, world({}))
+    assert d.targets["cover.a"] == Action(position=42, tilt=KEEP)
+    assert d.trace["cover.a"] == "noc.z#0"
+
+
+def test_the_default_still_applies_after_a_non_matching_zone_rule():
+    # The zone's own list is exhausted, not "used or ignored wholesale" --
+    # a zone rule that does not match this world still lets the default
+    # apply afterwards, exactly like falling through to a later own rule.
+    cfg = load_config("""
+blinds: [{entity: cover.a}]
+zones: {z: {members: [cover.a]}}
+modes: [{id: noc}]
+conditions:
+  never: {condition: state, entity_id: nothing.here, state: "on"}
+values: {}
+rules:
+  noc.z: [{if: !ref never, then: {position: 42}}]
+  "noc.*": [{then: {position: 0}}]
+""")
+    d = evaluate(cfg, world({}))
+    assert d.targets["cover.a"] == Action(position=0, tilt=KEEP)
+    assert d.trace["cover.a"] == "noc.*#0"
+
+
+def test_two_defaults_order_among_themselves_by_declaration_order():
+    cfg = load_config("""
+blinds: [{entity: cover.a}]
+zones: {z: {members: [cover.a]}}
+modes: [{id: noc}]
+conditions:
+  never: {condition: state, entity_id: nothing.here, state: "on"}
+values: {}
+rules:
+  "noc.*":
+    - {if: !ref never, then: {position: 99}}
+    - {then: {position: 7}}
+""")
+    d = evaluate(cfg, world({}))
+    assert d.targets["cover.a"] == Action(position=7, tilt=KEEP)
+    assert d.trace["cover.a"] == "noc.*#1"
+
+
+def test_a_zone_rule_precedes_a_default_with_a_lower_order_number():
+    # `Rule` (model.py) carries no `order` field at all -- `order` only ever
+    # exists pre-parse, on a subentry (see `config_store`'s "Ordering"
+    # docstring section), and is consumed into plain tuple position before a
+    # `Rule` is ever built. So this is not merely a behavioural choice this
+    # test could get wrong by picking a bad scenario: by the time `evaluate`
+    # runs, there is no `order` value left anywhere for a cross-list merge
+    # to even compare -- `_apply_rules` structurally cannot do anything other
+    # than exhaust one tuple (own) before touching the other (defaults). See
+    # `test_config_store.py`'s
+    # `test_a_zone_rules_order_number_relative_to_the_default_does_not_matter`
+    # for the same invariant pinned where `order` values actually exist.
+    cfg = load_config("""
+blinds: [{entity: cover.a}]
+zones: {z: {members: [cover.a]}}
+modes: [{id: noc}]
+conditions: {}
+values: {}
+rules:
+  noc.z: [{then: {position: 100}}]
+  "noc.*": [{then: {position: 0}}]
+""")
+    d = evaluate(cfg, world({}))
+    # The zone's own catch-all wins even though, read as plain numbers, a
+    # default the author gave `order: 1` would sort before a zone rule the
+    # author gave `order: 100` -- see `engine._apply_rules`'s docstring.
+    assert d.targets["cover.a"] == Action(position=100, tilt=KEEP)
+    assert d.trace["cover.a"] == "noc.z#0"
+
+
+def test_no_own_rules_and_no_default_still_falls_through_to_none():
+    cfg = load_config("""
+blinds: [{entity: cover.a}]
+zones: {z: {members: [cover.a]}}
+modes: [{id: noc}]
+conditions: {}
+values: {}
+rules: {}
+""")
+    d = evaluate(cfg, world({}))
+    assert d.targets["cover.a"] == Action(KEEP, KEEP)
+    assert d.trace["cover.a"] == "noc.z#none"
+
+
+def test_default_matches_the_same_way_for_every_zone_that_inherits_it():
+    cfg = load_config("""
+blinds:
+  - {entity: cover.a}
+  - {entity: cover.b}
+zones:
+  one: {members: [cover.a]}
+  two: {members: [cover.b]}
+modes: [{id: noc}]
+conditions: {}
+values: {}
+rules:
+  "noc.*": [{then: {position: 0, tilt: 0}}]
+""")
+    d = evaluate(cfg, world({}))
+    assert d.targets["cover.a"] == d.targets["cover.b"] == Action(position=0, tilt=0)
+    # Same subentry, same trace label, regardless of which zone used it --
+    # matching `config_store.rule_owner_ids`, which names it once.
+    assert d.trace["cover.a"] == d.trace["cover.b"] == "noc.*#0"

@@ -20,6 +20,19 @@ COND_EVENT_TARGETS_ZONE = "event_targets_zone"
 COND_REF = "ref"
 COND_SUN_HITS_TARGET = "sun_hits_target"
 
+# The zone half of a `"<mode>.<zone>"` rules key that marks a *default* rule
+# list for that mode -- a rule with no zone of its own, inherited by every
+# zone in that mode. Chosen as an explicit sentinel over simply omitting the
+# zone (e.g. a bare `"<mode>"` key) because omission is easy to miss reading
+# a `rules:` mapping by eye -- a key that is just `noc` next to five that are
+# `noc.<zone>` looks like a typo, not a deliberate "applies everywhere". `"*"`
+# also costs nothing extra in the subentry shape: a `rule` subentry's `zone`
+# field is already required (`config_store._require`), so there is no
+# "omitted" spelling available there without a second, subentry-only rule
+# shape -- see also `config_schema._reject_zone_id`, which is what keeps a
+# real zone from ever being named this and colliding with it.
+RULE_DEFAULT_ZONE = "*"
+
 # Default event kind used when nothing more specific applies.
 EVENT_ARRIVAL = "arrival"
 EVENT_STATE_CHANGE = "state_change"
