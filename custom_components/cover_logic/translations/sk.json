@@ -68,20 +68,20 @@
         "reconfigure": {
           "title": "Upraviť žalúziu",
           "data": {
-            "entity": "[%key:component::cover_logic::config_subentries::blind::step::user::data::entity%]",
-            "facade_azimuth": "[%key:component::cover_logic::config_subentries::blind::step::user::data::facade_azimuth%]",
-            "tolerance": "[%key:component::cover_logic::config_subentries::blind::step::user::data::tolerance%]",
-            "travel_time": "[%key:component::cover_logic::config_subentries::blind::step::user::data::travel_time%]",
-            "has_tilt": "[%key:component::cover_logic::config_subentries::blind::step::user::data::has_tilt%]",
-            "tilt_after_arrival": "[%key:component::cover_logic::config_subentries::blind::step::user::data::tilt_after_arrival%]"
+            "entity": "Entita žalúzie",
+            "facade_azimuth": "Azimut fasády",
+            "tolerance": "Tolerancia slnečného sektora",
+            "travel_time": "Čas plného dojazdu",
+            "has_tilt": "Má lamelovú os",
+            "tilt_after_arrival": "Lamely nastaviť až po dojazde polohy"
           }
         }
       },
       "error": {
-        "invalid_config": "[%key:component::cover_logic::config::error::invalid_config%]"
+        "invalid_config": "Tento súbor sa nedá použiť: {error_detail}"
       },
       "abort": {
-        "reconfigure_successful": "[%key:common::config_flow::abort::reconfigure_successful%]"
+        "reconfigure_successful": "Rekonfigurácia bola úspešná"
       }
     },
     "zone": {
@@ -102,17 +102,17 @@
         "reconfigure": {
           "title": "Upraviť zónu",
           "data": {
-            "id": "[%key:component::cover_logic::config_subentries::zone::step::user::data::id%]",
-            "members": "[%key:component::cover_logic::config_subentries::zone::step::user::data::members%]",
-            "occupants": "[%key:component::cover_logic::config_subentries::zone::step::user::data::occupants%]"
+            "id": "Identifikátor zóny",
+            "members": "Žalúzie v tejto zóne",
+            "occupants": "Obyvatelia"
           }
         }
       },
       "error": {
-        "invalid_config": "[%key:component::cover_logic::config::error::invalid_config%]"
+        "invalid_config": "Tento súbor sa nedá použiť: {error_detail}"
       },
       "abort": {
-        "reconfigure_successful": "[%key:common::config_flow::abort::reconfigure_successful%]"
+        "reconfigure_successful": "Rekonfigurácia bola úspešná"
       }
     },
     "value": {
@@ -133,17 +133,17 @@
         "reconfigure": {
           "title": "Upraviť hodnotu",
           "data": {
-            "id": "[%key:component::cover_logic::config_subentries::value::step::user::data::id%]",
-            "entity": "[%key:component::cover_logic::config_subentries::value::step::user::data::entity%]",
-            "default": "[%key:component::cover_logic::config_subentries::value::step::user::data::default%]"
+            "id": "Identifikátor hodnoty",
+            "entity": "Entita helpera",
+            "default": "Predvolená hodnota (ak entita chýba alebo sa nedá prečítať)"
           }
         }
       },
       "error": {
-        "invalid_config": "[%key:component::cover_logic::config::error::invalid_config%]"
+        "invalid_config": "Tento súbor sa nedá použiť: {error_detail}"
       },
       "abort": {
-        "reconfigure_successful": "[%key:common::config_flow::abort::reconfigure_successful%]"
+        "reconfigure_successful": "Rekonfigurácia bola úspešná"
       }
     },
     "condition": {
@@ -167,20 +167,20 @@
         "reconfigure": {
           "title": "Upraviť podmienku",
           "data": {
-            "id": "[%key:component::cover_logic::config_subentries::condition::step::user::data::id%]",
-            "condition": "[%key:component::cover_logic::config_subentries::condition::step::user::data::condition%]",
-            "numeric_state_default": "[%key:component::cover_logic::config_subentries::condition::step::user::data::numeric_state_default%]"
+            "id": "Identifikátor podmienky",
+            "condition": "Podmienka",
+            "numeric_state_default": "Záložná hodnota pre číselné porovnanie"
           },
           "data_description": {
-            "numeric_state_default": "[%key:component::cover_logic::config_subentries::condition::step::user::data_description::numeric_state_default%]"
+            "numeric_state_default": "Použije sa len vtedy, keď je podmienka vyššie jedno číselné porovnanie (numeric_state). Je to hodnota, s ktorou sa počíta, keď je porovnávaná entita nedostupná alebo nečíselná -- teda rozhoduje, ktorým smerom sa podmienka vyhodnotí v tomto prípade; zvoľte ju tak, aby mŕtvy senzor zlyhal na bezpečnú stranu. Inak sa ignoruje, ale pri numeric_state je povinná."
           }
         }
       },
       "error": {
-        "invalid_config": "[%key:component::cover_logic::config::error::invalid_config%]"
+        "invalid_config": "Tento súbor sa nedá použiť: {error_detail}"
       },
       "abort": {
-        "reconfigure_successful": "[%key:common::config_flow::abort::reconfigure_successful%]"
+        "reconfigure_successful": "Rekonfigurácia bola úspešná"
       }
     },
     "mode": {
@@ -202,18 +202,18 @@
         "reconfigure": {
           "title": "Upraviť režim",
           "data": {
-            "id": "[%key:component::cover_logic::config_subentries::mode::step::user::data::id%]",
-            "order": "[%key:component::cover_logic::config_subentries::mode::step::user::data::order%]",
-            "condition_ref": "[%key:component::cover_logic::config_subentries::mode::step::user::data::condition_ref%]",
-            "when": "[%key:component::cover_logic::config_subentries::mode::step::user::data::when%]"
+            "id": "Identifikátor režimu",
+            "order": "Poradie (nižšie sa skúša skôr; záložný režim musí mať najvyššie poradie)",
+            "condition_ref": "Pomenovaná podmienka (nechajte prázdne pre vloženú podmienku, alebo aby bol tento režim záložný)",
+            "when": "Vložená podmienka (nechajte prázdne pri použití pomenovanej podmienky, alebo aby bol tento režim záložný)"
           }
         }
       },
       "error": {
-        "invalid_config": "[%key:component::cover_logic::config::error::invalid_config%]"
+        "invalid_config": "Tento súbor sa nedá použiť: {error_detail}"
       },
       "abort": {
-        "reconfigure_successful": "[%key:common::config_flow::abort::reconfigure_successful%]"
+        "reconfigure_successful": "Rekonfigurácia bola úspešná"
       }
     },
     "rule": {
@@ -255,29 +255,29 @@
           "title": "Upraviť pravidlo",
           "description": "O tom, kam pôjdu žalúzie zóny, rozhodne prvé pravidlo v tomto zozname, ktorému sedia udalosti aj podmienka; na ďalšie sa už nepozerá. Pravidlo bez podmienky preto patrí na koniec.",
           "data": {
-            "mode": "[%key:component::cover_logic::config_subentries::rule::step::user::data::mode%]",
-            "zone": "[%key:component::cover_logic::config_subentries::rule::step::user::data::zone%]",
-            "order": "[%key:component::cover_logic::config_subentries::rule::step::user::data::order%]",
-            "if_ref": "[%key:component::cover_logic::config_subentries::rule::step::user::data::if_ref%]",
-            "if": "[%key:component::cover_logic::config_subentries::rule::step::user::data::if%]",
-            "position": "[%key:component::cover_logic::config_subentries::rule::step::user::data::position%]",
-            "tilt": "[%key:component::cover_logic::config_subentries::rule::step::user::data::tilt%]",
-            "events": "[%key:component::cover_logic::config_subentries::rule::step::user::data::events%]",
-            "name": "[%key:component::cover_logic::config_subentries::rule::step::user::data::name%]"
+            "mode": "Režim",
+            "zone": "Zóna",
+            "order": "Poradie",
+            "if_ref": "Pomenovaná podmienka (nechajte prázdne pre vloženú podmienku, alebo pre pravidlo, ktoré sedí vždy)",
+            "if": "Vložená podmienka (nechajte prázdne pri použití pomenovanej podmienky, alebo pre pravidlo, ktoré sedí vždy)",
+            "position": "Pozícia",
+            "tilt": "Lamely",
+            "events": "Len pre tieto udalosti",
+            "name": "Názov (zobrazí sa v zázname rozhodnutia)"
           },
           "data_description": {
-            "order": "[%key:component::cover_logic::config_subentries::rule::step::user::data_description::order%]",
-            "position": "[%key:component::cover_logic::config_subentries::rule::step::user::data_description::position%]",
-            "tilt": "[%key:component::cover_logic::config_subentries::rule::step::user::data_description::tilt%]",
-            "events": "[%key:component::cover_logic::config_subentries::rule::step::user::data_description::events%]"
+            "order": "Nižšie sa skúša skôr. Predvyplní sa o desať vyššie než posledné pravidlo v tomto zozname, aby sa medzi ne dalo neskôr vložiť ďalšie. Dve pravidlá v jednom zozname nemôžu mať rovnaké poradie.",
+            "position": "Zvoľte „keep“, ak sa má os nechať tak, zvoľte nastavenú hodnotu, ak sa má číslo prečítať z pomocníka pri rozhodovaní, alebo napíšte číslo od 0 do 100.",
+            "tilt": "Zvoľte „keep“, ak sa má os nechať tak, zvoľte nastavenú hodnotu, ak sa má číslo prečítať z pomocníka pri rozhodovaní, alebo napíšte číslo od 0 do 100.",
+            "events": "Nechajte prázdne, ak má pravidlo platiť pre každú udalosť."
           }
         }
       },
       "error": {
-        "invalid_config": "[%key:component::cover_logic::config::error::invalid_config%]"
+        "invalid_config": "Tento súbor sa nedá použiť: {error_detail}"
       },
       "abort": {
-        "reconfigure_successful": "[%key:common::config_flow::abort::reconfigure_successful%]"
+        "reconfigure_successful": "Rekonfigurácia bola úspešná"
       }
     }
   },
@@ -311,51 +311,51 @@
         "title": "Zóny",
         "description": "Nastavených: {count}.",
         "menu_options": {
-          "add": "[%key:component::cover_logic::options::step::blinds::menu_options::add%]",
-          "edit": "[%key:component::cover_logic::options::step::blinds::menu_options::edit%]",
-          "remove": "[%key:component::cover_logic::options::step::blinds::menu_options::remove%]",
-          "back": "[%key:component::cover_logic::options::step::blinds::menu_options::back%]"
+          "add": "Pridať",
+          "edit": "Upraviť existujúce",
+          "remove": "Odstrániť existujúce",
+          "back": "Späť do hlavnej ponuky"
         }
       },
       "values": {
         "title": "Hodnoty",
         "description": "Nastavených: {count}.",
         "menu_options": {
-          "add": "[%key:component::cover_logic::options::step::blinds::menu_options::add%]",
-          "edit": "[%key:component::cover_logic::options::step::blinds::menu_options::edit%]",
-          "remove": "[%key:component::cover_logic::options::step::blinds::menu_options::remove%]",
-          "back": "[%key:component::cover_logic::options::step::blinds::menu_options::back%]"
+          "add": "Pridať",
+          "edit": "Upraviť existujúce",
+          "remove": "Odstrániť existujúce",
+          "back": "Späť do hlavnej ponuky"
         }
       },
       "conditions": {
         "title": "Podmienky",
         "description": "Nastavených: {count}.",
         "menu_options": {
-          "add": "[%key:component::cover_logic::options::step::blinds::menu_options::add%]",
-          "edit": "[%key:component::cover_logic::options::step::blinds::menu_options::edit%]",
-          "remove": "[%key:component::cover_logic::options::step::blinds::menu_options::remove%]",
-          "back": "[%key:component::cover_logic::options::step::blinds::menu_options::back%]"
+          "add": "Pridať",
+          "edit": "Upraviť existujúce",
+          "remove": "Odstrániť existujúce",
+          "back": "Späť do hlavnej ponuky"
         }
       },
       "modes": {
         "title": "Režimy",
         "description": "Nastavených: {count}.",
         "menu_options": {
-          "add": "[%key:component::cover_logic::options::step::blinds::menu_options::add%]",
-          "edit": "[%key:component::cover_logic::options::step::blinds::menu_options::edit%]",
-          "remove": "[%key:component::cover_logic::options::step::blinds::menu_options::remove%]",
-          "back": "[%key:component::cover_logic::options::step::blinds::menu_options::back%]"
+          "add": "Pridať",
+          "edit": "Upraviť existujúce",
+          "remove": "Odstrániť existujúce",
+          "back": "Späť do hlavnej ponuky"
         }
       },
       "rules": {
         "title": "Pravidlá",
         "description": "Nastavených: {count}, naprieč všetkými dvojicami režim-zóna. V rámci dvojice rozhoduje prvé pravidlo, ktorého podmienka sedí -- poradie v dvojici je presne to, čo engine skúša ako prvé.",
         "menu_options": {
-          "add": "[%key:component::cover_logic::options::step::blinds::menu_options::add%]",
+          "add": "Pridať",
           "list": "Zobraziť, čo dom naozaj urobí",
-          "edit": "[%key:component::cover_logic::options::step::blinds::menu_options::edit%]",
-          "remove": "[%key:component::cover_logic::options::step::blinds::menu_options::remove%]",
-          "back": "[%key:component::cover_logic::options::step::blinds::menu_options::back%]"
+          "edit": "Upraviť existujúce",
+          "remove": "Odstrániť existujúce",
+          "back": "Späť do hlavnej ponuky"
         }
       },
       "list": {
@@ -368,42 +368,42 @@
         "data": {
           "entity": "Entita",
           "id": "Id",
-          "facade_azimuth": "[%key:component::cover_logic::config_subentries::blind::step::user::data::facade_azimuth%]",
-          "tolerance": "[%key:component::cover_logic::config_subentries::blind::step::user::data::tolerance%]",
-          "travel_time": "[%key:component::cover_logic::config_subentries::blind::step::user::data::travel_time%]",
-          "has_tilt": "[%key:component::cover_logic::config_subentries::blind::step::user::data::has_tilt%]",
-          "tilt_after_arrival": "[%key:component::cover_logic::config_subentries::blind::step::user::data::tilt_after_arrival%]",
-          "members": "[%key:component::cover_logic::config_subentries::zone::step::user::data::members%]",
-          "occupants": "[%key:component::cover_logic::config_subentries::zone::step::user::data::occupants%]",
-          "default": "[%key:component::cover_logic::config_subentries::value::step::user::data::default%]",
-          "condition": "[%key:component::cover_logic::config_subentries::condition::step::user::data::condition%]",
-          "numeric_state_default": "[%key:component::cover_logic::config_subentries::condition::step::user::data::numeric_state_default%]",
-          "order": "[%key:component::cover_logic::config_subentries::mode::step::user::data::order%]",
-          "condition_ref": "[%key:component::cover_logic::config_subentries::mode::step::user::data::condition_ref%]",
-          "when": "[%key:component::cover_logic::config_subentries::mode::step::user::data::when%]",
-          "mode": "[%key:component::cover_logic::config_subentries::rule::step::user::data::mode%]",
-          "zone": "[%key:component::cover_logic::config_subentries::rule::step::user::data::zone%]"
+          "facade_azimuth": "Azimut fasády",
+          "tolerance": "Tolerancia slnečného sektora",
+          "travel_time": "Čas plného dojazdu",
+          "has_tilt": "Má lamelovú os",
+          "tilt_after_arrival": "Lamely nastaviť až po dojazde polohy",
+          "members": "Žalúzie v tejto zóne",
+          "occupants": "Obyvatelia",
+          "default": "Predvolená hodnota (ak entita chýba alebo sa nedá prečítať)",
+          "condition": "Podmienka",
+          "numeric_state_default": "Záložná hodnota pre číselné porovnanie",
+          "order": "Poradie (nižšie sa skúša skôr; záložný režim musí mať najvyššie poradie)",
+          "condition_ref": "Pomenovaná podmienka (nechajte prázdne pre vloženú podmienku, alebo aby bol tento režim záložný)",
+          "when": "Vložená podmienka (nechajte prázdne pri použití pomenovanej podmienky, alebo aby bol tento režim záložný)",
+          "mode": "Režim",
+          "zone": "Zóna"
         }
       },
       "add_rule_fields": {
-        "title": "[%key:component::cover_logic::config_subentries::rule::step::rule::title%]",
-        "description": "[%key:component::cover_logic::config_subentries::rule::step::rule::description%]",
+        "title": "Pridať pravidlo",
+        "description": "O tom, kam pôjdu žalúzie zóny, rozhodne prvé pravidlo v tomto zozname, ktorému sedia udalosti aj podmienka; na ďalšie sa už nepozerá. Pravidlo bez podmienky preto patrí na koniec.",
         "data": {
-          "mode": "[%key:component::cover_logic::config_subentries::rule::step::rule::data::mode%]",
-          "zone": "[%key:component::cover_logic::config_subentries::rule::step::rule::data::zone%]",
-          "order": "[%key:component::cover_logic::config_subentries::rule::step::rule::data::order%]",
-          "if_ref": "[%key:component::cover_logic::config_subentries::rule::step::rule::data::if_ref%]",
-          "if": "[%key:component::cover_logic::config_subentries::rule::step::rule::data::if%]",
-          "position": "[%key:component::cover_logic::config_subentries::rule::step::rule::data::position%]",
-          "tilt": "[%key:component::cover_logic::config_subentries::rule::step::rule::data::tilt%]",
-          "events": "[%key:component::cover_logic::config_subentries::rule::step::rule::data::events%]",
-          "name": "[%key:component::cover_logic::config_subentries::rule::step::rule::data::name%]"
+          "mode": "Režim",
+          "zone": "Zóna",
+          "order": "Poradie",
+          "if_ref": "Pomenovaná podmienka (nechajte prázdne pre vloženú podmienku, alebo pre pravidlo, ktoré sedí vždy)",
+          "if": "Vložená podmienka (nechajte prázdne pri použití pomenovanej podmienky, alebo pre pravidlo, ktoré sedí vždy)",
+          "position": "Pozícia",
+          "tilt": "Lamely",
+          "events": "Len pre tieto udalosti",
+          "name": "Názov (zobrazí sa v zázname rozhodnutia)"
         },
         "data_description": {
-          "order": "[%key:component::cover_logic::config_subentries::rule::step::rule::data_description::order%]",
-          "position": "[%key:component::cover_logic::config_subentries::rule::step::rule::data_description::position%]",
-          "tilt": "[%key:component::cover_logic::config_subentries::rule::step::rule::data_description::tilt%]",
-          "events": "[%key:component::cover_logic::config_subentries::rule::step::rule::data_description::events%]"
+          "order": "Nižšie sa skúša skôr. Predvyplní sa o desať vyššie než posledné pravidlo v tomto zozname, aby sa medzi ne dalo neskôr vložiť ďalšie. Dve pravidlá v jednom zozname nemôžu mať rovnaké poradie.",
+          "position": "Zvoľte „keep“, ak sa má os nechať tak, zvoľte nastavenú hodnotu, ak sa má číslo prečítať z pomocníka pri rozhodovaní, alebo napíšte číslo od 0 do 100.",
+          "tilt": "Zvoľte „keep“, ak sa má os nechať tak, zvoľte nastavenú hodnotu, ak sa má číslo prečítať z pomocníka pri rozhodovaní, alebo napíšte číslo od 0 do 100.",
+          "events": "Nechajte prázdne, ak má pravidlo platiť pre každú udalosť."
         }
       },
       "edit": {
@@ -414,31 +414,31 @@
       },
       "edit_form": {
         "title": "Upraviť",
-        "description": "[%key:component::cover_logic::options::step::add::description%]",
+        "description": "Vyplňte polia nižšie. Platia len polia pre typ položky, ktorú pridávate; čo neviete, nechajte na predvolenej hodnote.",
         "data": {
-          "entity": "[%key:component::cover_logic::options::step::add::data::entity%]",
-          "id": "[%key:component::cover_logic::options::step::add::data::id%]",
-          "facade_azimuth": "[%key:component::cover_logic::options::step::add::data::facade_azimuth%]",
-          "tolerance": "[%key:component::cover_logic::options::step::add::data::tolerance%]",
-          "travel_time": "[%key:component::cover_logic::options::step::add::data::travel_time%]",
-          "has_tilt": "[%key:component::cover_logic::options::step::add::data::has_tilt%]",
-          "tilt_after_arrival": "[%key:component::cover_logic::options::step::add::data::tilt_after_arrival%]",
-          "members": "[%key:component::cover_logic::options::step::add::data::members%]",
-          "occupants": "[%key:component::cover_logic::options::step::add::data::occupants%]",
-          "default": "[%key:component::cover_logic::options::step::add::data::default%]",
-          "condition": "[%key:component::cover_logic::options::step::add::data::condition%]",
-          "numeric_state_default": "[%key:component::cover_logic::options::step::add::data::numeric_state_default%]",
-          "order": "[%key:component::cover_logic::options::step::add::data::order%]",
-          "condition_ref": "[%key:component::cover_logic::options::step::add::data::condition_ref%]",
-          "when": "[%key:component::cover_logic::options::step::add::data::when%]",
-          "mode": "[%key:component::cover_logic::options::step::add::data::mode%]",
-          "zone": "[%key:component::cover_logic::options::step::add::data::zone%]"
+          "entity": "Entita",
+          "id": "Id",
+          "facade_azimuth": "Azimut fasády",
+          "tolerance": "Tolerancia slnečného sektora",
+          "travel_time": "Čas plného dojazdu",
+          "has_tilt": "Má lamelovú os",
+          "tilt_after_arrival": "Lamely nastaviť až po dojazde polohy",
+          "members": "Žalúzie v tejto zóne",
+          "occupants": "Obyvatelia",
+          "default": "Predvolená hodnota (ak entita chýba alebo sa nedá prečítať)",
+          "condition": "Podmienka",
+          "numeric_state_default": "Záložná hodnota pre číselné porovnanie",
+          "order": "Poradie (nižšie sa skúša skôr; záložný režim musí mať najvyššie poradie)",
+          "condition_ref": "Pomenovaná podmienka (nechajte prázdne pre vloženú podmienku, alebo aby bol tento režim záložný)",
+          "when": "Vložená podmienka (nechajte prázdne pri použití pomenovanej podmienky, alebo aby bol tento režim záložný)",
+          "mode": "Režim",
+          "zone": "Zóna"
         }
       },
       "remove": {
         "title": "Odstrániť",
         "data": {
-          "subentry_id": "[%key:component::cover_logic::options::step::edit::data::subentry_id%]",
+          "subentry_id": "Ktoré?",
           "confirm": "Áno, odstrániť"
         }
       },
@@ -447,9 +447,9 @@
         "description": "Načíta alebo zapíše celú konfiguráciu ako YAML súbor -- tie isté služby import_config/export_config, ktoré sa dajú zavolať aj priamo z Nástrojov pre vývojárov.",
         "data": {
           "action": "Akcia",
-          "path": "[%key:component::cover_logic::services::import_config::fields::path::name%]",
-          "dry_run": "[%key:component::cover_logic::services::import_config::fields::dry_run::name%]",
-          "overwrite": "[%key:component::cover_logic::services::import_config::fields::overwrite::name%]"
+          "path": "Cesta",
+          "dry_run": "Skúšobný beh",
+          "overwrite": "Prepísať"
         }
       },
       "check_matrix": {
@@ -458,7 +458,7 @@
       }
     },
     "error": {
-      "invalid_config": "[%key:component::cover_logic::config::error::invalid_config%]",
+      "invalid_config": "Tento súbor sa nedá použiť: {error_detail}",
       "confirmation_required": "Zaškrtnite potvrdenie, aby sa položka odstránila.",
       "import_export_failed": "Toto sa nepodarilo dokončiť: {error_detail}"
     }

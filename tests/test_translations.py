@@ -96,6 +96,30 @@ def _reach(doc, keys):
     return doc
 
 
+@pytest.mark.parametrize("path", [_STRINGS, *_TRANSLATIONS], ids=lambda path: path.name)
+def test_no_translation_string_is_an_unresolved_key_reference(path):
+    """`[%key:component::...%]`/`[%key:common::...%]` is core's own
+    translation-*reference* syntax: `home-assistant/core`'s build step
+    resolves it into literal text before a `strings.json` ever ships. A
+    custom integration has no such build step -- `hassfest` and Home
+    Assistant itself both load this file's values verbatim -- so a
+    reference left in here is not shorthand for anything, it is exactly what
+    the user sees, label and all (`edit_form`'s
+    `[%key:...::add::description%]` reached production this way once; see
+    the commit that added this test). A value being non-blank, which
+    `test_no_translation_string_is_empty` already checks above, does not
+    catch this: an unresolved reference is non-blank text that is still
+    useless to read, the same failure mode in a different disguise.
+    """
+    doc = _load(path)
+    unresolved = [
+        "::".join(keys)
+        for keys in sorted(_key_paths(doc))
+        if str(_reach(doc, keys)).startswith("[%key:")
+    ]
+    assert unresolved == []
+
+
 # ---------------------------------------------------------------------------
 # Derived checks: services, service fields, exceptions, repair issues.
 #
