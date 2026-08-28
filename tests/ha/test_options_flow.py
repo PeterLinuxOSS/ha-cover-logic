@@ -27,7 +27,6 @@ pytest.importorskip("homeassistant")
 
 from homeassistant.data_entry_flow import FlowResultType
 
-from cover_logic import options_flow as options_flow_module
 from cover_logic.config_flow import CoverLogicConfigFlow
 from cover_logic.config_store import BLIND, MODE, RULE, VALUE, ZONE
 from cover_logic.options_flow import CoverLogicOptionsFlow
@@ -512,7 +511,7 @@ def test_export_writes_the_file_via_the_real_export_handler(subentry_entry, opti
 
 
 def test_check_matrix_reports_no_fixture_when_none_ships(subentry_entry, options_hass, monkeypatch):
-    monkeypatch.setattr(options_flow_module, "repo_fixture_path", lambda: None)
+    monkeypatch.setattr("cover_logic.options_flow.repo_fixture_path", lambda: None)
     entry = subentry_entry()
     flow = _make_flow(options_hass(entry))
 
@@ -528,7 +527,7 @@ def test_check_matrix_reports_a_match(subentry_entry, options_hass, monkeypatch,
         "modes:\n  - {id: m}\nrules:\n  m.terasa:\n    - {then: {position: keep, tilt: keep}}\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr(options_flow_module, "repo_fixture_path", lambda: fixture)
+    monkeypatch.setattr("cover_logic.options_flow.repo_fixture_path", lambda: fixture)
     entry = subentry_entry()
     entry.add_subentry(BLIND, {"entity": "cover.a"})
     entry.add_subentry(ZONE, {"id": "terasa", "members": ["cover.a"]})
@@ -547,7 +546,7 @@ def test_check_matrix_reports_a_match(subentry_entry, options_hass, monkeypatch,
 def test_check_matrix_reports_a_diff(subentry_entry, options_hass, monkeypatch, tmp_path):
     fixture = tmp_path / "dom_peter.yaml"
     fixture.write_text("blinds:\n  - entity: cover.other\n", encoding="utf-8")
-    monkeypatch.setattr(options_flow_module, "repo_fixture_path", lambda: fixture)
+    monkeypatch.setattr("cover_logic.options_flow.repo_fixture_path", lambda: fixture)
     entry = subentry_entry()
     entry.add_subentry(BLIND, {"entity": "cover.a"})
     flow = _make_flow(options_hass(entry))
@@ -559,7 +558,7 @@ def test_check_matrix_reports_a_diff(subentry_entry, options_hass, monkeypatch, 
 
 
 def test_check_matrix_submit_returns_to_main_menu(subentry_entry, options_hass, monkeypatch):
-    monkeypatch.setattr(options_flow_module, "repo_fixture_path", lambda: None)
+    monkeypatch.setattr("cover_logic.options_flow.repo_fixture_path", lambda: None)
     entry = subentry_entry()
     flow = _make_flow(options_hass(entry))
     asyncio.run(flow.async_step_check_matrix(None))
@@ -622,7 +621,7 @@ def test_check_matrix_reports_validation_counts_and_attributes_the_problem(
     open the "Modes" section and pick to fix it, not just "some mode,
     somewhere".
     """
-    monkeypatch.setattr(options_flow_module, "repo_fixture_path", lambda: None)
+    monkeypatch.setattr("cover_logic.options_flow.repo_fixture_path", lambda: None)
     entry = subentry_entry()
     entry.add_subentry(
         MODE, {"id": "m1", "order": 0, "when": {"condition": "ref", "name": "missing"}}
@@ -696,8 +695,13 @@ def test_check_matrix_reports_no_error_when_the_coordinator_has_none(subentry_en
 
 
 def _strings():
-    path = Path(options_flow_module.__file__).parent / "strings.json"
-    return json.loads(path.read_text(encoding="utf-8"))
+    # Derived from this file's location the same way `test_translations.py`
+    # locates the component, rather than from an imported module's `__file__`:
+    # importing `cover_logic.options_flow` a second time just to read a path
+    # is what CodeQL's "imported with 'import' and 'import from'" rule flags,
+    # and this project has already had to fix that once (7d758f6).
+    component = Path(__file__).parents[2] / "custom_components" / "cover_logic"
+    return json.loads((component / "strings.json").read_text(encoding="utf-8"))
 
 
 _ALL_STEP_IDS = [

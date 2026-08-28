@@ -20,7 +20,6 @@ from typing import Any
 import pytest
 
 from cover_logic.config_schema import ConfigError, load_config, load_config_file
-import cover_logic.config_store as config_store_module
 from cover_logic.config_store import (
     config_from_subentries,
     duplicate_rule_order_problems,
@@ -560,8 +559,12 @@ def test_subentries_from_config_self_check_rejects_a_broken_conversion(monkeypat
     was given -- exactly the class of bug this task's brief warns the
     inherited write side had never been exercised against.
     """
+    # Patched by dotted string rather than by importing the module a second
+    # time: `from cover_logic.config_store import ...` above already pulls it
+    # in, and adding `import cover_logic.config_store` alongside is what
+    # CodeQL's "imported with 'import' and 'import from'" rule flags.
     monkeypatch.setattr(
-        config_store_module, "_blind_to_dict", lambda blind: {"entity": blind.entity}
+        "cover_logic.config_store._blind_to_dict", lambda blind: {"entity": blind.entity}
     )
 
     original = load_config(YAML_TEXT)  # cover.a has a non-default facade_azimuth

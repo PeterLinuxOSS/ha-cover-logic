@@ -75,7 +75,6 @@ pytest.importorskip("homeassistant")
 
 from homeassistant.data_entry_flow import FlowManager
 
-from cover_logic import config_flow as config_flow_module
 from cover_logic.config_flow import SUBENTRY_FLOW_HANDLERS, CoverLogicConfigFlow
 from cover_logic.config_store import BLIND, CONDITION, MODE, RULE, VALUE, ZONE
 from cover_logic.const import DOMAIN
@@ -246,7 +245,7 @@ def test_config_flow_every_reachable_step_id_is_dispatchable(flow_hass, monkeypa
 
     # `from_example` with no example file -- the branch that delegates to
     # `async_step_example_not_available`, the exact screen commit b655664 fixed.
-    monkeypatch.setattr(config_flow_module, "repo_example_config_path", lambda: None)
+    monkeypatch.setattr("cover_logic.config_flow.repo_example_config_path", lambda: None)
     session = _fresh()
     session.start()
     session.choose("from_example")
