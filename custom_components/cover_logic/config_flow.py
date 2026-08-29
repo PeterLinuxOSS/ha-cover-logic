@@ -282,7 +282,22 @@ def _build_starter_config(entities: list[str], facings: dict[str, str]) -> Confi
     rules = {
         f"{_MODE_DAY}.{RULE_DEFAULT_ZONE}": (
             Rule(
-                when={"condition": COND_SUN_HITS_TARGET},
+                when={
+                    "condition": COND_SUN_HITS_TARGET,
+                    # Explicit, not `conditions._sun_hits_target`'s own
+                    # `azimuth_entity`/`DEFAULT_AZIMUTH_ENTITY` default
+                    # (`sensor.sun_solar_azimuth`): that entity is disabled by
+                    # default in stock Home Assistant (`docs/phase-2-
+                    # findings.md` §3), so a fresh install's `world.number`
+                    # would fall back to the "impossible" sentinel every
+                    # time, this condition would never once be true, and the
+                    # day mode's shading rule this starter config just
+                    # promised would silently never fire. `sun.sun`'s own
+                    # `azimuth` attribute is what stock Home Assistant
+                    # actually populates.
+                    "azimuth_entity": SUN_ENTITY,
+                    "azimuth_attribute": "azimuth",
+                },
                 then=Action(position=_SHADE_POSITION, tilt=_SHADE_TILT),
                 name="shade: sun is on this side",
             ),
