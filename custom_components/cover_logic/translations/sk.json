@@ -481,7 +481,9 @@
       "invalid_config": "Tento súbor sa nedá použiť: {error_detail}",
       "confirmation_required": "Zaškrtnite potvrdenie, aby sa položka odstránila.",
       "import_export_failed": "Toto sa nepodarilo dokončiť: {error_detail}",
-      "rule_is_inherited": "Toto pravidlo patrí do zdieľaného predvoleného zoznamu režimu „{mode}“, nie tejto zóne -- rozhoduje o každej zóne v tomto režime, ktorá nemá vlastné zodpovedajúce pravidlo. Upraviť alebo odstrániť ho môžete cez Pravidlá -> zóna „*“ pre režim „{mode}“."
+      "rule_is_inherited": "Toto pravidlo patrí do zdieľaného predvoleného zoznamu režimu „{mode}“, nie tejto zóne -- rozhoduje o každej zóne v tomto režime, ktorá nemá vlastné zodpovedajúce pravidlo. Upraviť alebo odstrániť ho môžete cez Pravidlá -> zóna „*“ pre režim „{mode}“.",
+      "rule_no_longer_exists": "Toto pravidlo pre zónu „{zone}“ v režime „{mode}“ bolo medzitým odstránené inde. Vyberte znova z aktuálneho zoznamu.",
+      "subentry_vanished": "Táto položka bola medzitým odstránená inde. Vráťte sa späť a vyberte znova, ak ešte existuje."
     }
   },
   "issues": {

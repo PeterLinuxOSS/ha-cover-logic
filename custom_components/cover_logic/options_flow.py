@@ -714,15 +714,33 @@ class CoverLogicOptionsFlow(OptionsFlow):
         errors: dict[str, str] = {}
         if user_input is not None:
             subentry_id = user_input[_PICK_FIELD]
-            is_default = next(is_default for sid, _data, is_default in items if sid == subentry_id)
-            if is_default:
-                errors["base"] = "rule_is_inherited"
-            elif user_input.get(_CONFIRM_FIELD):
-                self.hass.config_entries.async_remove_subentry(entry, subentry_id)
-                return await self._show_section_menu()
+            # `items` is recomputed fresh on every call, but Home Assistant
+            # validates the submitted `subentry_id` against the *schema*
+            # cached when the form was rendered (`_zone_rule_schema`'s own
+            # options) -- if the picked rule was removed in between (another
+            # browser tab, an `import_config` call, the same user
+            # navigating elsewhere), the pick is still schema-valid but no
+            # longer in `items`. `next()` with no default used to raise
+            # `StopIteration` here, which a coroutine turns into an
+            # unhandled `RuntimeError` -- an HTTP 500 instead of a form
+            # error. Treat "the rule is gone" as a normal outcome, the same
+            # way `rule_is_inherited` already is, rather than crashing.
+            match = next(
+                ((sid, is_default) for sid, _data, is_default in items if sid == subentry_id),
+                None,
+            )
+            if match is None:
+                errors["base"] = "rule_no_longer_exists"
             else:
-                self._pending_id = subentry_id
-                return await self.async_step_edit_form(None)
+                _sid, is_default = match
+                if is_default:
+                    errors["base"] = "rule_is_inherited"
+                elif user_input.get(_CONFIRM_FIELD):
+                    self.hass.config_entries.async_remove_subentry(entry, subentry_id)
+                    return await self._show_section_menu()
+                else:
+                    self._pending_id = subentry_id
+                    return await self.async_step_edit_form(None)
 
         schema = self.add_suggested_values_to_schema(_zone_rule_schema(entry, items), user_input)
         return self.async_show_form(
@@ -837,7 +855,28 @@ class CoverLogicOptionsFlow(OptionsFlow):
             # docstring's "one owner, two doors" section describes, not an
             # accidental reach into `subentry_flow.py`'s own private API.
             handler._pick = self._rule_pick  # noqa: SLF001
-        subentry = entry.subentries[subentry_id] if subentry_id is not None else None
+        subentry = entry.subentries.get(subentry_id) if subentry_id is not None else None
+
+        if subentry_id is not None and subentry is None:
+            # `subentry_id` was picked in an earlier step (`async_step_edit`'s
+            # own picker, or `async_step_zone_rules`'s own-row edit route),
+            # from a list that was accurate at the time -- but `entry.
+            # subentries` is read fresh right here, and a concurrent flow may
+            # have removed that subentry since. The plain `entry.subentries
+            # [subentry_id]` this replaced would `KeyError` in that case --
+            # the same "cached schema, stale id" race `async_step_zone_
+            # rules`'s own `next()` guards against, just reached through a
+            # dict index instead. There is nothing left to edit, so say so
+            # (the same "empty form as acknowledgement" shape `async_step_
+            # zone_rules`'s own "no items" branch already uses) instead of
+            # crashing; submitting it is what actually leaves, so a second,
+            # unrelated flow re-picking the same stale id cannot loop here.
+            if user_input is not None:
+                self._pending_id = None
+                return await self._show_section_menu()
+            return self.async_show_form(
+                step_id=step_id, data_schema=vol.Schema({}), errors={"base": "subentry_vanished"}
+            )
 
         errors: dict[str, str] = {}
         placeholders: dict[str, str] | None = None

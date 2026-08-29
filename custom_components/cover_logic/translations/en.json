@@ -481,7 +481,9 @@
       "invalid_config": "This file could not be used: {error_detail}",
       "confirmation_required": "Check the confirmation box to remove it.",
       "import_export_failed": "This could not be completed: {error_detail}",
-      "rule_is_inherited": "This rule belongs to the shared default list of mode {mode}, not to this zone -- it decides every zone in that mode that has no matching rule of its own. Edit or remove it from Rules -> zone \"*\" for mode {mode} instead."
+      "rule_is_inherited": "This rule belongs to the shared default list of mode {mode}, not to this zone -- it decides every zone in that mode that has no matching rule of its own. Edit or remove it from Rules -> zone \"*\" for mode {mode} instead.",
+      "rule_no_longer_exists": "This rule for zone {zone} in mode {mode} was removed elsewhere before this was submitted. Pick again from the current list.",
+      "subentry_vanished": "This item was removed elsewhere before the edit was submitted. Go back and pick again if it still exists."
     }
   },
   "issues": {

@@ -220,6 +220,44 @@ def test_edit_prefills_from_the_picked_subentry_and_saves_changes(subentry_entry
     assert entry.subentries[sid].data["members"] == ["cover.a"]
 
 
+def test_edit_form_vanishing_between_render_and_submit_is_a_form_error_not_a_crash(
+    subentry_entry, options_hass
+):
+    """The sibling of the `zone_rules` `next()` bug: `_render_type_form` used
+    to index `entry.subentries[subentry_id]` directly. `subentry_id` here is
+    `self._pending_id`, set by `async_step_edit`'s picker in one call and
+    read back by a later, separate call to `async_step_edit_form` -- exactly
+    the same "cached schema, stale id" race, just reached through a plain
+    dict index instead of an unguarded `next()`. A concurrent removal
+    between the two (another browser tab, `import_config`) used to
+    `KeyError` here; it must instead behave like every other "this is gone"
+    outcome in this flow -- a form error, then a route back on the next
+    submit -- never an unhandled exception.
+    """
+    entry = subentry_entry()
+    sid = entry.add_subentry(ZONE, {"id": "terasa", "members": []})
+    flow = _make_flow(options_hass(entry))
+    asyncio.run(flow.async_step_zones(None))
+    asyncio.run(flow.async_step_edit(None))
+    # Reaches the form once, the same as any normal edit -- the subentry still
+    # exists at this point, and this is what sets `self._pending_id`.
+    asyncio.run(flow.async_step_edit({"subentry_id": sid}))
+
+    # Simulate the race: a concurrent flow removes it before this one's edit
+    # form is actually submitted.
+    del entry.subentries[sid]
+
+    first = _form(asyncio.run(flow.async_step_edit_form(None)))
+    assert first["step_id"] == "edit_form"
+    assert first["errors"]["base"] == "subentry_vanished"
+
+    # Submitting again (the acknowledgement) returns to a section menu that
+    # reflects reality, the same "empty form, second submit moves on" shape
+    # `async_step_zone_rules`'s own "no items" branch already uses.
+    back = _menu(asyncio.run(flow.async_step_edit_form({})))
+    assert back["step_id"] == "zones"
+
+
 def test_remove_requires_confirmation_before_deleting(subentry_entry, options_hass):
     entry = subentry_entry()
     sid = entry.add_subentry(ZONE, {"id": "terasa", "members": []})
@@ -688,6 +726,51 @@ def test_removing_the_zone_s_own_rule_from_the_zone_screen(subentry_entry, optio
 
     assert result["step_id"] == "rules"
     assert own not in entry.subentries
+
+
+def test_picking_a_rule_removed_between_render_and_submit_is_a_form_error_not_a_crash(
+    subentry_entry, options_hass
+):
+    """The bug a code review caught: `items` is recomputed fresh on every
+    call, but Home Assistant validates the submitted `subentry_id` against
+    the *schema* cached when the form was rendered -- so a rule removed in
+    between (another browser tab, an `import_config` call, the same user
+    navigating elsewhere) is still schema-valid but no longer in `items`.
+    The unguarded `next()` this replaced had no default, so it raised
+    `StopIteration` -- `RuntimeError` from inside a coroutine, an HTTP 500 --
+    instead of the ordinary form error every other "this cannot be done"
+    outcome on this screen already gets (`rule_is_inherited`,
+    `confirmation_required`).
+    """
+    entry = subentry_entry()
+    own = entry.add_subentry(
+        RULE,
+        {"mode": "noc", "zone": "terasa", "order": 20, "then": {"position": 0, "tilt": "keep"}},
+    )
+    # A default row too, so `items` still has something in it once `own` is
+    # removed below -- otherwise this would only exercise the earlier "no
+    # items at all" branch, not the `next()` lookup this test targets.
+    entry.add_subentry(
+        RULE,
+        {
+            "mode": "noc",
+            "zone": RULE_DEFAULT_ZONE,
+            "order": 0,
+            "then": {"position": "keep", "tilt": "keep"},
+        },
+    )
+    flow = _make_flow(options_hass(entry))
+    asyncio.run(flow.async_step_rules(None))
+    asyncio.run(flow.async_step_zone(None))
+    asyncio.run(flow.async_step_zone({"mode": "noc", "zone": "terasa"}))
+
+    # Simulate the race: gone by the time the pick is actually submitted.
+    del entry.subentries[own]
+
+    result = _form(asyncio.run(flow.async_step_zone_rules({"subentry_id": own, "confirm": False})))
+
+    assert result["step_id"] == "zone_rules"
+    assert result["errors"]["base"] == "rule_no_longer_exists"
 
 
 # ---------------------------------------------------------------------------
