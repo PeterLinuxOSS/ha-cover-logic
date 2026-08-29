@@ -13,10 +13,21 @@
       },
       "blinds_now": {
         "title": "Nastaviť žalúzie teraz",
-        "description": "Vyberte každú žalúziu, ktorú má Cover Logic ovládať. Pre každú vznikne jedna žalúzia -- zóny, režimy a pravidlá k nim pridáte neskôr z konfiguračného menu.",
+        "description": "Vyberte každú žalúziu, ktorú má Cover Logic ovládať. Ďalej sa opýtame, ktorým smerom je každá z nich otočená, a potom sa pre vás vytvorí funkčné východiskové nastavenie -- čokoľvek z neho môžete neskôr zmeniť z konfiguračného menu.",
         "data": {
           "entities": "Žalúzie"
         }
+      },
+      "blinds_now_facing": {
+        "title": "Ktorým smerom je táto žalúzia otočená?",
+        "description": "{blind} -- vyberte svetovú stranu, na ktorú smeruje jej vonkajšia strana. Podľa toho sa určí, kedy na ňu svieti slnko.",
+        "data": {
+          "facing": "Smer"
+        }
+      },
+      "blinds_now_summary": {
+        "title": "Východiskové nastavenie",
+        "description": "{blinds}\n\nV noci sa nič nehýbe.\nCez deň sa každá žalúzia čiastočne zatvorí (na pozíciu {shade_position}, lamely {shade_tilt}), keď na jej stranu domu svieti slnko, a zvyšok času zostáva úplne otvorená (pozícia {open_position}).\n\nPokračovaním ho vytvoríte presne tak, ako je zobrazené, alebo toto nastavenie zrušte a začnite znova z hlavného menu."
       },
       "from_file": {
         "title": "Načítať konfiguráciu zo súboru YAML",
@@ -43,7 +54,22 @@
       "no_blinds_selected": "Vyberte aspoň jednu žalúziu, alebo použite možnosť „Začať naprázdno“."
     },
     "abort": {
-      "already_configured": "Cover Logic je už nastavený, podporovaná je len jedna inštancia."
+      "already_configured": "Cover Logic je už nastavený, podporovaná je len jedna inštancia.",
+      "starter_config_invalid": "Vygenerované východiskové nastavenie neprešlo vlastnou kontrolou -- ide o chybu v Cover Logic, nie vo vašom zadaní. Nahláste to, prosím, a namiesto toho použite možnosť „Začať naprázdno“ alebo „Načítať konfiguráciu zo súboru YAML“."
+    }
+  },
+  "selector": {
+    "facing": {
+      "options": {
+        "north": "Sever",
+        "northeast": "Severovýchod",
+        "east": "Východ",
+        "southeast": "Juhovýchod",
+        "south": "Juh",
+        "southwest": "Juhozápad",
+        "west": "Západ",
+        "northwest": "Severozápad"
+      }
     }
   },
   "config_subentries": {

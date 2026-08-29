@@ -73,7 +73,7 @@ import pytest
 
 pytest.importorskip("homeassistant")
 
-from homeassistant.data_entry_flow import FlowManager
+from homeassistant.data_entry_flow import FlowManager, FlowResultType
 
 from cover_logic.config_flow import CoverLogicConfigFlow
 from cover_logic.config_store import BLIND, CONDITION, MODE, RULE, VALUE, ZONE
@@ -252,6 +252,23 @@ def test_config_flow_every_reachable_step_id_is_dispatchable(flow_hass, monkeypa
         session = _fresh()
         session.start()
         session.choose(step)
+
+    # `blinds_now`'s own longer journey (phase 6 task 4): picking entities
+    # delegates to `blinds_now_facing` (one screen per blind, from inside a
+    # *different* step, the exact bug shape this file exists to catch), which
+    # in turn delegates to `blinds_now_summary` once every blind is answered,
+    # which finally creates the entry -- three renders-from-a-different-step
+    # in one journey, not just the menu-to-first-form hop the loop above
+    # already covers.
+    session = _fresh()
+    session.start()
+    session.choose("blinds_now")
+    session.configure({"entities": ["cover.a", "cover.b"]})
+    session.configure({"facing": "north"})
+    summary = session.configure({"facing": "east"})
+    assert summary["step_id"] == "blinds_now_summary"
+    created = session.configure({})
+    assert created["type"] is FlowResultType.CREATE_ENTRY
 
     # `from_example` with the example file present (it ships in this dev checkout).
     session = _fresh()

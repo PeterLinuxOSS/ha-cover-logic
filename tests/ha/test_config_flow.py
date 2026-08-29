@@ -42,8 +42,19 @@ pytest.importorskip("homeassistant")
 from homeassistant.data_entry_flow import AbortFlow, FlowResultType
 
 from cover_logic.config_flow import CoverLogicConfigFlow
-from cover_logic.config_store import BLIND
+from cover_logic.config_schema import ConfigError
+from cover_logic.config_store import (
+    BLIND,
+    MODE,
+    RULE,
+    ZONE,
+    config_from_subentries,
+    entry_from_subentry_items,
+)
 from cover_logic.const import CONF_CONFIG_PATH, DEFAULT_CONFIG_PATH, DOMAIN
+from cover_logic.model import Blind, Config
+from cover_logic.starter_config import _OPEN_POSITION, _SHADE_POSITION, _SHADE_TILT
+from cover_logic.validation import ERROR, validate
 
 # Zero problems of any severity -- see test_init.py for the same config text
 # and why it is clean. Kept as a separate copy here rather than imported from
@@ -141,27 +152,187 @@ def test_blinds_now_rejects_an_empty_selection(flow_hass):
     assert result["errors"] == {"base": "no_blinds_selected"}
 
 
-def test_blinds_now_creates_one_blind_subentry_per_entity(flow_hass):
+def test_blinds_now_moves_on_to_the_facing_question(flow_hass):
+    """Picking entities no longer creates the entry directly (see
+    `config_flow.py`'s own module docstring for why "blinds with nothing
+    deciding them" was the bug this task closes) -- it asks about the first
+    blind's facing instead.
+    """
     flow = _make_flow(flow_hass())
 
     result = asyncio.run(flow.async_step_blinds_now({"entities": ["cover.a", "cover.b"]}))
 
-    assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert result["data"] == {}
-    assert list(result["subentries"]) == [
-        {
-            "data": {"entity": "cover.a"},
-            "subentry_type": BLIND,
-            "title": "cover.a",
-            "unique_id": None,
-        },
-        {
-            "data": {"entity": "cover.b"},
-            "subentry_type": BLIND,
-            "title": "cover.b",
-            "unique_id": None,
-        },
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "blinds_now_facing"
+    assert result["description_placeholders"] == {"blind": "cover.a"}
+
+
+def test_blinds_now_facing_asks_once_per_blind_in_order(flow_hass):
+    """One screen per blind (see `async_step_blinds_now_facing`'s own
+    docstring for why not one field per blind on a single screen): answering
+    for the first blind shows the second, not a repeat or a skip.
+    """
+    flow = _make_flow(flow_hass())
+    asyncio.run(flow.async_step_blinds_now({"entities": ["cover.a", "cover.b"]}))
+
+    second = asyncio.run(flow.async_step_blinds_now_facing({"facing": "north"}))
+
+    assert second["type"] is FlowResultType.FORM
+    assert second["step_id"] == "blinds_now_facing"
+    assert second["description_placeholders"] == {"blind": "cover.b"}
+
+
+def test_blinds_now_facing_options_are_translatable(flow_hass):
+    """The compass dropdown is the one closed, fixed-option `SelectSelector`
+    in this flow (see `_FACING_SCHEMA`'s own comment): every other
+    `SelectSelector` here lists entity ids or a user-chosen id, which cannot
+    be translated, so this is the one spot a missing `translation_key` would
+    leave a Slovak user reading raw English-ish internal ids ("north",
+    "southeast", ...) under a translated title. Home Assistant resolves each
+    option's label from `strings.json`/`translations/*.json`'s
+    `selector.facing.options` only when this is set.
+    """
+    flow = _make_flow(flow_hass())
+    asyncio.run(flow.async_step_blinds_now({"entities": ["cover.a"]}))
+
+    result = asyncio.run(flow.async_step_blinds_now_facing(None))
+
+    (validator,) = [
+        value for key, value in result["data_schema"].schema.items() if key.schema == "facing"
     ]
+    assert validator.config.get("translation_key") == "facing"
+
+
+def test_blinds_now_facing_moves_to_the_summary_once_every_blind_is_answered(flow_hass):
+    flow = _make_flow(flow_hass())
+    asyncio.run(flow.async_step_blinds_now({"entities": ["cover.a", "cover.b"]}))
+    asyncio.run(flow.async_step_blinds_now_facing({"facing": "north"}))
+
+    result = asyncio.run(flow.async_step_blinds_now_facing({"facing": "east"}))
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "blinds_now_summary"
+    placeholders = result["description_placeholders"]
+    blinds = placeholders["blinds"]
+    assert "- cover.a" in blinds
+    assert "- cover.b" in blinds
+    # No raw internal compass id repeated here -- this plain, synchronous
+    # helper has no `hass`/language to resolve `_FACING_TRANSLATION_KEY`'s
+    # localized label with (see `_describe_starter_config`'s own docstring),
+    # so it does not print the untranslated one either. The facing question
+    # was already asked, and answered, one translated screen ago.
+    assert "facing" not in blinds.lower()
+    # Plain language: getting through this flow must never require these
+    # three words (see the phase 6 task 4 plan's own "concepts are not
+    # shown until needed").
+    for forbidden in ("condition", "mode", "rule"):
+        assert forbidden not in blinds.lower()
+    # The prose describing what the starter configuration actually does
+    # lives in `strings.json`/`translations/*.json` now (see `config_flow.
+    # _describe_starter_config`'s own docstring for why), filled in from
+    # these three placeholders rather than baked into a hard-coded English
+    # summary string.
+    assert placeholders["shade_position"] == str(_SHADE_POSITION)
+    assert placeholders["shade_tilt"] == str(_SHADE_TILT)
+    assert placeholders["open_position"] == str(_OPEN_POSITION)
+
+
+def test_blinds_now_summary_creates_a_configuration_that_decides_something(flow_hass):
+    """The whole point of this task: what `blinds_now` creates must actually
+    decide every blind, not merely exist -- checked here by parsing the
+    exact subentries this step hands to `async_create_entry` back through
+    `config_from_subentries` and running the real `validate()` over them,
+    not just over `_build_starter_config`'s own in-memory `Config` (which
+    `subentries_from_config`'s own round-trip self-check already covers on
+    every call, so a second identical check here would prove nothing new).
+    """
+    flow = _make_flow(flow_hass())
+    asyncio.run(flow.async_step_blinds_now({"entities": ["cover.a", "cover.b"]}))
+    asyncio.run(flow.async_step_blinds_now_facing({"facing": "north"}))
+    asyncio.run(flow.async_step_blinds_now_facing({"facing": "east"}))
+
+    result = asyncio.run(flow.async_step_blinds_now_summary({}))
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    subentry_types = [s["subentry_type"] for s in result["subentries"]]
+    assert subentry_types.count(BLIND) == 2
+    assert subentry_types.count(ZONE) == 1
+    assert subentry_types.count(MODE) == 2
+    assert subentry_types.count(RULE) == 3
+
+    entry = entry_from_subentry_items(
+        [(s["subentry_type"], s["data"]) for s in result["subentries"]]
+    )
+    config = config_from_subentries(entry)
+    assert [p for p in validate(config) if p.severity == ERROR] == []
+
+
+def test_blinds_now_summary_shows_the_form_first_without_creating_anything(flow_hass):
+    """`user_input is None` (the initial render) must only describe what would
+    be created, never create it -- otherwise the confirmation screen this
+    task adds ("show the user what was created ... before or immediately
+    after it is saved") would not be a confirmation at all.
+    """
+    flow = _make_flow(flow_hass())
+    asyncio.run(flow.async_step_blinds_now({"entities": ["cover.a"]}))
+    asyncio.run(flow.async_step_blinds_now_facing({"facing": "south"}))
+
+    result = asyncio.run(flow.async_step_blinds_now_summary(None))
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "blinds_now_summary"
+
+
+def test_blinds_now_summary_refuses_to_create_an_invalid_generated_configuration(
+    flow_hass, monkeypatch
+):
+    """Load-bearing proof that `validate()` actually gates this step, not just
+    decorates it: force `_build_starter_config` to hand back a config
+    `validate()` rejects (a blind in no zone) and confirm the flow aborts
+    instead of silently creating a broken entry. This can only happen if
+    this module's own generator has a bug -- see `async_step_blinds_now_
+    summary`'s own docstring -- so a real user's answers never reach this
+    branch; the monkeypatch is what stands in for that bug here.
+    """
+    flow = _make_flow(flow_hass())
+    asyncio.run(flow.async_step_blinds_now({"entities": ["cover.a"]}))
+    asyncio.run(flow.async_step_blinds_now_facing({"facing": "north"}))
+    broken = Config(blinds={"cover.a": Blind(entity="cover.a")}, zones={}, modes=(), rules={})
+    monkeypatch.setattr("cover_logic.config_flow._build_starter_config", lambda *a, **k: broken)
+
+    result = asyncio.run(flow.async_step_blinds_now_summary(None))
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "starter_config_invalid"
+
+
+def test_blinds_now_summary_aborts_instead_of_leaking_a_config_error_on_submit(
+    flow_hass, monkeypatch
+):
+    """The same "this module's own bug" outcome, one step later: force
+    `subentries_from_config` (already `validate()`-clean `config` in hand) to
+    raise `ConfigError`, the same way its own round-trip self-check
+    (`config_store.py`) would if it and `config_from_subentries` ever
+    disagreed with each other -- and confirm the submit branch aborts with
+    `starter_config_invalid` instead of letting that exception escape the
+    flow as Home Assistant's generic "Unknown error occurred". Before this
+    guard existed, this is exactly what happened: nothing in
+    `async_step_blinds_now_summary`'s submit branch caught it.
+    """
+    flow = _make_flow(flow_hass())
+    asyncio.run(flow.async_step_blinds_now({"entities": ["cover.a"]}))
+    asyncio.run(flow.async_step_blinds_now_facing({"facing": "north"}))
+
+    def _raise(config):
+        msg = "subentries_from_config produced subentries that do not round-trip"
+        raise ConfigError(msg)
+
+    monkeypatch.setattr("cover_logic.config_flow.subentries_from_config", _raise)
+
+    result = asyncio.run(flow.async_step_blinds_now_summary({}))
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "starter_config_invalid"
 
 
 # ---------------------------------------------------------------------------

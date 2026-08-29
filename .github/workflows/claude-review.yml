@@ -1,30 +1,64 @@
 name: claude review
 
-# Deliberately NOT triggered on `synchronize`: a review on every push to a PR
-# branch multiplies API cost for little gain. Re-review a branch by marking the
-# PR draft and ready again, or by mentioning @claude in a comment.
+# ON DEMAND ONLY. This workflow spends real API credit on every run (order of
+# a few euros), so nothing here fires by itself -- not `synchronize`, not
+# `opened`, and above all not `reopened`.
+#
+# `reopened` is why this comment exists. It reads like a repository event, but
+# in practice it is a button: closing and reopening a PR was being used as
+# "review this again", and each press cost another full review. An automatic
+# trigger that a human presses on purpose is the worst of both worlds -- it
+# spends money without anyone deciding to spend money.
+#
+# To ask for a review, comment `@claude` on the pull request, or run this
+# workflow manually from the Actions tab with a PR number.
+#
+# The `author_association` check below is not ceremony: this repository is
+# PUBLIC, so without it any stranger could spend the owner's API credit by
+# commenting one word. OWNER/MEMBER/COLLABORATOR only.
 on:
-  pull_request:
-    types: [opened, reopened, ready_for_review]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: PR number to review
+        required: true
+        type: string
 
 jobs:
   review:
+    # `issue_comment` fires for issues too, hence the `.pull_request` check --
+    # there is no pull-request-comment event to subscribe to instead.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.issue.pull_request &&
+       contains(github.event.comment.body, '@claude') &&
+       contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'),
+                github.event.comment.author_association))
     runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: write
       id-token: write
+    env:
+      PR_NUMBER: ${{ github.event.inputs.pr || github.event.issue.number }}
     steps:
+      # Neither trigger checks out the PR branch on its own: `issue_comment`
+      # and `workflow_dispatch` both start from the default branch, so the
+      # head ref has to be named explicitly. Without this the review would
+      # read `main` and report on a diff that is not the one under review.
       - uses: actions/checkout@v6
         with:
           fetch-depth: 1
+          ref: refs/pull/${{ env.PR_NUMBER }}/head
 
       - uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           prompt: |
             REPO: ${{ github.repository }}
-            PR NUMBER: ${{ github.event.pull_request.number }}
+            PR NUMBER: ${{ env.PR_NUMBER }}
 
             Review this pull request. The PR branch is already checked out.
 

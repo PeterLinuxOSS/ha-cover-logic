@@ -355,21 +355,71 @@ def _base_error_literals(class_node):
     return literals
 
 
-def _vol_schema_field_names(class_node, constants):
+def _module_level_vol_schemas(tree):
+    """Module-level `NAME = vol.Schema({...})` assignments, as `{name: call_node}`.
+
+    A step method does not always spell its fields inline: `config_flow.py`'s
+    `_FACING_SCHEMA`/`_BLINDS_NOW_SCHEMA` are built once, at module scope, and
+    the step method merely refers to the constant by name (`data_schema=
+    _FACING_SCHEMA`, or passes it as an argument to
+    `add_suggested_values_to_schema`). Without this, `_vol_schema_field_names`
+    below can only see `vol.Required`/`vol.Optional` calls written directly
+    inside the method body -- which is exactly why it used to walk right past
+    both of those two schemas: `blinds_now` and `blinds_now_facing` looked
+    like they had no fields at all, `if not used: continue` skipped both
+    silently, and `checked_any` ended up true only because of `from_file`,
+    whose schema happens to be built inline. See `test_top_level_config_flow_
+    step_fields_are_declared`'s own docstring for why that gap mattered:
+    `async_step_blinds_now_facing`'s docstring names this very test as the
+    guard on its field, which was not true until this function existed.
+    """
+    schemas = {}
+    for node in tree.body:
+        if not (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Attribute)
+            and node.value.func.attr == "Schema"
+        ):
+            continue
+        schemas[node.targets[0].id] = node.value
+    return schemas
+
+
+def _vol_schema_field_names(method_node, constants, schema_constants=None):
     """Field names passed as the first argument to a `vol.Required`/`vol.Optional` call.
 
-    Only within `class_node`'s own AST subtree.
+    Walks `method_node`'s own AST subtree for such calls written inline, plus
+    -- via `schema_constants` (see `_module_level_vol_schemas`) -- the body of
+    any module-level `vol.Schema` constant the method merely refers to by
+    name, wherever in the method that reference appears (as `data_schema=`
+    directly, or passed on to something like `add_suggested_values_to_
+    schema`). Without the second half, a step whose schema is a shared
+    module-level constant is invisible to this derivation even though its
+    fields are exactly as real, and exactly as translatable, as one written
+    inline.
     """
     names = set()
-    for node in ast.walk(class_node):
-        if not isinstance(node, ast.Call):
-            continue
-        func = node.func
-        if not (isinstance(func, ast.Attribute) and func.attr in ("Required", "Optional")):
-            continue
-        if not node.args:
-            continue
-        names.add(_resolve_str(node.args[0], constants, context=f"vol.{func.attr}(...)"))
+    schema_constants = schema_constants or {}
+
+    def _collect_from(node):
+        for child in ast.walk(node):
+            if not isinstance(child, ast.Call):
+                continue
+            func = child.func
+            if not (isinstance(func, ast.Attribute) and func.attr in ("Required", "Optional")):
+                continue
+            if not child.args:
+                continue
+            names.add(_resolve_str(child.args[0], constants, context=f"vol.{func.attr}(...)"))
+
+    _collect_from(method_node)
+    for node in ast.walk(method_node):
+        if isinstance(node, ast.Name) and node.id in schema_constants:
+            _collect_from(schema_constants[node.id])
+
     return names
 
 
@@ -404,13 +454,14 @@ def test_top_level_config_flow_step_fields_are_declared():
         **_module_level_string_constants(const_tree),
         **_module_level_string_constants(flow_tree),
     }
+    schema_constants = _module_level_vol_schemas(flow_tree)
     class_node = _class_node(flow_tree, "CoverLogicConfigFlow")
     steps = _step_method_nodes(class_node)
     declared_steps = _load(_STRINGS)["config"]["step"]
 
     checked_any = False
     for name, method_node in steps.items():
-        used = _vol_schema_field_names(method_node, constants)
+        used = _vol_schema_field_names(method_node, constants, schema_constants)
         if not used:
             continue
         checked_any = True
