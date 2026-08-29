@@ -1,0 +1,107 @@
+name: claude review
+
+# Deliberately NOT triggered on `synchronize`: a review on every push to a PR
+# branch multiplies API cost for little gain. Re-review a branch by marking the
+# PR draft and ready again, or by mentioning @claude in a comment.
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review]
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
+            Review this pull request. The PR branch is already checked out.
+
+            ## What this project is
+
+            `cover_logic` decides where a real, occupied house's blinds should
+            be. It is deployed and running. A wrong decision moves furniture-
+            sized objects in someone's home, so correctness outranks style by a
+            wide margin. Read `MODELS.md` first — it is the project brief and
+            states the architecture, the deliberate decisions that look like
+            bugs, and the rules for changing this code.
+
+            ## The one thing CI cannot tell you
+
+            The strongest safety net in this project is the migration gate in
+            `tests/parity/`: it renders the live Jinja matrix from the house's
+            own `configuration.yaml` and compares it against the engine across
+            92,160 scenarios. **That file is not in this repository, so the gate
+            is excluded in CI** (`--ignore=tests/parity`). A green CI run says
+            nothing about whether the house still decides the same way.
+
+            So: if this PR touches `engine.py`, `conditions.py`, `config_schema.py`,
+            `config_store.py`, `validation.py` or `fixtures/dom_peter.yaml`, say
+            plainly in your review that the gate must be run locally before merge,
+            and name which decisions could have changed. Do not treat green checks
+            as proof.
+
+            ## The defect class that keeps getting through here
+
+            Three defects have shipped past a suite of 500+ green tests, each
+            because the test exercised a layer *below* the one that breaks:
+
+            - a rendered `step_id` with no matching `async_step_` method — tests
+              called flow methods directly, bypassing Home Assistant's `FlowManager`
+            - 118 unresolved `[%key:...%]` translation references — the test
+              compared key *sets*, never values
+            - service handlers registered as lambdas, so every call through the
+              service bus returned an unawaited coroutine — every test awaited the
+              inner function directly
+
+            For each new or changed test, ask what a broken implementation would
+            have to do to still pass it. A test that cannot fail is worse than no
+            test, because it buys false confidence.
+
+            ## Invariants worth checking
+
+            - **One owner.** Rule grouping and order live in
+              `config_store._grouped_rules`; the effective per-zone list in
+              `effective_rule_items`; validation in `validation.validate`;
+              conformance in `conformance.diff_configs`. A second implementation
+              of any of these is a real finding — two copies that agree today
+              diverge later, and the gate is blind to the difference.
+            - **A form may only be blocked by a problem it can fix.** This defect
+              appeared three times; twice it made the configuration literally
+              unbuildable. `_CODE_OWNERS` and `Problem.owners` are the mechanism.
+            - **This integration moves nothing.** `tests/test_no_movement.py`
+              forbids `.services.async_call` anywhere in the package. A PR that
+              relaxes it needs a very good stated reason.
+            - **Translations.** No value may be a `[%key:...%]` reference — it does
+              not resolve in a custom integration and the user reads the raw
+              placeholder. No string carrying a `{placeholder}` may contain an
+              apostrophe — the formatter treats `'` as an escape character.
+            - **Rule order is semantics**, not presentation: the engine takes the
+              first match. Anything that displays rules in another order misleads.
+
+            ## How to report
+
+            Use `gh pr comment` for the overall verdict, and
+            `mcp__github_inline_comment__create_inline_comment` (with
+            `confirmed: true`) for specific lines. Post GitHub comments only — do
+            not return the review as a message.
+
+            Rank by severity and be concrete: name the input or state that
+            triggers each problem and what goes wrong. If you find nothing, say so
+            plainly rather than padding with style observations. Never include a
+            link to a Claude session in anything you post — this repository
+            forbids it (see `MODELS.md` section 9).
+
+          claude_args: |
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read,Grep,Glob"

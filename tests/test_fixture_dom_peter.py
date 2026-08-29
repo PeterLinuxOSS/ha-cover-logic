@@ -7,7 +7,7 @@ import pytest
 from cover_logic.config_schema import load_config_file
 from cover_logic.const import RULE_DEFAULT_ZONE
 from cover_logic.engine import evaluate
-from cover_logic.validation import ERROR, validate
+from cover_logic.validation import validate
 from cover_logic.world import Event, World
 
 NOW = dt.datetime(2026, 8, 19, 13, 0)
@@ -41,8 +41,12 @@ def config(fixtures_dir):
 
 
 def test_fixture_has_no_validation_errors(config):
-    errors = [p for p in validate(config) if p.severity == ERROR]
-    assert errors == [], errors
+    """The fixture's own comment claims zero problems of *any* severity, not
+    just zero errors -- filtering to `ERROR` before asserting would let a
+    warning (e.g. an `unreachable_rule` or `no_catch_all`) creep in on the
+    live house's own configuration unnoticed. Assert the whole list.
+    """
+    assert validate(config) == []
 
 
 def test_fixture_covers_all_ten_blinds(config):
