@@ -31,15 +31,15 @@ import pytest
 
 pytest.importorskip("homeassistant")
 
-from cover_logic.config_flow import (  # noqa: E402
+from cover_logic.config_flow import (
     _OPEN_POSITION,
     _OPEN_TILT,
     _SHADE_POSITION,
     _SHADE_TILT,
     _build_starter_config,
 )
-from cover_logic.engine import evaluate  # noqa: E402
-from cover_logic.world import World  # noqa: E402
+from cover_logic.engine import evaluate
+from cover_logic.world import World
 
 
 def test_the_starter_config_actually_shades_a_blind_the_sun_is_on():

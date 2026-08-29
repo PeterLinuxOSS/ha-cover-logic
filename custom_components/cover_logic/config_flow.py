@@ -537,7 +537,7 @@ class CoverLogicConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             try:
                 items = subentries_from_config(config)
-            except ConfigError as err:
+            except ConfigError:
                 # Same bug class as the `validate()` guard above, caught one
                 # step later: `subentries_from_config`'s own round-trip
                 # self-check (`config_store.py`) raises `ConfigError` if what
@@ -549,10 +549,16 @@ class CoverLogicConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 # the flow as Home Assistant's generic "Unknown error
                 # occurred" with a traceback instead of the same loud,
                 # actionable abort the sibling guard above already gives.
-                _LOGGER.error(
+                # `.exception`, not `.error` like the sibling guard above:
+                # that one reports a *value* (`validate()`'s problems) with
+                # no exception in hand, this one is inside an `except` and
+                # the traceback is the actionable part -- it names which of
+                # `subentries_from_config`/`config_from_subentries`
+                # disagreed. Nothing is passed for the exception itself;
+                # `.exception` attaches it.
+                _LOGGER.exception(
                     "blinds_now generated a starter configuration "
-                    "subentries_from_config could not round-trip: %s",
-                    err,
+                    "subentries_from_config could not round-trip"
                 )
                 return self.async_abort(reason="starter_config_invalid")
 

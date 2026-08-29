@@ -42,6 +42,7 @@ pytest.importorskip("homeassistant")
 from homeassistant.data_entry_flow import AbortFlow, FlowResultType
 
 from cover_logic.config_flow import CoverLogicConfigFlow
+from cover_logic.config_schema import ConfigError
 from cover_logic.config_store import (
     BLIND,
     MODE,
@@ -50,7 +51,6 @@ from cover_logic.config_store import (
     config_from_subentries,
     entry_from_subentry_items,
 )
-from cover_logic.config_schema import ConfigError
 from cover_logic.const import CONF_CONFIG_PATH, DEFAULT_CONFIG_PATH, DOMAIN
 from cover_logic.model import Blind, Config
 from cover_logic.validation import ERROR, validate
