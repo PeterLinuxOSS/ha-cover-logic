@@ -219,6 +219,118 @@ project does not own), and `_check_unknown_condition_refs` only checks ref
 deep inside `conditions.py` at evaluation time, far from the config that
 caused it.
 
+## `planner.py`
+
+### Why the plan is a sequence with an explicit wait, not two service calls
+
+These motors (`supported_features: 191`) *ignore* a tilt command that arrives
+while the blind is still travelling down. The working sequence, in the house's
+own scripts, is `close_cover` -> wait until the blind reports arrival -> a
+short settle pause -> `close_cover_tilt`. A fixed delay is not a substitute: a
+full run takes about 55 s, so any delay short enough to be tolerable is short
+enough to land mid-travel. This shipped wrong more than once, most recently on
+2026-08-29 in the bedroom door automation, where the slats simply never ended
+up where they were meant to. That is why `WaitForPosition` is a command in its
+own right rather than a `Settle` with a bigger number: only the executor can
+know when the blind arrived, and the plan has to be able to say "here".
+
+`Settle` still exists on top of the wait because these motors report position 0
+slightly *before* they physically stop, so a tilt fired the instant the state
+arrives can still be discarded. The house's scripts wait 2 s; so does
+`SETTLE_SECONDS`.
+
+`blind.tilt_after_arrival` is what turns the wait off. A blind that does not
+need it gets `SetPosition` followed straight by `SetTilt`, with no wait
+between them -- that is the whole meaning of the flag.
+
+### Why the dead band is five points, and why the wait uses the same number
+
+Idempotence here is a safety requirement, not an optimisation. The matrix
+recomputes on every weather update, roughly every ten minutes; without a skip,
+each recompute would push commands at ten motors.
+
+Equality is not enough for that skip, because a repeated *absolute* command is
+itself a movement. The motor changes the slat angle **by moving**, so closing
+the slats shifts the reported position: the kitchen blinds drift from 34 to
+29-30 on their own, and re-sending 34 makes them visibly jump. `Lighting SUN`
+did exactly that twice in one evening on 2026-08-27, from two different
+branches, both sending `input_number.kvety_pozicia_zaluzie` verbatim.
+
+Five is the number the house's own scripts settled on rather than a round
+guess: the living-room terrace blind seats at 3%, and with a tighter band every
+run considered it "not closed yet" and drove it again (2026-08-06). The same
+five points also covers `set_cover_tilt_position: 100` landing on 99 on these
+motors.
+
+`WaitForPosition.tolerance` is deliberately the same constant. `scripts.yaml`
+spells out why in its own comment ("Prahy su ZAMERNE zhodne"): if the threshold
+that decides "close enough, do not send the command" and the threshold that
+decides "it has arrived" ever differ, a blind can be simultaneously close
+enough to be skipped and never close enough to finish.
+
+### Why a clamp is reported on the `Plan`, not on the command
+
+The engine deliberately does not clamp (see "Why the engine does not clamp
+resolved values to 0..100" above) -- clamping there would break parity with the
+Jinja template, and parity is the project's central guarantee. Clamping is
+hardware safety, not decision fidelity, so it belongs here.
+
+A clamp must be visible, though: a blind that was told -5 is a fact, not a
+detail. This module is pure and cannot log through Home Assistant, so it
+follows the precedent the pure core already sets -- `validation.Problem` and
+`Decision.trace` both return the explanation *alongside* the answer, in the
+same value, instead of writing it somewhere. `Plan.clamps` is that same shape.
+
+It is a separate field rather than an attribute of the command it belongs to
+because a clamp can outlive its command: a blind already at 100 that is told
+105 clamps to 100 and then emits nothing at all. That is precisely the case
+worth surfacing -- something in the configuration is producing an impossible
+number, and the only evidence is the clamp. Hanging it off a command would
+throw it away exactly when it matters.
+
+### Why tilt is skipped from the top, and why `None` is not "up"
+
+The angle is only ever set by movement, so from the fully open position the
+tilt cannot be set at all; a plan that asks for one is wrong. The check is
+against where the blind will *end up* after this plan runs, not where it
+stands now -- a blind being driven to 100 must not be given a tilt command
+just because it currently reports 40.
+
+An unknown position (`None`) is deliberately *not* treated as "up". The safe
+direction throughout the house's scripts is to send a command rather than
+silently drop it when an attribute cannot be read ("Bezpecny smer je prikaz
+radsej poslat nez ho ticho zahodit"), and the same applies to an unknown
+current value on either axis: unknown means the command goes out.
+
+### Why an unresolved `Ref` raises instead of being ignored
+
+`engine._resolve_action` resolves every `Ref` before a `Decision` is built, so
+one reaching this layer means a caller skipped the engine. Resolving it here is
+impossible -- that needs a `World`, which the planner does not have and should
+never grow. Treating it as `KEEP` would turn a wiring mistake into a blind that
+silently never moves, which is the failure this project keeps finding in the
+system it replaces.
+
+### What this module deliberately does not decide
+
+Which Home Assistant service realises a command is the runner's business, not
+the planner's, even though the house knows the mapping (position 0 is
+`close_cover`, 100 is `open_cover`, tilt 100 is `open_cover_tilt` because
+`set_cover_tilt_position: 100` lands on 99 on these motors -- documented
+2026-07-29). Keeping service names out of a pure module is what lets the whole
+sequence be tested without Home Assistant; putting them in would buy nothing,
+since `SetPosition(entity, 0)` already carries everything the choice needs.
+
+Retrying a discarded tilt (the house's scripts repeat it up to three times) is
+also not here. A retry is a reaction to what the cover did after the command
+was sent, and this module never observes anything -- it is handed a single
+snapshot and returns a sequence. That belongs to the executor.
+
+A blind with `has_tilt: false` that is nonetheless given a tilt value is
+dropped silently rather than reported: `validation.py` is where a
+configuration mistake belongs, and a per-recompute report of a standing config
+error would be noise on every evaluation.
+
 ## `model.py`
 
 ### Why `Config` is frozen without `slots` (unresolved)
