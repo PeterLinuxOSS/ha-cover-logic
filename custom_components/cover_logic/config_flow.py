@@ -234,11 +234,14 @@ def _build_starter_config(entities: list[str], facings: dict[str, str]) -> Confi
     fresh install.
 
     **Day is `sun.sun` in `above_horizon`, night is the fallback.** Not a
-    `time` condition on a fixed clock: this project's own `CLAUDE.md` records
-    a DST bug from exactly that shape (comparing wall-clock times without
-    accounting for the offset), and a state check on the sun entity needs no
-    clock arithmetic at all to get "day" and "night" right through a DST
-    transition. `night` carries `when=None` and is last -- `validation.
+    `time` condition on a fixed clock: the house this project replaces
+    recorded a DST bug from exactly that shape (comparing wall-clock times
+    as strings without accounting for the UTC offset -- see `/config/
+    CLAUDE.md`'s own entry on it), which is also why `MODELS.md` Sec. 6 has
+    `World.now` stay naive local time rather than convert by hand. A state
+    check on the sun entity needs no clock arithmetic at all to get "day"
+    and "night" right through a DST transition. `night` carries `when=None`
+    and is last -- `validation.
     _check_modes`'s fallback requirement -- so "no mode matched" never
     happens (`engine.evaluate` would otherwise raise `EngineError`).
 
