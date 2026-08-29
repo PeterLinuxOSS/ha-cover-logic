@@ -13,10 +13,21 @@
       },
       "blinds_now": {
         "title": "Set up blinds now",
-        "description": "Pick every cover Cover Logic should control. One blind is created for each -- add zones, modes and rules for them afterwards from the configuration menu.",
+        "description": "Pick every cover Cover Logic should control. Next you will say which way each one faces, then a working starting setup is created for you -- you can change any of it later from the configuration menu.",
         "data": {
           "entities": "Blinds"
         }
+      },
+      "blinds_now_facing": {
+        "title": "Which way does this blind face?",
+        "description": "{blind} -- pick the compass direction its outside faces. This decides when the sun reaches it.",
+        "data": {
+          "facing": "Facing"
+        }
+      },
+      "blinds_now_summary": {
+        "title": "Starter setup",
+        "description": "{summary}\n\nContinue to create it as shown, or cancel this setup and start over from the main menu."
       },
       "from_file": {
         "title": "Load a configuration from a YAML file",
@@ -43,7 +54,8 @@
       "no_blinds_selected": "Pick at least one blind, or use \"Start empty\" instead."
     },
     "abort": {
-      "already_configured": "Cover Logic is already set up; only one instance is supported."
+      "already_configured": "Cover Logic is already set up; only one instance is supported.",
+      "starter_config_invalid": "The starter configuration this step generated failed its own checks -- this is a bug in Cover Logic itself, not something you did. Please report it, then use \"Start empty\" or \"Load a configuration from a YAML file\" instead."
     }
   },
   "config_subentries": {

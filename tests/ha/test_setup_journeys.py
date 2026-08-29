@@ -75,38 +75,62 @@ def _entry_from_create_result(make_entry, result):
 
 
 # ---------------------------------------------------------------------------
-# "Set up blinds now": structurally loads, but is not complete -- validate()
-# says so via ConfigEntryNotReady, not a crash.
+# "Set up blinds now": since phase 6 task 4, a complete, working
+# configuration -- a zone owning every blind, a day/night split, rules that
+# decide both -- not the "structurally loads but ConfigEntryNotReady" result
+# this branch used to leave behind (see `config_flow.py`'s own module
+# docstring for why that used to be the case and why it no longer is).
 # ---------------------------------------------------------------------------
+
+
+def _run_blinds_now(flow, entities, facings):
+    """Drive `blinds_now`'s whole three-step journey; return its final result.
+
+    `facings` supplies one compass answer per entity in `entities`' order --
+    the same FIFO pairing `async_step_blinds_now_facing` itself relies on
+    (see that method's own docstring), spelled out here once so every test
+    below reads as "these entities, facing these ways" rather than as a
+    sequence of bare `asyncio.run` calls whose pairing is easy to get wrong
+    by miscounting.
+    """
+    asyncio.run(flow.async_step_blinds_now({"entities": entities}))
+    result = None
+    for facing in facings:
+        result = asyncio.run(flow.async_step_blinds_now_facing({"facing": facing}))
+    assert result["step_id"] == "blinds_now_summary"
+    return asyncio.run(flow.async_step_blinds_now_summary({}))
 
 
 def test_blinds_now_result_parses_into_a_config(flow_hass, make_entry):
     flow = _make_flow(flow_hass())
-    result = asyncio.run(flow.async_step_blinds_now({"entities": ["cover.a", "cover.b"]}))
+    result = _run_blinds_now(flow, ["cover.a", "cover.b"], ["north", "east"])
 
     entry = _entry_from_create_result(make_entry, result)
     config = config_from_subentries(entry)
 
     assert set(config.blinds) == {"cover.a", "cover.b"}
-    assert config.zones == {}
-    assert config.modes == ()
+    assert config.zones
+    assert config.modes
 
 
-def test_blinds_now_result_fails_setup_cleanly_not_a_crash(flow_hass, make_entry, setup_hass):
-    """No zone owns either blind and there is no fallback mode yet -- setup
-    must refuse with `ConfigEntryNotReady` naming the real problem, not raise
-    `KeyError`/`AttributeError` the way a `CONF_CONFIG_PATH`-shaped read of a
-    subentry-backed, path-less entry used to (see `__init__.async_setup_entry`'s
-    own docstring for why `entry.subentries` truthiness stopped being the
-    branch signal).
+def test_blinds_now_result_sets_up_successfully(flow_hass, make_entry):
+    """The bug this task closes: `blinds_now` used to leave every blind in no
+    zone and no fallback mode, so `async_setup_entry` refused with
+    `ConfigEntryNotReady` on every brand-new install that picked the
+    recommended menu option. This is the same "no `ERROR`-severity `validate()`
+    problem" proof `test_from_example_result_has_no_setup_blocking_problems`
+    makes for that branch (see that test's own docstring for why a full
+    `async_setup_entry` run is not built here either) -- applied to the
+    branch that used to fail it.
     """
     flow = _make_flow(flow_hass())
-    result = asyncio.run(flow.async_step_blinds_now({"entities": ["cover.a"]}))
+    result = _run_blinds_now(flow, ["cover.a"], ["north"])
     entry = _entry_from_create_result(make_entry, result)
 
-    create, delete = _no_issue_registry()
-    with create, delete, pytest.raises(ConfigEntryNotReady, match="blind_without_zone"):
-        asyncio.run(async_setup_entry(setup_hass(), entry))
+    config = config_from_subentries(entry)
+    errors = [problem for problem in validate(config) if problem.severity == ERROR]
+
+    assert errors == []
 
 
 # ---------------------------------------------------------------------------

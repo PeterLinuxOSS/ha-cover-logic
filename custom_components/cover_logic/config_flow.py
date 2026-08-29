@@ -6,8 +6,12 @@ installed the integration from HACS and has no file to point at (the
 owner's own words, quoted in `options_flow.py`'s module docstring). It is
 now `async_show_menu` over four ways to start, each its own step below:
 
-- `blinds_now` (recommended): a multi-select over `cover` entities; one
-  `blind` subentry per entity chosen.
+- `blinds_now` (recommended): a multi-select over `cover` entities, then one
+  compass-direction question per blind picked, then a starter configuration
+  (a zone holding every blind, a day mode that shades toward the sun and a
+  night mode that leaves everything alone) generated and shown before it is
+  saved. See this branch's own docstring and `_build_starter_config` for why
+  a config entry that decides nothing is exactly the problem this replaces.
 - `from_file`: today's original behaviour, kept for migration -- a
   configuration file path, validated on submit exactly as before.
 - `from_example`: imports `docs/example-config.yaml`, the worked example for
@@ -28,26 +32,35 @@ menu item is picked. Every one of the four branches ends in
 brand-new flow (`source: user`), so there is no route into `blinds_now`/
 `from_file`/`from_example`/`empty` that skips it.
 
-"Whatever this creates must load, even incomplete." A brand-new install
-picking `blinds_now` has zero zones and zero modes; `empty` has nothing at
-all. `config_from_subentries` (`config_store.py`) still builds a `Config`
-from either -- it only rejects a structurally broken shape (a required key
+"Whatever this creates must load, even incomplete." `empty` has nothing at
+all: `config_from_subentries` (`config_store.py`) still builds a `Config`
+from it -- it only rejects a structurally broken shape (a required key
 missing), never an incomplete-but-well-formed one. `validate()` is what
-finds `blind_without_zone`/`no_fallback_mode` on such a `Config`, and
-`__init__.async_setup_entry` turns those into `ConfigEntryNotReady` exactly
-as it already does for any subentry-backed entry with an ERROR-severity
-problem (this predates phase 5). That is a deliberate line, not an oversight:
-`ConfigEntryNotReady` is a normal, expected state for an entry whose
-subentries still need work, not a crash -- the entry keeps existing, and its
-subentries (and, since the previous task, the options-flow menu over them)
-stay reachable regardless of whether setup succeeded, which is how a user
-actually finishes what `blinds_now`/`empty` started. What must never happen
-is `config_from_subentries` or `async_setup_entry` raising something that is
-*not* one of these two clean, already-handled outcomes -- see
-`__init__.async_setup_entry`'s own docstring for the one place this had to
-change to keep that true for an entry with genuinely zero subentries
-(`entry.subentries` truthiness stopped being the signal for "read from
-subentries"; `CONF_CONFIG_PATH`'s presence in `entry.data` is, now).
+finds `no_fallback_mode` on such a `Config`, and `__init__.async_setup_entry`
+turns that into `ConfigEntryNotReady` exactly as it already does for any
+subentry-backed entry with an ERROR-severity problem (this predates phase 5).
+That is a deliberate line, not an oversight: `ConfigEntryNotReady` is a
+normal, expected state for an entry whose subentries still need work, not a
+crash -- the entry keeps existing, and its subentries (and, since the
+previous task, the options-flow menu over them) stay reachable regardless of
+whether setup succeeded, which is how a user actually finishes what `empty`
+started. What must never happen is `config_from_subentries` or
+`async_setup_entry` raising something that is *not* one of these two clean,
+already-handled outcomes -- see `__init__.async_setup_entry`'s own docstring
+for the one place this had to change to keep that true for an entry with
+genuinely zero subentries (`entry.subentries` truthiness stopped being the
+signal for "read from subentries"; `CONF_CONFIG_PATH`'s presence in
+`entry.data` is, now).
+
+`blinds_now` used to leave the same gap (zero zones, zero modes -- a blind
+with nothing deciding it) until this task: a brand-new user landed on
+exactly the `ConfigEntryNotReady` state described above with no explanation
+of why, which is not "incomplete on purpose", it is the bug phase 6 task 4
+exists to close. `blinds_now` now runs `validate()` on the configuration it
+is about to create (`async_step_blinds_now_summary`, below) and refuses to
+call `async_create_entry` at all if that configuration has an ERROR-severity
+problem -- see `_build_starter_config`'s own docstring for why that should
+never happen, and what it means if it ever does.
 
 The four setup steps are this module's whole content. The subentry flows
 that let a user build the same configuration by clicking, one
@@ -85,10 +98,19 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import selector
 import voluptuous as vol
 
+from .conditions import SUN_ENTITY
 from .config_schema import ConfigError, load_config_file
-from .config_store import BLIND, subentries_from_config
+from .config_store import subentries_from_config
 from .conformance import repo_example_config_path
-from .const import CONF_CONFIG_PATH, CONFIG_ENTRY_VERSION, DEFAULT_CONFIG_PATH, DOMAIN
+from .const import (
+    COND_SUN_HITS_TARGET,
+    CONF_CONFIG_PATH,
+    CONFIG_ENTRY_VERSION,
+    DEFAULT_CONFIG_PATH,
+    DOMAIN,
+    RULE_DEFAULT_ZONE,
+)
+from .model import Action, Blind, Config, Mode, Rule, Zone
 from .options_flow import CoverLogicOptionsFlow
 from .services import _title_for
 from .subentry_flow import SUBENTRY_FLOW_HANDLERS
@@ -138,6 +160,164 @@ _BLINDS_NOW_SCHEMA = vol.Schema(
     }
 )
 
+_STEP_BLINDS_NOW_FACING = "blinds_now_facing"
+_STEP_BLINDS_NOW_SUMMARY = "blinds_now_summary"
+
+# `facade_azimuth` is a number of degrees (`model.Blind`, `MODELS.md` Sec. 4)
+# -- correct for the engine, meaningless to someone standing in their own
+# house deciding which way a window faces. Ordered clockwise from north (the
+# order a compass rose is drawn in), not alphabetised, so the select widget
+# reads as a compass rather than a word list; `_FACING_SCHEMA` below passes
+# this order straight through with `sort=False` for the same reason.
+_COMPASS_TO_AZIMUTH: dict[str, float] = {
+    "north": 0.0,
+    "northeast": 45.0,
+    "east": 90.0,
+    "southeast": 135.0,
+    "south": 180.0,
+    "southwest": 225.0,
+    "west": 270.0,
+    "northwest": 315.0,
+}
+
+_FACING_FIELD = "facing"
+_FACING_SCHEMA = vol.Schema(
+    {
+        vol.Required(_FACING_FIELD, default="north"): selector.SelectSelector(
+            selector.SelectSelectorConfig(options=list(_COMPASS_TO_AZIMUTH), sort=False)
+        ),
+    }
+)
+
+# The zone/mode ids `_build_starter_config` generates. Plain, short and
+# English on purpose -- like every other id in this project's format
+# (`MODELS.md` Sec. 4), these are internal keys read back out of subentries,
+# never shown to the user translated; the *labels* around them (this
+# module's own `strings.json` entries) are what carry the explanation.
+_BLINDS_NOW_ZONE = "all"
+_MODE_DAY = "day"
+_MODE_NIGHT = "night"
+
+# The starter rule's shading amount: enough to cut direct sun without
+# blacking the room out, on the theory that a new user tunes this to taste
+# afterwards (see `strings.json`'s own summary text) rather than never
+# touching it -- picking values that make no difference either way would
+# defeat the point of generating a working default at all.
+_SHADE_POSITION = 20
+_SHADE_TILT = 45
+_OPEN_POSITION = 100
+_OPEN_TILT = 100
+
+
+def _build_starter_config(entities: list[str], facings: dict[str, str]) -> Config:
+    """The configuration `blinds_now` creates: one zone, a day/night split, shading rules.
+
+    This is the whole answer to "the entry decides nothing" (see this
+    module's own docstring and the phase 6 task 4 plan this implements):
+    every blind picked ends up owned by one zone, and every `(mode, zone)`
+    pair that zone participates in has rules that resolve to something.
+
+    **One zone, not one per blind.** `blinds_now` has no notion yet of which
+    blinds belong together -- that is exactly the kind of decision the
+    options-flow menu exists for a user to make deliberately afterwards. A
+    single zone holding every blind is the only grouping this step can offer
+    without guessing, and it is enough for `validate()` to find nothing
+    unowned.
+
+    **Two modes, one inherited default each -- not one rule per zone.** This
+    is deliberately the shape phase 6's task 1-3 added inheritance for
+    (`RULE_DEFAULT_ZONE`, `"*"`): a rule filed under `f"{mode}.*"` decides
+    every zone in that mode, so a single-zone starter set and a ten-zone one
+    generated from the same picks would need the same two rule lists, not
+    one pair per zone. It is also the clearest illustration of the feature
+    this project's own `MODELS.md`/`docs/rationale.md` could ship with a
+    fresh install.
+
+    **Day is `sun.sun` in `above_horizon`, night is the fallback.** Not a
+    `time` condition on a fixed clock: this project's own `CLAUDE.md` records
+    a DST bug from exactly that shape (comparing wall-clock times without
+    accounting for the offset), and a state check on the sun entity needs no
+    clock arithmetic at all to get "day" and "night" right through a DST
+    transition. `night` carries `when=None` and is last -- `validation.
+    _check_modes`'s fallback requirement -- so "no mode matched" never
+    happens (`engine.evaluate` would otherwise raise `EngineError`).
+
+    **Night's one rule is `keep`/`keep`, named, not an empty rule list.**
+    `engine._apply_rules` already treats "no rules for this key" as keep/keep
+    (see `MODELS.md` Sec. 3's "#none" ambiguity) -- an empty `night.*` would
+    decide exactly the same thing. An explicit rule instead means `validate`
+    (`_check_rule_lists`'s `missing_rule_list`/`no_catch_all`) has something
+    to see and stays silent, and the decision trace names why nothing moved
+    instead of showing the ambiguous "#none" a genuinely unconfigured pair
+    would.
+
+    **Day's two rules: shade when the sun hits, otherwise stay open.**
+    `sun_hits_target` (`conditions._sun_hits_target`) is target-relative --
+    it reads `facade_azimuth` off the blind actually being decided, not off
+    the condition body -- so one rule pair generalises across every facing
+    the facing step collected, exactly as `MODELS.md` Sec. 3 describes for
+    a hand-written house.
+
+    Raises nothing of its own; `Config` and `Blind` validate their own
+    fields (`model.py`), and whatever `validate()` finds is this function's
+    caller's problem to act on (`async_step_blinds_now_summary`), not this
+    function's -- see that step's own docstring for why a problem here would
+    be this function's bug, not a user-facing error.
+    """
+    blinds = {
+        entity: Blind(entity=entity, facade_azimuth=_COMPASS_TO_AZIMUTH[facings[entity]])
+        for entity in entities
+    }
+    zone = Zone(id=_BLINDS_NOW_ZONE, members=tuple(entities))
+    modes = (
+        Mode(
+            id=_MODE_DAY,
+            when={"condition": "state", "entity_id": SUN_ENTITY, "state": "above_horizon"},
+        ),
+        Mode(id=_MODE_NIGHT, when=None),
+    )
+    rules = {
+        f"{_MODE_DAY}.{RULE_DEFAULT_ZONE}": (
+            Rule(
+                when={"condition": COND_SUN_HITS_TARGET},
+                then=Action(position=_SHADE_POSITION, tilt=_SHADE_TILT),
+                name="shade: sun is on this side",
+            ),
+            Rule(
+                when=None,
+                then=Action(position=_OPEN_POSITION, tilt=_OPEN_TILT),
+                name="otherwise: stay open",
+            ),
+        ),
+        f"{_MODE_NIGHT}.{RULE_DEFAULT_ZONE}": (
+            Rule(when=None, then=Action(), name="night: do not move"),
+        ),
+    }
+    return Config(blinds=blinds, zones={zone.id: zone}, modes=modes, rules=rules)
+
+
+def _describe_starter_config(entities: list[str], facings: dict[str, str]) -> str:
+    """The plain-language explanation `async_step_blinds_now_summary` shows before saving.
+
+    Names no mode/zone/rule by its internal id or by the words "mode",
+    "zone" or "rule" themselves -- see the phase 6 task 4 plan's "concepts
+    are not shown until needed". What it does name is exactly what
+    `_build_starter_config` above builds, so the two cannot drift apart the
+    way a hand-maintained description of generated code always eventually
+    does: change one function's behaviour and the other's wording goes
+    stale silently. A future change to either should keep reading the other
+    before touching wording, not treat them as independent.
+    """
+    blind_list = "\n".join(f"- {entity} (facing {facings[entity]})" for entity in entities)
+    return (
+        f"{blind_list}\n\n"
+        f"At night, nothing moves.\n"
+        f"During the day, each blind closes partway (to position "
+        f"{_SHADE_POSITION}, tilt {_SHADE_TILT}) whenever the sun is shining "
+        f"on its own side of the house, and stays fully open (position "
+        f"{_OPEN_POSITION}) the rest of the time."
+    )
+
 
 def _subentry_data(
     subentry_type: str, data: dict[str, Any], title: str
@@ -177,19 +357,30 @@ class CoverLogicConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             menu_options=[_STEP_BLINDS_NOW, _STEP_FROM_FILE, _STEP_FROM_EXAMPLE, _STEP_EMPTY],
         )
 
+    # Set by `async_step_blinds_now`, consumed and updated by
+    # `async_step_blinds_now_facing`; all three are `None` until that branch
+    # is actually picked, and reset to `None` on that first submit (never
+    # partially populated from some earlier, abandoned attempt) so a second
+    # trip through `blinds_now` after backing out never inherits state left
+    # over from a first.
+    _blinds_now_entities: list[str] | None = None
+    _blinds_now_pending: list[str] | None = None
+    _blinds_now_facings: dict[str, str] | None = None
+
     async def async_step_blinds_now(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.ConfigFlowResult:
-        """Set up blinds now: a `blind` subentry for each `cover` entity picked.
+        """Set up blinds now, step one: which `cover` entities to build a `blind` for.
 
         The recommended branch -- the one thing a brand-new user can answer
-        without knowing anything about zones, modes or rules yet. Creates no
-        zone, mode or rule: `validate()` will report `blind_without_zone` and
-        `no_fallback_mode` for the result (there is nothing yet to own these
-        blinds or decide anything for them), which is `ConfigEntryNotReady`,
-        not a crash -- see the module docstring's "whatever this creates
-        must load, even incomplete" section. The options-flow menu (previous
-        task) is exactly where a user goes next to add a zone and a mode.
+        without knowing anything about zones, modes or rules yet. Does not
+        create the entry itself any more (see this module's own docstring
+        for why leaving it at "blinds with nothing deciding them" was the
+        bug this task closes): a non-empty pick moves on to
+        `async_step_blinds_now_facing`, which asks the one further question
+        (which way each blind faces) `_build_starter_config` needs, then
+        `async_step_blinds_now_summary`, which builds, validates and shows
+        that configuration before saving it.
 
         At least one entity must be picked: zero would produce the same
         entry `empty` already offers on purpose, under a menu item that
@@ -201,13 +392,108 @@ class CoverLogicConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if not entities:
                 errors["base"] = "no_blinds_selected"
             else:
-                subentries = [
-                    _subentry_data(BLIND, {"entity": entity}, entity) for entity in entities
-                ]
-                return self.async_create_entry(title="Cover Logic", data={}, subentries=subentries)
+                self._blinds_now_entities = entities
+                self._blinds_now_pending = list(entities)
+                self._blinds_now_facings = {}
+                return await self.async_step_blinds_now_facing(None)
 
         schema = self.add_suggested_values_to_schema(_BLINDS_NOW_SCHEMA, user_input)
         return self.async_show_form(step_id=_STEP_BLINDS_NOW, data_schema=schema, errors=errors)
+
+    async def async_step_blinds_now_facing(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """Set up blinds now, step two: which compass direction each blind faces.
+
+        One screen per blind rather than one field per blind on a single
+        screen: a form's fields come from a `vol.Schema` built with literal
+        `vol.Required("...")` calls (`tests/test_translations.py`'s
+        `test_top_level_config_flow_step_fields_are_declared` derives every
+        step's translatable fields by walking that step method's own source
+        for exactly that literal shape), so a field name assembled at
+        runtime per entity (`vol.Required(entity_id)`) would have no static
+        label to check against and would be invisible to that guard. Reusing
+        one fixed field (`_FACING_FIELD`) and one fixed `step_id`, asked once
+        per entry in `self._blinds_now_pending` with the current blind named
+        in `description_placeholders`, keeps the field itself static while
+        still asking about each blind by name -- for the handful of blinds a
+        single `blinds_now` pick realistically selects, one click per screen
+        is not the burden a form with an entity's full id as its field label
+        would be either way.
+
+        `self._blinds_now_pending` is a queue: the entity named on the
+        screen just answered is always its front (`[0]`), popped here before
+        checking what remains, because nothing else runs between "this
+        screen is shown for entity X" and "this screen's answer is submitted
+        for entity X" in one single-user, synchronous flow -- there is no
+        way for the queue's front to change out from under a specific
+        pending answer.
+        """
+        if user_input is not None:
+            entity = self._blinds_now_pending.pop(0)
+            self._blinds_now_facings[entity] = user_input[_FACING_FIELD]
+
+        if not self._blinds_now_pending:
+            return await self.async_step_blinds_now_summary(None)
+
+        entity = self._blinds_now_pending[0]
+        return self.async_show_form(
+            step_id=_STEP_BLINDS_NOW_FACING,
+            data_schema=_FACING_SCHEMA,
+            description_placeholders={"blind": entity},
+        )
+
+    async def async_step_blinds_now_summary(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """Set up blinds now, step three: show the generated configuration, then save it.
+
+        Builds `_build_starter_config`'s `Config` and runs `validate()`
+        against it on *every* render of this step, not only once when the
+        answers first arrive -- "validate() must report no errors on what is
+        generated, checked as part of the flow, not only by a test" is a
+        hard requirement of the task this implements. An ERROR-severity
+        problem here can only be this module's own bug (`_build_starter_
+        config`'s output is fully determined by this function's own code and
+        the compass answers just collected, never by anything else a user
+        typed that could be wrong on its own), so this refuses to create the
+        entry and aborts loudly with a message that says so, rather than
+        inventing an `errors["base"]` a user could not act on -- a config
+        this flow does not understand well enough to show correctly is not
+        one it should silently create either.
+
+        Description-only summary before the one confirming submit --
+        `_describe_starter_config` -- is what makes this step answer "what
+        was created and why" instead of a bare "done", the plan's own
+        complaint about a config that "appears without explanation".
+        """
+        entities = self._blinds_now_entities
+        facings = self._blinds_now_facings
+        config = _build_starter_config(entities, facings)
+        problems = [problem for problem in validate(config) if problem.severity == ERROR]
+        if problems:
+            _LOGGER.error(
+                "blinds_now generated a starter configuration validate() rejects: %s", problems
+            )
+            return self.async_abort(reason="starter_config_invalid")
+
+        if user_input is not None:
+            items = subentries_from_config(config)
+            subentries = [
+                _subentry_data(subentry_type, data, _title_for(subentry_type, data))
+                for subentry_type, data in items
+            ]
+            return self.async_create_entry(
+                title="Cover Logic",
+                data={"guards": list(config.guards)},
+                subentries=subentries,
+            )
+
+        return self.async_show_form(
+            step_id=_STEP_BLINDS_NOW_SUMMARY,
+            data_schema=vol.Schema({}),
+            description_placeholders={"summary": _describe_starter_config(entities, facings)},
+        )
 
     async def async_step_from_file(
         self, user_input: dict[str, str] | None = None
