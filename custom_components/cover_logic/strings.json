@@ -27,7 +27,7 @@
       },
       "blinds_now_summary": {
         "title": "Starter setup",
-        "description": "{summary}\n\nContinue to create it as shown, or cancel this setup and start over from the main menu."
+        "description": "{blinds}\n\nAt night, nothing moves.\nDuring the day, each blind closes partway (to position {shade_position}, tilt {shade_tilt}) whenever the sun is shining on its own side of the house, and stays fully open (position {open_position}) the rest of the time.\n\nContinue to create it as shown, or cancel this setup and start over from the main menu."
       },
       "from_file": {
         "title": "Load a configuration from a YAML file",

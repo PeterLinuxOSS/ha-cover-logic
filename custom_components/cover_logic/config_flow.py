@@ -184,40 +184,37 @@ _FACING_SCHEMA = vol.Schema(
 )
 
 
-def _describe_starter_config(entities: list[str], facings: dict[str, str]) -> str:
-    """The plain-language explanation `async_step_blinds_now_summary` shows before saving.
+def _describe_starter_config(entities: list[str]) -> str:
+    """The blind list `async_step_blinds_now_summary` shows above the translated prose.
 
-    Names no mode/zone/rule by its internal id or by the words "mode",
-    "zone" or "rule" themselves -- see the phase 6 task 4 plan's "concepts
-    are not shown until needed". What it does name is exactly what
-    `_build_starter_config` builds, so the two cannot drift apart the
-    way a hand-maintained description of generated code always eventually
-    does: change one function's behaviour and the other's wording goes
-    stale silently. A future change to either should keep reading the other
-    before touching wording, not treat them as independent.
+    Only the list of picked entity ids -- one bullet per blind, in the order
+    they were picked -- because that is the one part of this screen that
+    genuinely cannot be translated (an entity id is not a word in any
+    language). Everything else this screen says (what happens at night, what
+    happens during the day, both action constants) used to be built here as
+    a hard-coded English f-string interpolated into the translated
+    `description` as a single opaque `{summary}` blob -- which meant three of
+    the four lines on this screen were English even in `sk.json`, the
+    exact "no `[%key:...%]` reference, ever" mistake `MODELS.md` Sec. 9 warns
+    about, just with the untranslated text pasted from Python instead of
+    core's own build-time syntax. That prose now lives in
+    `strings.json`/`translations/*.json`'s own `blinds_now_summary.
+    description`, with `{shade_position}`/`{shade_tilt}`/`{open_position}`
+    placeholders `async_step_blinds_now_summary` fills in alongside this
+    function's `{blinds}` -- real Slovak text for a Slovak household, not
+    three lines of English wearing a translated title.
 
     Does not repeat each blind's facing next to its name (an earlier version
-    of this text printed the raw `_COMPASS_TO_AZIMUTH` key, e.g. "(facing
-    north)") -- `facings` is still accepted for that reason, but no longer
-    read here. This is a plain, synchronous helper with no `hass`/language
-    available to it, so it cannot resolve `_FACING_TRANSLATION_KEY`'s
-    localized label the way the dropdown that collected the answer does
-    (see `_FACING_SCHEMA`'s own comment); printing the internal compass id
-    verbatim here would reintroduce, in this summary, exactly the
-    untranslatable-label problem that dropdown exists to avoid. The user
-    just answered this question, one screen per blind, immediately before
-    reaching this one -- so this summary's job is to say what will happen,
-    not to redisplay an answer already given on a translated screen.
+    of this text printed the raw compass key, e.g. "(facing north)") -- the
+    facing question was already asked, and answered, one translated screen
+    ago; this plain, synchronous helper has no `hass`/language available to
+    it, so it cannot resolve `_FACING_TRANSLATION_KEY`'s localized label the
+    way that screen's dropdown does (see `_FACING_SCHEMA`'s own comment),
+    and printing the internal compass id verbatim here would reintroduce, in
+    this summary, exactly the untranslatable-label problem that dropdown
+    exists to avoid.
     """
-    blind_list = "\n".join(f"- {entity}" for entity in entities)
-    return (
-        f"{blind_list}\n\n"
-        f"At night, nothing moves.\n"
-        f"During the day, each blind closes partway (to position "
-        f"{_SHADE_POSITION}, tilt {_SHADE_TILT}) whenever the sun is shining "
-        f"on its own side of the house, and stays fully open (position "
-        f"{_OPEN_POSITION}) the rest of the time."
-    )
+    return "\n".join(f"- {entity}" for entity in entities)
 
 
 def _subentry_data(
@@ -432,7 +429,12 @@ class CoverLogicConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id=_STEP_BLINDS_NOW_SUMMARY,
             data_schema=vol.Schema({}),
-            description_placeholders={"summary": _describe_starter_config(entities, facings)},
+            description_placeholders={
+                "blinds": _describe_starter_config(entities),
+                "shade_position": str(_SHADE_POSITION),
+                "shade_tilt": str(_SHADE_TILT),
+                "open_position": str(_OPEN_POSITION),
+            },
         )
 
     async def async_step_from_file(

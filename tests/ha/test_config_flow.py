@@ -53,6 +53,7 @@ from cover_logic.config_store import (
 )
 from cover_logic.const import CONF_CONFIG_PATH, DEFAULT_CONFIG_PATH, DOMAIN
 from cover_logic.model import Blind, Config
+from cover_logic.starter_config import _OPEN_POSITION, _SHADE_POSITION, _SHADE_TILT
 from cover_logic.validation import ERROR, validate
 
 # Zero problems of any severity -- see test_init.py for the same config text
@@ -211,20 +212,29 @@ def test_blinds_now_facing_moves_to_the_summary_once_every_blind_is_answered(flo
 
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "blinds_now_summary"
-    summary = result["description_placeholders"]["summary"]
-    assert "- cover.a" in summary
-    assert "- cover.b" in summary
+    placeholders = result["description_placeholders"]
+    blinds = placeholders["blinds"]
+    assert "- cover.a" in blinds
+    assert "- cover.b" in blinds
     # No raw internal compass id repeated here -- this plain, synchronous
     # helper has no `hass`/language to resolve `_FACING_TRANSLATION_KEY`'s
     # localized label with (see `_describe_starter_config`'s own docstring),
     # so it does not print the untranslated one either. The facing question
     # was already asked, and answered, one translated screen ago.
-    assert "facing" not in summary.lower()
+    assert "facing" not in blinds.lower()
     # Plain language: getting through this flow must never require these
     # three words (see the phase 6 task 4 plan's own "concepts are not
     # shown until needed").
     for forbidden in ("condition", "mode", "rule"):
-        assert forbidden not in summary.lower()
+        assert forbidden not in blinds.lower()
+    # The prose describing what the starter configuration actually does
+    # lives in `strings.json`/`translations/*.json` now (see `config_flow.
+    # _describe_starter_config`'s own docstring for why), filled in from
+    # these three placeholders rather than baked into a hard-coded English
+    # summary string.
+    assert placeholders["shade_position"] == str(_SHADE_POSITION)
+    assert placeholders["shade_tilt"] == str(_SHADE_TILT)
+    assert placeholders["open_position"] == str(_OPEN_POSITION)
 
 
 def test_blinds_now_summary_creates_a_configuration_that_decides_something(flow_hass):

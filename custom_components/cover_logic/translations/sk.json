@@ -27,7 +27,7 @@
       },
       "blinds_now_summary": {
         "title": "Východiskové nastavenie",
-        "description": "{summary}\n\nPokračovaním ho vytvoríte presne tak, ako je zobrazené, alebo toto nastavenie zrušte a začnite znova z hlavného menu."
+        "description": "{blinds}\n\nV noci sa nič nehýbe.\nCez deň sa každá žalúzia čiastočne zatvorí (na pozíciu {shade_position}, lamely {shade_tilt}), keď na jej stranu domu svieti slnko, a zvyšok času zostáva úplne otvorená (pozícia {open_position}).\n\nPokračovaním ho vytvoríte presne tak, ako je zobrazené, alebo toto nastavenie zrušte a začnite znova z hlavného menu."
       },
       "from_file": {
         "title": "Načítať konfiguráciu zo súboru YAML",
