@@ -52,6 +52,7 @@ from cover_logic.config_store import (
     duplicate_rule_order_problems,
     rule_owner_ids,
 )
+from cover_logic.const import RULE_DEFAULT_ZONE
 from cover_logic.model import KEEP, Blind, Ref
 from cover_logic.subentry_flow import (
     SUBENTRY_FLOW_HANDLERS,
@@ -1747,6 +1748,26 @@ def test_rule_step_two_shows_every_field(subentry_entry, subentry_hass):
         "events",
         "name",
     }
+
+
+def test_rule_build_schema_offers_the_wildcard_zone_too(subentry_entry, subentry_hass):
+    """Step one's own picker (`_rule_pick_schema`) offering `RULE_DEFAULT_ZONE`
+    is pinned above (`test_rule_step_one_offers_only_configured_modes_and_
+    zones`), but `RuleSubentryFlowHandler._build_schema` -- step two's own
+    form, reused unchanged for both `async_step_rule` and a reconfigure --
+    builds its `zone` field separately, from the same `_zone_options` helper.
+    Nothing asserted that it did too: a revert of that one call site (back to
+    only `_configured_ids(entry, ZONE)`) would make it impossible to turn an
+    existing rule into a mode default through the edit form, and the suite
+    would still pass.
+    """
+    entry = _rule_scaffold(subentry_entry())
+    handler = RuleSubentryFlowHandler()
+
+    schema = handler._build_schema(entry)  # noqa: SLF001
+
+    zone_field = next(key for key in schema.schema if key.schema == "zone")
+    assert RULE_DEFAULT_ZONE in schema.schema[zone_field].config["options"]
 
 
 def test_rule_order_defaults_to_the_highest_in_that_pair_plus_ten(subentry_entry, subentry_hass):

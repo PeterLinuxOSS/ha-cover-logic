@@ -486,6 +486,52 @@ def test_rules_list_merges_a_mode_default_into_every_zone_that_inherits_it(
     assert text.count("[inherited from mode default]") == 2
 
 
+def test_rules_list_still_fans_a_default_out_across_zones_when_its_mode_is_gone(
+    subentry_entry, options_hass
+):
+    """`_rule_overview_text`'s `default_modes` is collected from rule keys
+    alone -- it never checks that the mode a default row names still has a
+    `mode` subentry of its own. A rule stranded by a deleted mode (the same
+    scenario `validation._check_rule_keys`'s own `unknown_rule_key` already
+    names -- deleting a mode does not cascade-delete the rules that were
+    filed under it) therefore still fans its default out across every real
+    zone, one synthesised block each, exactly as if the mode still existed.
+
+    This is documented as current behaviour, not fixed, by choice: the
+    obvious-looking fix (skip a default whose mode has no `mode` subentry)
+    would also skip the deliberately mode-less setups the test directly
+    above this one (`test_rules_list_merges_a_mode_default_into_every_zone_
+    that_inherits_it`) already relies on -- that test's own "noc" is never
+    given a `mode` subentry either, only referenced by rule keys, and still
+    expects the fan-out to happen. Telling "genuinely orphaned by a delete"
+    apart from "not (yet) given its own mode subentry" needs a real `Config`
+    and `validate()`'s own `unknown_rule_key` check, which this screen
+    deliberately does not run -- it must still render *something* useful for
+    an entry that does not even parse (see `_current_problems`'s own
+    docstring), and this report is display-only: it never feeds `engine.
+    evaluate`, so a misleading block here cannot move a physical blind.
+    """
+    entry = subentry_entry()
+    entry.add_subentry(
+        RULE,
+        {
+            "mode": "ghost",
+            "zone": RULE_DEFAULT_ZONE,
+            "order": 0,
+            "then": {"position": "keep", "tilt": "keep"},
+        },
+    )
+    entry.add_subentry(ZONE, {"id": "spalna", "members": []})
+    flow = _make_flow(options_hass(entry))
+    asyncio.run(flow.async_step_rules(None))
+
+    result = _form(asyncio.run(flow.async_step_list(None)))
+    text = result["description_placeholders"]["result"]
+
+    assert "ghost.spalna:" in text
+    assert "0: position=keep, tilt=keep [inherited from mode default]" in text
+
+
 def test_rules_list_submit_returns_to_the_rules_section_menu(subentry_entry, options_hass):
     entry = subentry_entry()
     entry.add_subentry(
