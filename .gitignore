@@ -9,3 +9,8 @@ __pycache__/
 
 # SDD scratch: progress ledger, task briefs, review packages
 .superpowers/
+
+# Scratch space for review tooling: diffs and before/after copies of the
+# fixture. Swept into a commit once by a careless `git add -A`; ignored so
+# that cannot happen again.
+.review-tmp/
