@@ -1,15 +1,21 @@
 """Proves `blinds_now`'s starter configuration actually decides something.
 
-`_build_starter_config` (`config_flow.py`) lives in a module that imports
-`homeassistant` unconditionally at module level (see that module's own
-docstring for why), so this needs `pytest.importorskip("homeassistant")`
-purely to be able to import the function at all -- nothing asserted below
-needs a running Home Assistant, a real config flow, or any of
-`tests/ha/conftest.py`'s fixtures. `Config`/`World`/`evaluate` are all pure
-(enforced by `tests/test_purity.py`), and everything here does is call those,
+`_build_starter_config` lives in `starter_config.py`, a pure module with no
+`homeassistant` import (enforced by `tests/test_purity.py`'s `PURE_MODULES`
+-- see that module's own docstring for why it was split out of
+`config_flow.py`, which does import `homeassistant` unconditionally at
+module level). Nothing asserted below needs a running Home Assistant, a real
+config flow, or any of `tests/ha/conftest.py`'s fixtures -- `Config`/`World`/
+`evaluate` are all pure too, and everything here does is call those,
 directly, against the in-memory `Config` `_build_starter_config` returns --
 which is why this file lives next to the rest of the pure-core tests rather
-than in `tests/ha/`.
+than in `tests/ha/`, and, since the split, why it needs no
+`pytest.importorskip("homeassistant")` guard at all: before the split this
+was the only test that could tell "the shading rule fires" from "the
+shading rule can never fire" that ran nowhere CI or the system-Python suite
+could see it, since `[dev]` installs only pytest and hypothesis, never
+`homeassistant`, and every one of `config_flow.py`'s consumers is behind
+that same guard. Now this module collects, and runs, on every leg.
 
 Why `tests/ha/test_config_flow.py`'s existing
 `test_blinds_now_summary_creates_a_configuration_that_decides_something`
@@ -27,18 +33,14 @@ config once already had (`sun_hits_target` reading the azimuth from
 instead of `sun.sun`'s own `azimuth` attribute).
 """
 
-import pytest
-
-pytest.importorskip("homeassistant")
-
-from cover_logic.config_flow import (
+from cover_logic.engine import evaluate
+from cover_logic.starter_config import (
     _OPEN_POSITION,
     _OPEN_TILT,
     _SHADE_POSITION,
     _SHADE_TILT,
     _build_starter_config,
 )
-from cover_logic.engine import evaluate
 from cover_logic.world import World
 
 
