@@ -257,10 +257,11 @@ class CoverLogicConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     # Set by `async_step_blinds_now`, consumed and updated by
     # `async_step_blinds_now_facing`; all three are `None` until that branch
-    # is actually picked, and reset to `None` on that first submit (never
-    # partially populated from some earlier, abandoned attempt) so a second
-    # trip through `blinds_now` after backing out never inherits state left
-    # over from a first.
+    # is actually picked, and re-initialised to real values (the picked
+    # entities, a queue copy of them, an empty facings dict) on that first
+    # submit -- never partially populated from some earlier, abandoned
+    # attempt -- so a second trip through `blinds_now` after backing out
+    # never inherits state left over from a first.
     _blinds_now_entities: list[str] | None = None
     _blinds_now_pending: list[str] | None = None
     _blinds_now_facings: dict[str, str] | None = None
