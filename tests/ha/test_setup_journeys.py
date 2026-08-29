@@ -35,6 +35,7 @@ from cover_logic.config_store import config_from_subentries
 from cover_logic.conformance import repo_example_config_path
 from cover_logic.const import CONF_CONFIG_PATH
 from cover_logic.validation import ERROR, validate
+from tests.ha.conftest import FakeEntryConfigEntries
 
 
 def _make_flow(hass):
@@ -113,24 +114,52 @@ def test_blinds_now_result_parses_into_a_config(flow_hass, make_entry):
     assert config.modes
 
 
-def test_blinds_now_result_sets_up_successfully(flow_hass, make_entry):
+def test_blinds_now_result_sets_up_successfully(flow_hass, make_entry, hass_factory):
     """The bug this task closes: `blinds_now` used to leave every blind in no
     zone and no fallback mode, so `async_setup_entry` refused with
     `ConfigEntryNotReady` on every brand-new install that picked the
-    recommended menu option. This is the same "no `ERROR`-severity `validate()`
-    problem" proof `test_from_example_result_has_no_setup_blocking_problems`
-    makes for that branch (see that test's own docstring for why a full
-    `async_setup_entry` run is not built here either) -- applied to the
-    branch that used to fail it.
+    recommended menu option.
+
+    Unlike `test_from_example_result_has_no_setup_blocking_problems` (see
+    that test's own docstring), this drives a genuine `async_setup_entry`
+    rather than stopping at "`validate()` finds nothing" -- the starter
+    configuration this branch builds references exactly one entity,
+    `sun.sun` (the day mode's `when` and its shading rule's
+    `sun_hits_target`, both via `SUN_ENTITY` -- see `config_flow.
+    _build_starter_config`), unlike the example house's alarm panel and
+    temperature sensor conditions that ruled out this same approach there.
+    `hass_factory` (a real, minimal `HomeAssistant`) supplies a working
+    `hass.bus`/`hass.states` for `CoverLogicCoordinator.async_setup`'s
+    `async_track_state_change_event` and `ha_world.build_world` to use --
+    `FakeSetupHass` (`tests/ha/conftest.py`) cannot, by its own docstring,
+    stand in for an entry whose config reads any entity at all. What a bare
+    `HomeAssistant()` still cannot do is stand in for `hass.config_entries`
+    (`async_forward_entry_setups`, in particular) without a real, on-disk
+    config-entry manager, so `.config_entries` is swapped for the same
+    `FakeEntryConfigEntries` fake `FakeSetupHass` itself wraps -- the one
+    real gap between the two, not a reason to give up the real bus/states.
     """
-    flow = _make_flow(flow_hass())
-    result = _run_blinds_now(flow, ["cover.a"], ["north"])
-    entry = _entry_from_create_result(make_entry, result)
 
-    config = config_from_subentries(entry)
-    errors = [problem for problem in validate(config) if problem.severity == ERROR]
+    async def _run():
+        hass = hass_factory()
+        hass.config_entries = FakeEntryConfigEntries()
+        hass.states.async_set("sun.sun", "above_horizon", {"azimuth": 180.0})
+        try:
+            flow = _make_flow(flow_hass())
+            await flow.async_step_blinds_now({"entities": ["cover.a"]})
+            await flow.async_step_blinds_now_facing({"facing": "north"})
+            result = await flow.async_step_blinds_now_summary({})
+            entry = _entry_from_create_result(make_entry, result)
 
-    assert errors == []
+            setup_ok = await async_setup_entry(hass, entry)
+
+            assert setup_ok is True
+            assert isinstance(entry.runtime_data, CoverLogicData)
+            assert set(entry.runtime_data.config.blinds) == {"cover.a"}
+        finally:
+            await hass.async_stop(force=True)
+
+    asyncio.run(_run())
 
 
 # ---------------------------------------------------------------------------
