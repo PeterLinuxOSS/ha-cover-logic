@@ -50,6 +50,7 @@ from cover_logic.config_store import (
     config_from_subentries,
     entry_from_subentry_items,
 )
+from cover_logic.config_schema import ConfigError
 from cover_logic.const import CONF_CONFIG_PATH, DEFAULT_CONFIG_PATH, DOMAIN
 from cover_logic.model import Blind, Config
 from cover_logic.validation import ERROR, validate
@@ -290,6 +291,35 @@ def test_blinds_now_summary_refuses_to_create_an_invalid_generated_configuration
     monkeypatch.setattr("cover_logic.config_flow._build_starter_config", lambda *a, **k: broken)
 
     result = asyncio.run(flow.async_step_blinds_now_summary(None))
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "starter_config_invalid"
+
+
+def test_blinds_now_summary_aborts_instead_of_leaking_a_config_error_on_submit(
+    flow_hass, monkeypatch
+):
+    """The same "this module's own bug" outcome, one step later: force
+    `subentries_from_config` (already `validate()`-clean `config` in hand) to
+    raise `ConfigError`, the same way its own round-trip self-check
+    (`config_store.py`) would if it and `config_from_subentries` ever
+    disagreed with each other -- and confirm the submit branch aborts with
+    `starter_config_invalid` instead of letting that exception escape the
+    flow as Home Assistant's generic "Unknown error occurred". Before this
+    guard existed, this is exactly what happened: nothing in
+    `async_step_blinds_now_summary`'s submit branch caught it.
+    """
+    flow = _make_flow(flow_hass())
+    asyncio.run(flow.async_step_blinds_now({"entities": ["cover.a"]}))
+    asyncio.run(flow.async_step_blinds_now_facing({"facing": "north"}))
+
+    def _raise(config):
+        msg = "subentries_from_config produced subentries that do not round-trip"
+        raise ConfigError(msg)
+
+    monkeypatch.setattr("cover_logic.config_flow.subentries_from_config", _raise)
+
+    result = asyncio.run(flow.async_step_blinds_now_summary({}))
 
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "starter_config_invalid"

@@ -506,6 +506,16 @@ class CoverLogicConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         this flow does not understand well enough to show correctly is not
         one it should silently create either.
 
+        The submit branch below guards `subentries_from_config` the same
+        way, for the same reason: its own round-trip self-check
+        (`config_store.py`) can raise `ConfigError` on a `Config` that has
+        already passed `validate()` clean, which by that function's own
+        docstring means `subentries_from_config`/`config_from_subentries`
+        themselves disagree with each other, not that `config` is wrong.
+        Same bug class, same `starter_config_invalid` abort -- an
+        unhandled `ConfigError` here would otherwise escape as Home
+        Assistant's generic "Unknown error occurred" instead.
+
         Description-only summary before the one confirming submit --
         `_describe_starter_config` -- is what makes this step answer "what
         was created and why" instead of a bare "done", the plan's own
@@ -522,7 +532,27 @@ class CoverLogicConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return self.async_abort(reason="starter_config_invalid")
 
         if user_input is not None:
-            items = subentries_from_config(config)
+            try:
+                items = subentries_from_config(config)
+            except ConfigError as err:
+                # Same bug class as the `validate()` guard above, caught one
+                # step later: `subentries_from_config`'s own round-trip
+                # self-check (`config_store.py`) raises `ConfigError` if what
+                # it is about to hand back does not read back to an equal
+                # `Config` -- by its own docstring, that can only be a bug in
+                # `subentries_from_config`/`config_from_subentries`
+                # themselves, never in this already-`validate()`-clean
+                # `config`. Left uncaught, this `ConfigError` would escape
+                # the flow as Home Assistant's generic "Unknown error
+                # occurred" with a traceback instead of the same loud,
+                # actionable abort the sibling guard above already gives.
+                _LOGGER.error(
+                    "blinds_now generated a starter configuration "
+                    "subentries_from_config could not round-trip: %s",
+                    err,
+                )
+                return self.async_abort(reason="starter_config_invalid")
+
             subentries = [
                 _subentry_data(subentry_type, data, _title_for(subentry_type, data))
                 for subentry_type, data in items
