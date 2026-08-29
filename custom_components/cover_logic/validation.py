@@ -176,17 +176,23 @@ def _check_rule_lists(config: Config) -> list[Problem]:
       report the identical complaint N times;
     - a zone's own list's internal unreachability is checked per zone
       (unchanged from before inheritance existed);
-    - a default row a *specific* zone's own catch-all shadows is new
-      (`_check_default_shadowed_by_zone` below) and is a warning attributed
-      to that zone, not the default -- the same default row may still be
-      reachable through a different zone that has no catch-all of its own.
+    - a default row a *specific* zone's own catch-all shadows is collected
+      per mode across every zone (`_zones_shadowing_each_default_row` below)
+      and reported once per shadowed row, naming every zone that shadows it,
+      not once per shadowing zone -- see that function's own docstring for
+      why the naive per-zone version this replaced made the warning count
+      scale with the number of zones for what is a single dead rule.
     """
     out: list[Problem] = []
     for mode in config.modes:
         default_key = f"{mode.id}.{RULE_DEFAULT_ZONE}"
         default_rules = config.rules.get(default_key)
+        already_dead: set[int] = set()
         if default_rules:
             out += _check_unreachable_within(default_key, default_rules)
+            already_dead = _unreachable_indices(default_rules)
+
+        shadowed_by: dict[int, list[str]] = {}
 
         for zone_id in config.zones:
             key = f"{mode.id}.{zone_id}"
@@ -204,7 +210,8 @@ def _check_rule_lists(config: Config) -> list[Problem]:
             if own_rules:
                 out += _check_unreachable_within(key, own_rules)
             if default_rules:
-                out += _check_default_shadowed_by_zone(key, own_rules, default_key, default_rules)
+                for index in _shadowed_default_indices(own_rules, default_rules):
+                    shadowed_by.setdefault(index, []).append(key)
             if not any(r.when is None and r.events is None for r in effective):
                 out.append(
                     Problem(
@@ -214,6 +221,31 @@ def _check_rule_lists(config: Config) -> list[Problem]:
                         f"some states fall through to keep/keep silently",
                     )
                 )
+
+        out += _check_default_rows_shadowed_by_zones(default_key, shadowed_by, already_dead)
+    return out
+
+
+def _unreachable_indices(rules) -> set[int]:
+    """Indices in `rules` an earlier unconditional rule in the same list already makes dead.
+
+    The one traversal both `_check_unreachable_within` (a list checked
+    against itself) and `_check_rule_lists` (a mode's default list checked
+    against itself, once, before any zone-shadowing is even considered) read
+    -- so "is this row already dead on its own account" is answered the same
+    way everywhere it is asked, never re-derived.
+    """
+    out: set[int] = set()
+    catch_all_scopes: list[frozenset | None] = []
+
+    for index, rule in enumerate(rules):
+        for scope in catch_all_scopes:
+            if scope is None or (rule.events is not None and rule.events <= scope):
+                out.add(index)
+                break
+        if rule.when is None:
+            catch_all_scopes.append(rule.events)
+
     return out
 
 
@@ -224,66 +256,82 @@ def _check_unreachable_within(key: str, rules) -> list[Problem]:
     that a rule list checked for internal unreachability -- a zone's own
     list, or a mode's shared default list -- is walked the same way whether
     inheritance is involved for that particular (mode, zone) or not. See
-    `_check_default_shadowed_by_zone` for the other half: a default row a
+    `_shadowed_default_indices` for the other half: a default row a
     *specific zone's* own catch-all shadows, which is not internal to either
     list and so cannot be found by walking one list alone.
     """
-    out: list[Problem] = []
-    catch_all_scopes: list[frozenset | None] = []
-
-    for index, rule in enumerate(rules):
-        for scope in catch_all_scopes:
-            if scope is None or (rule.events is not None and rule.events <= scope):
-                out.append(
-                    Problem(
-                        WARNING,
-                        "unreachable_rule",
-                        f"{key}#{index} can never fire; an earlier rule "
-                        f"with no condition already matches everything",
-                    )
-                )
-                break
-        if rule.when is None:
-            catch_all_scopes.append(rule.events)
-
-    return out
+    return [
+        Problem(
+            WARNING,
+            "unreachable_rule",
+            f"{key}#{index} can never fire; an earlier rule "
+            f"with no condition already matches everything",
+        )
+        for index in sorted(_unreachable_indices(rules))
+    ]
 
 
-def _check_default_shadowed_by_zone(
-    zone_key: str, own_rules: tuple | None, default_key: str, default_rules: tuple
-) -> list[Problem]:
-    """A default row this zone's own catch-all(s) already make unreachable, for this zone only.
+def _shadowed_default_indices(own_rules: tuple | None, default_rules: tuple) -> set[int]:
+    """Indices into `default_rules` this zone's own catch-all(s) already make unreachable.
 
-    Deliberately a warning, not an error, and deliberately the
-    `unreachable_rule` code rather than a new one -- see `engine._apply_rules`
-    for why a zone's own list runs to completion before its mode's defaults
-    are ever considered, which is what makes an unconditional rule in
-    `own_rules` swallow every default row it is not narrower than. This is
-    the *zone's* rule shadowing the mode's shared default, not a mistake in
-    the default itself: a different zone with no catch-all of its own, or a
-    narrower one, may still reach the identical default row -- so this is
-    reported once per shadowing zone, attributed to that zone's key, not to
-    `default_key` (see `_check_unreachable_within` above for the default
-    list's own, zone-independent internal check).
+    See `_check_default_rows_shadowed_by_zones` for why this returns indices
+    to be collected across every zone before any `Problem` is built, rather
+    than reporting here directly: a default row shadowed by three zones must
+    become one `Problem` naming all three, not three identical-looking ones,
+    or the warning count would scale with the number of zones for what is a
+    single dead rule -- exactly the multiplication this pair of functions
+    replaces `_check_default_shadowed_by_zone` to avoid. This is the *zone's*
+    rule shadowing the mode's shared default, not a mistake in the default
+    itself: a different zone with no catch-all of its own, or a narrower
+    one, may still reach the identical default row.
     """
     catch_all_scopes = [rule.events for rule in (own_rules or ()) if rule.when is None]
     if not catch_all_scopes:
-        return []
+        return set()
 
-    out: list[Problem] = []
+    out: set[int] = set()
     for index, rule in enumerate(default_rules):
         for scope in catch_all_scopes:
             if scope is None or (rule.events is not None and rule.events <= scope):
-                out.append(
-                    Problem(
-                        WARNING,
-                        "unreachable_rule",
-                        f"{default_key}#{index} can never fire for {zone_key!r}: "
-                        f"its own rules already have a catch-all",
-                    )
-                )
+                out.add(index)
                 break
     return out
+
+
+def _check_default_rows_shadowed_by_zones(
+    default_key: str, shadowed_by: dict[int, list[str]], already_dead: set[int]
+) -> list[Problem]:
+    """One `Problem` per default row shadowed by at least one zone, naming every shadowing zone.
+
+    `shadowed_by` maps a default row's index to every `(mode.zone)` key whose
+    own catch-all(s) make that row unreachable *for that zone* --
+    `_check_rule_lists` builds it across all of a mode's zones before
+    calling this, instead of calling `_shadowed_default_indices` once per
+    zone and reporting immediately, which is what used to turn one dead
+    default row into one warning per zone that inherits it (seven zones,
+    one broken rule, seven warnings -- the health overview's whole point is
+    to say "one thing is wrong here", and a count that grows with the house
+    buries that instead of surfacing it).
+
+    `already_dead` -- rows `_unreachable_indices(default_rules)` already
+    flags as unreachable on the default list's own account, regardless of
+    any zone -- are skipped here: a row already reported dead at the mode
+    level is not made "more dead" by also being shadowed by particular
+    zones, and reporting it twice under two different codes/messages for
+    the same underlying row would be exactly the kind of noise this fix
+    exists to remove.
+    """
+    return [
+        Problem(
+            WARNING,
+            "unreachable_rule",
+            f"{default_key}#{index} can never fire for "
+            f"{', '.join(repr(k) for k in sorted(keys))}: "
+            f"their own rules already have a catch-all",
+        )
+        for index, keys in sorted(shadowed_by.items())
+        if index not in already_dead
+    ]
 
 
 def _check_circular_condition_refs(config: Config) -> list[Problem]:

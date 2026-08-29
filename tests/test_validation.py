@@ -199,6 +199,94 @@ def test_an_unreachable_row_inside_a_shared_default_is_reported_once_not_per_zon
     assert "noc.*#1" in matches[0].message
 
 
+THREE_ZONES_SHADOW_TWO_DEFAULTS = """
+blinds: [{entity: cover.a}, {entity: cover.b}, {entity: cover.c}]
+zones:
+  z1: {members: [cover.a]}
+  z2: {members: [cover.b]}
+  z3: {members: [cover.c]}
+modes: [{id: m}]
+conditions: {}
+values: {}
+rules:
+  "m.*":
+    - {then: {position: 50}}
+    - {then: {position: 60}}
+  m.z1: [{then: {position: 1}}]
+  m.z2: [{then: {position: 2}}]
+  m.z3: [{then: {position: 3}}]
+"""
+
+
+def test_a_default_shadowed_by_every_zone_is_one_warning_not_one_per_zone():
+    """The exact shape a code review caught: one mode-wide default plus a
+    second, dead default row, and three zones each with their own catch-all.
+    Before this fix, `_check_default_shadowed_by_zone` reported the shadow
+    once per shadowing zone -- three zones turned one broken default into
+    three near-identical warnings, and a seven-zone house (the live fixture)
+    would have turned it into seven, burying the fact that only one rule is
+    actually wrong. The count must not grow with the number of zones.
+    """
+    problems = validate(load_config(THREE_ZONES_SHADOW_TWO_DEFAULTS))
+    matches = [p for p in problems if p.code == "unreachable_rule"]
+
+    # One warning for "m.*#1" (already dead on the default list's own
+    # account -- a catch-all before it, no zone involved) and exactly one
+    # more for "m.*#0" (shadowed by all three zones' own catch-alls) -- not
+    # one "m.*#0" warning per zone, and not "m.*#1" reported again just
+    # because every zone's own catch-all also shadows it.
+    assert len(matches) == 2
+    shadow = next(m for m in matches if "m.*#0" in m.message)
+    assert "z1" in shadow.message
+    assert "z2" in shadow.message
+    assert "z3" in shadow.message
+    assert not any(m is not shadow and "m.*#0" in m.message for m in matches)
+
+
+# --- Coverage gap: `no_catch_all` over the zone's own + inherited default list --
+#
+# Neither direction was pinned before: a zone whose own rules are entirely
+# conditional and whose mode default is also entirely conditional must still
+# warn (nothing in the concatenated effective list can ever fall through
+# safely); a zone whose own rules are conditional-only but whose mode default
+# supplies the catch-all must not warn (the mode default is exactly what
+# `no_catch_all` is designed to see, via the same concatenation
+# `_check_rule_lists` already builds for `missing_rule_list`).
+
+BOTH_OWN_AND_DEFAULT_ARE_CONDITIONAL_ONLY = """
+blinds: [{entity: cover.a}]
+zones: {z: {members: [cover.a]}}
+modes: [{id: noc}]
+conditions:
+  never: {condition: state, entity_id: nothing.here, state: "on"}
+values: {}
+rules:
+  noc.z: [{if: !ref never, then: {position: 100}}]
+  "noc.*": [{if: !ref never, then: {position: 0}}]
+"""
+
+
+def test_no_catch_all_fires_when_neither_the_zones_own_rules_nor_the_default_has_one():
+    assert "no_catch_all" in codes(BOTH_OWN_AND_DEFAULT_ARE_CONDITIONAL_ONLY)
+
+
+OWN_CONDITIONAL_DEFAULT_HAS_THE_CATCH_ALL = """
+blinds: [{entity: cover.a}]
+zones: {z: {members: [cover.a]}}
+modes: [{id: noc}]
+conditions:
+  never: {condition: state, entity_id: nothing.here, state: "on"}
+values: {}
+rules:
+  noc.z: [{if: !ref never, then: {position: 100}}]
+  "noc.*": [{then: {position: 0}}]
+"""
+
+
+def test_no_catch_all_stays_silent_when_the_default_supplies_the_catch_all():
+    assert "no_catch_all" not in codes(OWN_CONDITIONAL_DEFAULT_HAS_THE_CATCH_ALL)
+
+
 def test_direct_self_referencing_condition_is_an_error():
     """A condition that directly refers to itself."""
     text = BASE.replace(
