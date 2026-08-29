@@ -181,10 +181,23 @@ _COMPASS_TO_AZIMUTH: dict[str, float] = {
 }
 
 _FACING_FIELD = "facing"
+_FACING_TRANSLATION_KEY = "facing"
+# `translation_key` (not just each option's raw internal id, `list(
+# _COMPASS_TO_AZIMUTH)`) is what makes this dropdown's *labels* translate --
+# every other `SelectSelector` in this codebase lists entity ids or a
+# user-chosen id, which are inherently untranslatable, so this is the one
+# spot with a fixed, closed set of options worth naming. Home Assistant
+# resolves each option's shown label from `strings.json["selector"]
+# [_FACING_TRANSLATION_KEY]["options"][<option>]` (and the matching
+# `translations/*.json` entry) rather than the option string itself.
 _FACING_SCHEMA = vol.Schema(
     {
         vol.Required(_FACING_FIELD, default="north"): selector.SelectSelector(
-            selector.SelectSelectorConfig(options=list(_COMPASS_TO_AZIMUTH), sort=False)
+            selector.SelectSelectorConfig(
+                options=list(_COMPASS_TO_AZIMUTH),
+                sort=False,
+                translation_key=_FACING_TRANSLATION_KEY,
+            )
         ),
     }
 )
@@ -325,8 +338,21 @@ def _describe_starter_config(entities: list[str], facings: dict[str, str]) -> st
     does: change one function's behaviour and the other's wording goes
     stale silently. A future change to either should keep reading the other
     before touching wording, not treat them as independent.
+
+    Does not repeat each blind's facing next to its name (an earlier version
+    of this text printed the raw `_COMPASS_TO_AZIMUTH` key, e.g. "(facing
+    north)") -- `facings` is still accepted for that reason, but no longer
+    read here. This is a plain, synchronous helper with no `hass`/language
+    available to it, so it cannot resolve `_FACING_TRANSLATION_KEY`'s
+    localized label the way the dropdown that collected the answer does
+    (see `_FACING_SCHEMA`'s own comment); printing the internal compass id
+    verbatim here would reintroduce, in this summary, exactly the
+    untranslatable-label problem that dropdown exists to avoid. The user
+    just answered this question, one screen per blind, immediately before
+    reaching this one -- so this summary's job is to say what will happen,
+    not to redisplay an answer already given on a translated screen.
     """
-    blind_list = "\n".join(f"- {entity} (facing {facings[entity]})" for entity in entities)
+    blind_list = "\n".join(f"- {entity}" for entity in entities)
     return (
         f"{blind_list}\n\n"
         f"At night, nothing moves.\n"

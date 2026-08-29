@@ -58,6 +58,20 @@
       "starter_config_invalid": "The starter configuration this step generated failed its own checks -- this is a bug in Cover Logic itself, not something you did. Please report it, then use \"Start empty\" or \"Load a configuration from a YAML file\" instead."
     }
   },
+  "selector": {
+    "facing": {
+      "options": {
+        "north": "North",
+        "northeast": "Northeast",
+        "east": "East",
+        "southeast": "Southeast",
+        "south": "South",
+        "southwest": "Southwest",
+        "west": "West",
+        "northwest": "Northwest"
+      }
+    }
+  },
   "config_subentries": {
     "blind": {
       "entry_type": "Blind",

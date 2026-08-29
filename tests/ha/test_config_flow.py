@@ -180,6 +180,27 @@ def test_blinds_now_facing_asks_once_per_blind_in_order(flow_hass):
     assert second["description_placeholders"] == {"blind": "cover.b"}
 
 
+def test_blinds_now_facing_options_are_translatable(flow_hass):
+    """The compass dropdown is the one closed, fixed-option `SelectSelector`
+    in this flow (see `_FACING_SCHEMA`'s own comment): every other
+    `SelectSelector` here lists entity ids or a user-chosen id, which cannot
+    be translated, so this is the one spot a missing `translation_key` would
+    leave a Slovak user reading raw English-ish internal ids ("north",
+    "southeast", ...) under a translated title. Home Assistant resolves each
+    option's label from `strings.json`/`translations/*.json`'s
+    `selector.facing.options` only when this is set.
+    """
+    flow = _make_flow(flow_hass())
+    asyncio.run(flow.async_step_blinds_now({"entities": ["cover.a"]}))
+
+    result = asyncio.run(flow.async_step_blinds_now_facing(None))
+
+    (validator,) = [
+        value for key, value in result["data_schema"].schema.items() if key.schema == "facing"
+    ]
+    assert validator.config.get("translation_key") == "facing"
+
+
 def test_blinds_now_facing_moves_to_the_summary_once_every_blind_is_answered(flow_hass):
     flow = _make_flow(flow_hass())
     asyncio.run(flow.async_step_blinds_now({"entities": ["cover.a", "cover.b"]}))
@@ -190,8 +211,14 @@ def test_blinds_now_facing_moves_to_the_summary_once_every_blind_is_answered(flo
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "blinds_now_summary"
     summary = result["description_placeholders"]["summary"]
-    assert "cover.a (facing north)" in summary
-    assert "cover.b (facing east)" in summary
+    assert "- cover.a" in summary
+    assert "- cover.b" in summary
+    # No raw internal compass id repeated here -- this plain, synchronous
+    # helper has no `hass`/language to resolve `_FACING_TRANSLATION_KEY`'s
+    # localized label with (see `_describe_starter_config`'s own docstring),
+    # so it does not print the untranslated one either. The facing question
+    # was already asked, and answered, one translated screen ago.
+    assert "facing" not in summary.lower()
     # Plain language: getting through this flow must never require these
     # three words (see the phase 6 task 4 plan's own "concepts are not
     # shown until needed").

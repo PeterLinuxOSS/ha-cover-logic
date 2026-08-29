@@ -58,6 +58,20 @@
       "starter_config_invalid": "Vygenerované východiskové nastavenie neprešlo vlastnou kontrolou -- ide o chybu v Cover Logic, nie vo vašom zadaní. Nahláste to, prosím, a namiesto toho použite možnosť „Začať naprázdno“ alebo „Načítať konfiguráciu zo súboru YAML“."
     }
   },
+  "selector": {
+    "facing": {
+      "options": {
+        "north": "Sever",
+        "northeast": "Severovýchod",
+        "east": "Východ",
+        "southeast": "Juhovýchod",
+        "south": "Juh",
+        "southwest": "Juhozápad",
+        "west": "Západ",
+        "northwest": "Severozápad"
+      }
+    }
+  },
   "config_subentries": {
     "blind": {
       "entry_type": "Žalúzia",
