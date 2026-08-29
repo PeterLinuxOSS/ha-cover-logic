@@ -177,7 +177,7 @@ def _check_rule_lists(config: Config) -> list[Problem]:
     - a zone's own list's internal unreachability is checked per zone
       (unchanged from before inheritance existed);
     - a default row a *specific* zone's own catch-all shadows is collected
-      per mode across every zone (`_zones_shadowing_each_default_row` below)
+      per mode across every zone (`_check_default_rows_shadowed_by_zones` below)
       and reported once per shadowed row, naming every zone that shadows it,
       not once per shadowing zone -- see that function's own docstring for
       why the naive per-zone version this replaced made the warning count
