@@ -453,8 +453,11 @@ class CoverLogicConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         screen: a form's fields come from a `vol.Schema` built with literal
         `vol.Required("...")` calls (`tests/test_translations.py`'s
         `test_top_level_config_flow_step_fields_are_declared` derives every
-        step's translatable fields by walking that step method's own source
-        for exactly that literal shape), so a field name assembled at
+        step's translatable fields this way -- walking not just each step
+        method's own source for that literal shape, but also, via
+        `_module_level_vol_schemas`, the body of any module-level `vol.Schema`
+        constant a step method merely refers to by name, which is exactly
+        what `_FACING_SCHEMA` below is), so a field name assembled at
         runtime per entity (`vol.Required(entity_id)`) would have no static
         label to check against and would be invisible to that guard. Reusing
         one fixed field (`_FACING_FIELD`) and one fixed `step_id`, asked once
