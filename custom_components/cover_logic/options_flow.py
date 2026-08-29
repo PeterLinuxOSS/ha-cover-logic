@@ -814,10 +814,21 @@ class CoverLogicOptionsFlow(OptionsFlow):
         items = _items(entry, subentry_type)
         errors: dict[str, str] = {}
         if user_input is not None:
-            if user_input.get(_CONFIRM_FIELD):
+            # Home Assistant validates the submitted id against the schema it
+            # cached when this form was rendered, so a pick stays "valid" after
+            # the subentry itself is gone -- removed in another tab, by
+            # `import_config`, or by this same user elsewhere. Handing that id
+            # to `async_remove_subentry` raises `UnknownSubEntry`, which reaches
+            # the user as a 500 rather than as something the form can say. The
+            # same race is guarded in `async_step_zone_rules` and
+            # `_render_type_form`; this was the third door into it.
+            if user_input[_PICK_FIELD] not in entry.subentries:
+                errors["base"] = "subentry_vanished"
+            elif user_input.get(_CONFIRM_FIELD):
                 self.hass.config_entries.async_remove_subentry(entry, user_input[_PICK_FIELD])
                 return await self._show_section_menu()
-            errors["base"] = "confirmation_required"
+            else:
+                errors["base"] = "confirmation_required"
 
         schema = _pick_schema(items).extend(
             {vol.Required(_CONFIRM_FIELD, default=False): selector.BooleanSelector()}

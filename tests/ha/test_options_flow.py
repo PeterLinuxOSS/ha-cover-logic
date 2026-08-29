@@ -270,6 +270,32 @@ def test_remove_requires_confirmation_before_deleting(subentry_entry, options_ha
     assert sid in entry.subentries
 
 
+def test_remove_of_a_subentry_that_vanished_is_a_form_error_not_a_crash(
+    subentry_entry, options_hass
+):
+    """The third door into the same race, after `edit_form` and `zone_rules`.
+
+    Home Assistant validates the submitted id against the schema cached when
+    the form was rendered, so the pick survives the subentry itself being
+    removed in another tab or by `import_config`. Handing that id straight to
+    `async_remove_subentry` raises `UnknownSubEntry`, which the user meets as
+    a 500 rather than as something the form can explain. Confirmation is
+    given here on purpose: without the guard this is exactly the path that
+    reaches the removal call.
+    """
+    entry = subentry_entry()
+    sid = entry.add_subentry(ZONE, {"id": "terasa", "members": []})
+    flow = _make_flow(options_hass(entry))
+    asyncio.run(flow.async_step_zones(None))
+
+    del entry.subentries[sid]
+
+    result = _form(asyncio.run(flow.async_step_remove({"subentry_id": sid, "confirm": True})))
+
+    assert result["step_id"] == "remove"
+    assert result["errors"]["base"] == "subentry_vanished"
+
+
 def test_remove_confirmed_deletes_the_subentry_and_returns_to_the_section_menu(
     subentry_entry, options_hass
 ):
