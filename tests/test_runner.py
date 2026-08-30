@@ -48,6 +48,7 @@ from cover_logic.runner import (
     _service_for_tilt,
     _suppressed_fields,
     _suppressions,
+    current_position,
 )
 
 BLIND = Blind(entity="cover.a")
@@ -183,6 +184,19 @@ def test_reported_reads_both_axes_and_truncates_a_float():
     assert _reported(state, "current_position") == 34
     assert _reported(state, "current_tilt_position") == 50
     assert _reported(state, "current_missing") is None
+
+
+def test_current_position_is_the_public_name_for_the_same_read():
+    """`coordinator._positions` builds `guards.review`'s map through this.
+
+    It must be the *same* answer the runner acts on, unreadable states
+    included: a directional guard judged against a different number than the
+    one the runner sees could pass a command the guard was there to stop.
+    """
+    assert current_position(FakeState(attributes={"current_position": 34.9})) == 34
+    assert current_position(FakeState(state="unavailable")) is None
+    assert current_position(None) is None
+    assert current_position(FakeState(attributes={})) is None
 
 
 # ---------------------------------------------------------------------------
