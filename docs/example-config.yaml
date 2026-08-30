@@ -87,6 +87,27 @@ conditions:
   sun_on_this_facade:
     condition: sun_hits_target
 
+  # The three inputs the guards at the end of this file read. A guard's
+  # `when` is an ordinary condition body, so it can be a `!ref` to a named
+  # one exactly like a mode's `when` or a rule's `if`.
+  balcony_door_open:
+    condition: state
+    entity_id: binary_sensor.balcony_door
+    state: "on"
+
+  # `default: 0` is "no wind" -- a dead anemometer must not fake a gale and
+  # throw every blind open, which is what this guard does when it matches.
+  high_wind:
+    condition: numeric_state
+    entity_id: sensor.wind_speed
+    default: 0
+    above: 60
+
+  airing_the_plants:
+    condition: state
+    entity_id: input_boolean.airing_the_plants
+    state: "on"
+
 # --- Helper-backed values ------------------------------------------------
 # A `!ref` in an action's `position`/`tilt` reads a Home Assistant helper at
 # decision time -- truncated to an int, and NOT clamped to 0..100 (see
@@ -163,3 +184,66 @@ rules:
 
   home.kitchen:
     - then: { position: keep }
+
+# --- Guards -----------------------------------------------------------------
+# Safety interlocks. A guard is a condition, a policy, and what it applies to
+# -- nothing more. It reuses the same condition dialect as everything above
+# (`when`, `!ref` included), because a second condition language inside guards
+# would be a second thing to keep correct.
+#
+# Guards resolve FIRST MATCH WINS, exactly like rules: the order they are
+# written in is the only referee between two that would contradict each other,
+# and there are deliberately no numeric priorities. Wind goes first here for
+# that reason -- it is the one interlock that has to hold even when everything
+# below it is misconfigured.
+#
+# Fields:
+#   policy      skip (do not move it) | defer (move it later) | force (move it
+#               now, whatever was decided)
+#   applies_to  closing | opening | any -- which movement the guard is about.
+#               `closing` means a DECREASING POSITION and nothing else: a
+#               blind's slats moving are never the hazard, being driven down
+#               onto an open door is.
+#   stage       output (judge the action the engine decided -- the default) |
+#               input (drop the target before the engine is even asked, so no
+#               decision is made for it at all)
+#   targets     blind entity ids and/or zone ids; absent means every blind
+#   when        condition body, or absent for "always"
+#   max_wait /  `defer` only, both required. `max_wait: null` means "wait
+#   on_timeout  indefinitely" and is a value, not an omission. `on_timeout`
+#               has no default on purpose: `proceed` (do it anyway) and
+#               `abandon` (drop the rest) are opposites, and both are in real
+#               use, so guessing would silently pick one of them.
+#   recheck_every  `defer` only; how often a pending wait is re-examined.
+#               Defaults to 900 s. This is what makes a deferred action
+#               survive a restart without a second, hand-written watchdog
+#               beside it -- restart resilience is a property of the guard.
+#   then        `force` only: the action to impose.
+guards:
+  - name: high wind throws everything open
+    policy: force
+    applies_to: any
+    when: !ref high_wind
+    then: { position: 100, tilt: 100 }
+
+  - name: never lower the balcony blind onto an open door
+    policy: skip
+    applies_to: closing # raising it is always safe
+    targets: [cover.living_room_balcony]
+    when: !ref balcony_door_open
+
+  - name: close the balcony blind once the door is shut, up to 90 minutes later
+    policy: defer
+    applies_to: closing
+    targets: [living_room]
+    when: !ref balcony_door_open
+    max_wait: 5400
+    on_timeout: abandon # still open after 90 minutes: leave it, do not force it
+    recheck_every: 300
+
+  - name: leave the kitchen out of it entirely while the plants are being aired
+    policy: skip
+    stage: input # the engine is never asked about this zone at all
+    applies_to: any
+    targets: [kitchen]
+    when: !ref airing_the_plants

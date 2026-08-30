@@ -11,7 +11,7 @@ from cover_logic.config_schema import (
     load_config_file,
     referenced_entities,
 )
-from cover_logic.model import KEEP, Action, Ref
+from cover_logic.model import KEEP, UNSET, Action, Ref
 from cover_logic.world import World
 
 MINIMAL = """
@@ -177,7 +177,9 @@ conditions:
     }
 
 
-# --- Fix 3: unknown keys must raise, but not inside condition bodies/guards -
+# --- Fix 3: unknown keys must raise, but not inside condition bodies -------
+# (Guards used to be exempt here too, for want of a schema; they are strictly
+# key-checked now -- see the guards section at the end of this file.)
 
 
 def test_unknown_top_level_key_raises_config_error():
@@ -497,7 +499,24 @@ rules:
   bezny_den.izba:
     - {then: {position: keep, tilt: keep}}
 guards:
-  - some_future_guard
+  - name: do not drop the terrace blind onto an open door
+    policy: skip
+    applies_to: closing
+    stage: input
+    targets: [terasa]
+    when: !ref cover_down
+  - name: wait for the sauna
+    policy: defer
+    applies_to: closing
+    stage: output
+    targets: [cover.a]
+    max_wait: null
+    on_timeout: abandon
+    recheck_every: 600
+  - policy: force
+    applies_to: any
+    stage: output
+    then: {position: !ref kvety_poz, tilt: keep}
 """
 
 
@@ -512,7 +531,11 @@ def test_dump_config_load_config_round_trips_every_shape():
     `config_schema.RefTag`'s own docstring) -- a `!ref` nested inside another
     condition's own body, a `!ref` value axis sitting next to a plain int and
     a `keep` axis, `events`, `name`, non-default blind fields, two zones (one
-    with `occupants`), and a non-empty `guards` list.
+    with `occupants`), and three guards between them covering every guard
+    field: a `!ref` condition in a `when`, a `!ref` value inside a `force`'s
+    `then`, `targets` naming a zone and naming a blind, `max_wait: null`
+    (which must survive as `null`, not as an absent key -- see
+    `model.Unset`), an explicit `recheck_every`, and a guard with no `name`.
     """
     original = load_config(ROUND_TRIP_TEXT)
     reloaded = load_config(dump_config(original))
@@ -528,8 +551,12 @@ def test_dump_config_keeps_the_ref_tag_for_both_a_condition_and_a_value_slot():
     below for the case where getting this wrong is otherwise invisible.
     """
     dumped = dump_config(load_config(ROUND_TRIP_TEXT))
-    # mode's when, the nested condition ref, the rule's if, and the value ref.
-    assert dumped.count("!ref") == 4
+    # mode's when, the nested condition ref, the rule's if, the value ref,
+    # plus a guard's `when` (a condition ref) and a guard's `then` (a value
+    # ref) -- the two slots a guard has that are `!ref`-capable, and the two
+    # that would silently become plain strings if `guard_to_dict` forgot to
+    # route them through `unparse_condition`/`unparse_axis`.
+    assert dumped.count("!ref") == 6
 
 
 def test_dump_config_writes_keep_as_the_string_keep_not_the_python_repr():
@@ -624,3 +651,171 @@ def test_dump_config_of_an_empty_config_reloads_to_an_equal_config():
     """
     empty = load_config("{}")
     assert load_config(dump_config(empty)) == empty
+
+
+# --- guards ------------------------------------------------------------------
+# Shape only lives here; whether a guard makes *sense* (a policy that exists,
+# a `defer` that says what to do on timeout, targets that name something real)
+# is `validation.py`'s -- see `tests/test_validation.py`'s own guards section.
+# The split matters: a house with one questionable guard must still load, so
+# it can be repaired through the UI rather than leaving the integration unable
+# to start.
+
+GUARDS_BASE = """
+blinds:
+  - entity: cover.a
+zones:
+  z: {members: [cover.a]}
+modes:
+  - {id: den}
+conditions:
+  door_open: {condition: state, entity_id: binary_sensor.door, state: "on"}
+values:
+  poz: {entity: input_number.poz, default: 34}
+rules:
+  den.z:
+    - {then: {position: keep}}
+guards:
+"""
+
+
+def guards_of(body: str):
+    return load_config(GUARDS_BASE + body).guards
+
+
+def test_a_guard_entry_with_an_unknown_key_is_rejected():
+    """Guards are strictly key-checked like every other structure this module
+    owns the schema of. They used to be exempt only because the schema did not
+    exist yet; a `polcy:` typo silently doing nothing is exactly the failure a
+    safety interlock cannot afford.
+    """
+    with pytest.raises(ConfigError, match="unknown key"):
+        guards_of("  - {policy: skip, polcy: skip}\n")
+
+
+def test_a_guard_without_a_policy_is_rejected():
+    with pytest.raises(ConfigError, match="without 'policy'"):
+        guards_of("  - {applies_to: closing}\n")
+
+
+def test_guards_must_be_a_list_of_mappings():
+    with pytest.raises(ConfigError, match="guard entry must be a mapping"):
+        guards_of("  - just_a_string\n")
+
+
+def test_an_absent_max_wait_and_an_explicit_null_are_different_configurations():
+    """The distinction decision 3 of the design brief turns on.
+
+    `max_wait: null` means "wait as long as it takes", which two of the
+    house's five defers genuinely mean; an absent `max_wait` means the author
+    never said. Collapsing the two would make it impossible for `validation`
+    to require that a `defer` states its wait, since the deliberate unlimited
+    wait would be spelled the same way as the omission.
+    """
+    absent = guards_of("  - {policy: defer, on_timeout: proceed}\n")[0]
+    explicit = guards_of("  - {policy: defer, max_wait: null, on_timeout: proceed}\n")[0]
+
+    assert absent.max_wait is UNSET
+    assert explicit.max_wait is None
+    assert absent != explicit
+
+
+def test_a_defer_always_carries_a_recheck_interval_even_when_unwritten():
+    """Restart resilience is a property of the guard, not a second object.
+
+    `wait_for_trigger` does not survive a restart, and of the house's five
+    deferred waits exactly one has a watchdog automation paired with it by
+    hand -- the bedroom's had to be built after the gap was found. So every
+    parsed `defer` carries the interval a runner needs, whether its author
+    wrote one or not, and a runner reading `guard.recheck_every` never has to
+    invent a fallback of its own.
+    """
+    assert (
+        guards_of("  - {policy: defer, max_wait: 90, on_timeout: proceed}\n")[0].recheck_every
+        == 900
+    )
+
+
+def test_an_explicit_recheck_interval_is_not_overwritten_by_the_default():
+    assert (
+        guards_of("  - {policy: defer, max_wait: 90, on_timeout: proceed, recheck_every: 60}\n")[
+            0
+        ].recheck_every
+        == 60
+    )
+
+
+def test_a_policy_that_holds_no_state_gets_no_recheck_interval():
+    """A `skip` is re-decided from scratch every time the engine runs, so it
+    has nothing a restart could lose and nothing to re-check.
+    """
+    assert guards_of("  - {policy: skip}\n")[0].recheck_every is None
+
+
+def test_guard_defaults_are_the_widest_reading_not_the_narrowest():
+    guard = guards_of("  - {policy: skip}\n")[0]
+    assert guard.applies_to == "any"
+    assert guard.stage == "output"
+    assert guard.targets == ()
+    assert guard.when is None
+
+
+def test_a_guard_when_resolves_refs_like_every_other_condition_slot():
+    guard = guards_of("  - {policy: skip, when: !ref door_open}\n")[0]
+    assert guard.when == {"condition": "ref", "name": "door_open"}
+
+
+def test_a_guard_when_naming_an_unknown_condition_is_rejected_at_parse_time():
+    with pytest.raises(ConfigError, match="unknown condition ref"):
+        guards_of("  - {policy: skip, when: !ref nope}\n")
+
+
+def test_a_force_action_takes_a_value_ref_like_a_rule_does():
+    guard = guards_of("  - {policy: force, then: {position: !ref poz}}\n")[0]
+    assert guard.then == Action(position=Ref(entity="input_number.poz", default=34), tilt=KEEP)
+
+
+def test_a_force_action_is_range_checked_like_a_rules_action():
+    with pytest.raises(ConfigError, match=re.escape("action axis must be 0..100")):
+        guards_of("  - {policy: force, then: {position: 250}}\n")
+
+
+def test_a_wait_must_be_a_whole_non_negative_number_of_seconds():
+    for bad in ("-1", "yes", "1.5", "'soon'"):
+        with pytest.raises(ConfigError):
+            guards_of(f"  - {{policy: defer, max_wait: {bad}, on_timeout: proceed}}\n")
+
+
+def test_a_guard_target_must_be_a_string():
+    with pytest.raises(ConfigError, match="guard target must be a string"):
+        guards_of("  - {policy: skip, targets: [{entity: cover.a}]}\n")
+
+
+def test_referenced_entities_includes_a_guards_own_condition_entities():
+    """The coordinator subscribes to exactly what this reports.
+
+    A door sensor named only by a guard and by nothing else would otherwise
+    never wake the integration: the guard would be re-examined only when some
+    unrelated entity happened to change, which for an interlock is
+    indistinguishable from its not being there.
+    """
+    cfg = load_config(
+        GUARDS_BASE
+        + "  - {policy: skip, when: {condition: state, "
+        + "entity_id: binary_sensor.sauna, state: 'on'}}\n"
+    )
+    assert "binary_sensor.sauna" in referenced_entities(cfg)
+
+
+def test_referenced_entities_reaches_a_condition_nested_inside_a_guards_when():
+    cfg = load_config(
+        GUARDS_BASE
+        + """  - policy: skip
+    when:
+      condition: or
+      conditions:
+        - {condition: state, entity_id: binary_sensor.door, state: "on"}
+        - {condition: numeric_state, entity_id: sensor.sauna_temp, above: 50, default: 0}
+"""
+    )
+    assert {"binary_sensor.door", "sensor.sauna_temp"} <= referenced_entities(cfg)

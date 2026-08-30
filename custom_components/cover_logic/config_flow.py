@@ -99,7 +99,7 @@ from homeassistant.helpers import selector
 import voluptuous as vol
 
 from .config_schema import ConfigError, load_config_file
-from .config_store import subentries_from_config
+from .config_store import guards_to_data, subentries_from_config
 from .conformance import repo_example_config_path
 from .const import CONF_CONFIG_PATH, CONFIG_ENTRY_VERSION, DEFAULT_CONFIG_PATH, DOMAIN
 from .options_flow import CoverLogicOptionsFlow
@@ -423,7 +423,7 @@ class CoverLogicConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             ]
             return self.async_create_entry(
                 title="Cover Logic",
-                data={"guards": list(config.guards)},
+                data={"guards": guards_to_data(config)},
                 subentries=subentries,
             )
 
@@ -538,7 +538,7 @@ class CoverLogicConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 # example config has none today, but a future one might.
                 return self.async_create_entry(
                     title="Cover Logic",
-                    data={"guards": list(config.guards)},
+                    data={"guards": guards_to_data(config)},
                     subentries=subentries,
                 )
 

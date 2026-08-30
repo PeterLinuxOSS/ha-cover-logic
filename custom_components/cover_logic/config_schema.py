@@ -12,8 +12,16 @@ from typing import Any
 import yaml
 
 from .conditions import DEFAULT_AZIMUTH_ENTITY, SUN_ENTITY
-from .const import COND_REF, COND_SUN_HITS_TARGET, RULE_DEFAULT_ZONE
-from .model import KEEP, Action, Blind, Config, Mode, Ref, Rule, Value, Zone
+from .const import (
+    COND_REF,
+    COND_SUN_HITS_TARGET,
+    GUARD_ANY,
+    GUARD_DEFAULT_RECHECK,
+    GUARD_DEFER,
+    GUARD_STAGE_OUTPUT,
+    RULE_DEFAULT_ZONE,
+)
+from .model import KEEP, UNSET, Action, Blind, Config, Guard, Mode, Ref, Rule, Value, Zone
 
 
 class ConfigError(Exception):
@@ -21,10 +29,10 @@ class ConfigError(Exception):
 
 
 # Key sets for the structures this file owns. Condition bodies (native HA
-# condition dicts) and `guards` (schema not settled yet) are deliberately
-# excluded from strict checking -- see the scoping note on `_check_keys`.
-# Constants and set contents below are alphabetised; membership testing
-# (`set(mapping) - allowed`) never depends on order.
+# condition dicts) are deliberately excluded from strict checking -- see the
+# scoping note on `_check_keys`. Constants and set contents below are
+# alphabetised; membership testing (`set(mapping) - allowed`) never depends
+# on order.
 _ACTION_KEYS = {"position", "tilt"}
 _BLIND_KEYS = {
     "entity",
@@ -33,6 +41,18 @@ _BLIND_KEYS = {
     "tilt_after_arrival",
     "tolerance",
     "travel_time",
+}
+_GUARD_KEYS = {
+    "applies_to",
+    "max_wait",
+    "name",
+    "on_timeout",
+    "policy",
+    "recheck_every",
+    "stage",
+    "targets",
+    "then",
+    "when",
 }
 _MODE_KEYS = {"id", "when"}
 _RULE_KEYS = {"events", "if", "name", "then"}
@@ -48,8 +68,8 @@ _AXIS_MIN = 0
 def _check_keys(mapping: dict, allowed: set[str], where: str) -> None:
     """Raise if `mapping` has keys outside `allowed`.
 
-    See docs/rationale.md -- "Why condition bodies and `guards` are exempt
-    from strict key checking".
+    See docs/rationale.md -- "Why condition bodies are exempt from strict key
+    checking".
     """
     unknown = set(mapping) - allowed
     if unknown:
@@ -188,7 +208,7 @@ def load_config(text: str) -> Config:
         rules=rules,
         conditions=conditions,
         values=values,
-        guards=tuple(raw.get("guards") or ()),
+        guards=parse_guards(raw.get("guards"), raw_conditions, values),
     )
 
 
@@ -329,6 +349,48 @@ def _rule_to_dict(
     return out
 
 
+def guard_to_dict(
+    guard: Guard, ref_names: dict[int, str], ref_factory: Callable[[str], Any] = RefTag
+) -> dict[str, Any]:
+    """The guard mapping `_parse_guard` reads back -- shared by YAML and subentry export.
+
+    See `_mode_to_dict`'s docstring for why `ref_factory` is a parameter.
+    Public for the same reason `parse_guards` is: `config_store.py` writes
+    guards into `entry.data` in exactly this shape, and a second serializer
+    there would be free to drift from this one.
+
+    `applies_to` and `stage` are always written, defaults included -- the
+    same choice `_blind_to_dict` makes for `tolerance`/`travel_time`, and for
+    a stronger reason here: which movements a safety interlock covers is the
+    first thing a reader needs and the last thing that should be inferred
+    from an absent key. `max_wait` is written only when the guard actually
+    carries one, since `UNSET` (absent) and `None` (`null`, wait forever) are
+    different configurations and must dump to different text.
+    """
+    out: dict[str, Any] = {}
+    if guard.name:
+        out["name"] = guard.name
+    out["policy"] = guard.policy
+    out["applies_to"] = guard.applies_to
+    out["stage"] = guard.stage
+    if guard.targets:
+        out["targets"] = list(guard.targets)
+    if guard.when is not None:
+        out["when"] = unparse_condition(guard.when, ref_factory)
+    if guard.max_wait is not UNSET:
+        out["max_wait"] = guard.max_wait
+    if guard.on_timeout is not None:
+        out["on_timeout"] = guard.on_timeout
+    if guard.recheck_every is not None:
+        out["recheck_every"] = guard.recheck_every
+    if guard.then is not None:
+        out["then"] = {
+            "position": unparse_axis(guard.then.position, ref_names, ref_factory),
+            "tilt": unparse_axis(guard.then.tilt, ref_names, ref_factory),
+        }
+    return out
+
+
 def dump_config(config: Config) -> str:
     """Serialize `config` as YAML text in the shape `load_config` reads back.
 
@@ -367,7 +429,10 @@ def dump_config(config: Config) -> str:
             for key, rules in sorted(config.rules.items())
         }
     if config.guards:
-        doc["guards"] = list(config.guards)
+        # Written in tuple order, never sorted: guards are first-match-wins,
+        # so their order is behaviour -- the same reason `modes` and each
+        # `rules[...]` list above are left alone.
+        doc["guards"] = [guard_to_dict(guard, ref_names) for guard in config.guards]
 
     return yaml.dump(doc, Dumper=_Dumper, sort_keys=False, allow_unicode=True)
 
@@ -484,6 +549,124 @@ def _parse_action(node: Any, values: dict[str, Ref]) -> Action:
     )
 
 
+def _expect_str(node: Any, where: str) -> str:
+    if not isinstance(node, str):
+        msg = f"{where} must be a string, got {node!r}"
+        raise ConfigError(msg)
+
+    return node
+
+
+def _parse_seconds(node: Any, where: str) -> int:
+    """A whole, non-negative number of seconds.
+
+    `bool` is rejected before `int()` for the same reason `_parse_axis`
+    rejects it: `True` is an `int` in Python, so `max_wait: yes` would
+    otherwise become a one-second wait instead of failing loudly.
+    """
+    if isinstance(node, bool):
+        msg = f"{where} must be a whole number of seconds, got {node!r}"
+        raise ConfigError(msg)
+
+    if isinstance(node, float) and not node.is_integer():
+        msg = f"{where} must be a whole number of seconds, got {node!r}"
+        raise ConfigError(msg)
+
+    try:
+        seconds = int(node)
+    except (TypeError, ValueError) as err:
+        msg = f"{where} must be a whole number of seconds, got {node!r}"
+        raise ConfigError(msg) from err
+    if seconds < 0:
+        msg = f"{where} must not be negative, got {seconds}"
+        raise ConfigError(msg)
+
+    return seconds
+
+
+def _parse_guard(item: Any, conditions: dict[str, Any], values: dict[str, Ref]) -> Guard:
+    """One `guards:` entry into a frozen `Guard`.
+
+    Shape only. Whether `policy` names a policy that exists, whether a
+    `defer` said what to do on timeout, whether `targets` name anything real
+    -- all of that is `validation.py`'s, so a house with one questionable
+    guard still loads and can be repaired through the UI instead of failing
+    to parse at all. The split is the same one the condition dialect already
+    draws: `_parse_condition` accepts any dict, `validation._check_condition_
+    shape` is what says `condition: nonsense` is wrong.
+
+    The one exception is `recheck_every` for a `defer`, which is filled in
+    here when absent: restart resilience is a property of the guard, and a
+    runner reading `guard.recheck_every` must never have to re-derive it or
+    fall back to a default of its own. See `const.GUARD_DEFAULT_RECHECK`.
+    """
+    item = _expect_mapping(item, "guard entry")
+    _check_keys(item, _GUARD_KEYS, "guard entry")
+    if "policy" not in item:
+        msg = f"guard without 'policy': {item!r}"
+        raise ConfigError(msg)
+
+    targets = _expect_list(item.get("targets") or [], "guard 'targets'")
+    for target in targets:
+        _expect_str(target, "guard target")
+
+    raw_max_wait = item.get("max_wait", UNSET)
+    max_wait = (
+        raw_max_wait
+        if raw_max_wait is UNSET or raw_max_wait is None
+        else _parse_seconds(raw_max_wait, "guard 'max_wait'")
+    )
+
+    raw_recheck = item.get("recheck_every")
+    recheck_every = (
+        None if raw_recheck is None else _parse_seconds(raw_recheck, "guard 'recheck_every'")
+    )
+
+    policy = _expect_str(item["policy"], "guard 'policy'")
+    if recheck_every is None and policy == GUARD_DEFER:
+        recheck_every = GUARD_DEFAULT_RECHECK
+
+    guard_then = item.get("then")
+    return Guard(
+        policy=policy,
+        when=_parse_condition(item.get("when"), conditions),
+        targets=tuple(targets),
+        # An absent `applies_to`/`stage` falls back to the widest, least
+        # surprising reading: a guard that applies to every movement, and one
+        # that judges the engine's answer rather than silently removing the
+        # target from the question. Both defaults can only make a guard fire
+        # more often than its author wrote, never less -- unlike
+        # `on_timeout`, where the two candidates are opposites and neither
+        # can be defaulted to safely.
+        applies_to=_expect_str(item["applies_to"], "guard 'applies_to'")
+        if "applies_to" in item
+        else GUARD_ANY,
+        stage=_expect_str(item["stage"], "guard 'stage'")
+        if "stage" in item
+        else GUARD_STAGE_OUTPUT,
+        max_wait=max_wait,
+        on_timeout=_expect_str(item["on_timeout"], "guard 'on_timeout'")
+        if "on_timeout" in item
+        else None,
+        recheck_every=recheck_every,
+        then=None if guard_then is None else _parse_action(guard_then, values),
+        name=_expect_str(item.get("name", ""), "guard 'name'"),
+    )
+
+
+def parse_guards(raw: Any, conditions: dict[str, Any], values: dict[str, Ref]) -> tuple[Guard, ...]:
+    """Every `guards:` entry, in written order -- order is first-match-wins meaning.
+
+    Public because `config_store.py` reads the identical list out of
+    `entry.data["guards"]` and must build it the same way; the alternative
+    (a second guard parser on the subentry side) is the drift this project
+    already paid for once with rule ordering.
+    """
+    return tuple(
+        _parse_guard(item, conditions, values) for item in _expect_list(raw or [], "'guards'")
+    )
+
+
 def _parse_rule(item: Any, conditions: dict[str, Any], values: dict[str, Ref]) -> Rule:
     item = _expect_mapping(item, "rule entry")
     _check_keys(item, _RULE_KEYS, "rule entry")
@@ -523,10 +706,17 @@ def all_condition_nodes(config: Config) -> Iterator[dict]:
     """Every condition node `config` can evaluate.
 
     Not only the `conditions:` section: a condition written inline in a
-    mode's `when` or a rule's `if` is just as real, and the entities it reads
-    need to be subscribed to just the same. Reading only named conditions
-    works by accident in a config that routes everything through `!ref`, and
-    silently under-covers one that does not.
+    mode's `when`, a rule's `if` or a guard's `when` is just as real, and the
+    entities it reads need to be subscribed to just the same. Reading only
+    named conditions works by accident in a config that routes everything
+    through `!ref`, and silently under-covers one that does not.
+
+    A guard's `when` is here for a sharper reason than tidiness: the
+    coordinator subscribes to exactly what `referenced_entities` reports, so
+    a door sensor named only by a guard and by nothing else would never wake
+    the integration up -- the guard would be re-examined only when some
+    unrelated entity happened to change, which for an interlock is
+    indistinguishable from it not being there.
     """
     for cond in config.conditions.values():
         yield from walk_condition_nodes(cond)
@@ -537,6 +727,9 @@ def all_condition_nodes(config: Config) -> Iterator[dict]:
         for rule in rules:
             if rule.when is not None:
                 yield from walk_condition_nodes(rule.when)
+    for guard in config.guards:
+        if guard.when is not None:
+            yield from walk_condition_nodes(guard.when)
 
 
 def referenced_entities(config: Config) -> set[str | tuple[str, str]]:
@@ -548,8 +741,8 @@ def referenced_entities(config: Config) -> set[str | tuple[str, str]]:
 
     Covers:
     - every `state` / `numeric_state` condition reached by `all_condition_nodes`
-      (named, or written inline in a mode's `when` or a rule's `if`), honouring
-      an optional `attribute`;
+      (named, or written inline in a mode's `when`, a rule's `if` or a guard's
+      `when`), honouring an optional `attribute`;
     - the `sun_entity` and `azimuth_entity` a `sun_hits_target` condition reads,
       per-condition overrides included -- a config may use several different
       overrides, and each gets its own entry, not just the last;

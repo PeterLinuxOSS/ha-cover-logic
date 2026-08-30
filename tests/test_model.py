@@ -3,7 +3,20 @@ import pickle
 
 import pytest
 
-from cover_logic.model import KEEP, Action, Blind, Config, Keep, Mode, Ref, Rule, Zone
+from cover_logic.model import (
+    KEEP,
+    UNSET,
+    Action,
+    Blind,
+    Config,
+    Guard,
+    Keep,
+    Mode,
+    Ref,
+    Rule,
+    Unset,
+    Zone,
+)
 
 
 def test_keep_is_a_singleton():
@@ -81,7 +94,7 @@ def test_config_with_all_seven_fields_round_trips():
     rules = {"m1": (Rule(Action()),)}
     conditions = {"c1": {"key": "value"}}
     values = {"v1": Ref(entity="input_number.x", default=50)}
-    guards = ("guard1", "guard2")
+    guards = (Guard(policy="skip"), Guard(policy="force", then=Action(position=100)))
 
     c = Config(
         blinds=blinds,
@@ -139,3 +152,39 @@ def test_action_containing_keep_preserves_identity_after_deepcopy():
     a_copy = copy.deepcopy(a)
     assert a_copy.position is KEEP
     assert a_copy.tilt is KEEP
+
+
+def test_unset_is_a_singleton():
+    assert Unset() is UNSET
+    assert repr(UNSET) == "UNSET"
+
+
+def test_unset_singleton_survives_copy_deepcopy_and_pickle():
+    """`UNSET` is compared with `is` in `validation` and in `guard_to_dict`.
+
+    A copy that produced a second, equal-but-not-identical `Unset` would make
+    a guard that never stated `max_wait` look like one that stated `null` --
+    the exact distinction `Unset` exists to hold. `World` deep-copies the
+    attribute snapshots it is handed, and `Config`s travel through
+    `copy`/`pickle` in tests, so all three routes are pinned.
+    """
+    assert copy.copy(UNSET) is UNSET
+    assert copy.deepcopy(UNSET) is UNSET
+    assert pickle.loads(pickle.dumps(UNSET)) is UNSET  # noqa: S301 -- our own data
+
+
+def test_a_guard_defaults_to_the_widest_reading_and_states_no_wait():
+    guard = Guard(policy="skip")
+    assert guard.applies_to == "any"
+    assert guard.stage == "output"
+    assert guard.max_wait is UNSET
+    assert guard.on_timeout is None
+    assert guard.targets == ()
+
+
+def test_guards_are_frozen_and_compare_by_value():
+    a = Guard(policy="defer", max_wait=None, on_timeout="abandon")
+    b = Guard(policy="defer", max_wait=None, on_timeout="abandon")
+    assert a == b
+    with pytest.raises(Exception):  # noqa: B017, PT011 -- FrozenInstanceError is a subclass
+        a.policy = "skip"

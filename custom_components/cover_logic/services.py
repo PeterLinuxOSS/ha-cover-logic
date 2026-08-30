@@ -84,6 +84,7 @@ from .config_store import (
     VALUE,
     ZONE,
     config_from_subentries,
+    guards_to_data,
     subentries_from_config,
 )
 from .const import DOMAIN
@@ -257,7 +258,7 @@ async def _async_import_config(hass: HomeAssistant, call: ServiceCall) -> Servic
                 unique_id=None,
             ),
         )
-    guards = list(config.guards)
+    guards = guards_to_data(config)
     if entry.data.get("guards") != guards:
         hass.config_entries.async_update_entry(entry, data={**entry.data, "guards": guards})
 
