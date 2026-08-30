@@ -15,6 +15,24 @@ DEFAULT_CONFIG_PATH = "/config/cover_logic.yaml"
 # is subentries as the source of truth, `CONF_CONFIG_PATH` no longer read.
 CONFIG_ENTRY_VERSION = 2
 
+# The one *operational* option of this integration: whether `runner.py` really
+# issues `cover.*` service calls or only logs the ones it would have issued.
+#
+# It lives in `entry.options`, not `entry.data`, on purpose. `entry.data` is
+# the house's configuration -- subentries and guards -- and it is versioned, so
+# writing to it drags in `CONFIG_ENTRY_VERSION` and migration logic for a
+# switch that gets flipped twice in its life and then once in an emergency.
+# Options come with `async_update_entry` and an update listener for free, so
+# the runner reads a change **without a reload**, which is the entire point of
+# "turn it off when something goes wrong".
+#
+# The default is `True` -- dry run on -- including for an entry that existed
+# before the runner did. An integration that has never had hands must not be
+# handed a pair silently. Shared from here so `runner.py` (reader) and
+# `options_flow.py` (writer) can never spell the key differently.
+OPT_DRY_RUN = "dry_run"
+DEFAULT_DRY_RUN = True
+
 # Built-in condition types beyond the Home Assistant native set.
 COND_EVENT_TARGETS_ZONE = "event_targets_zone"
 COND_REF = "ref"
