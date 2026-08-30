@@ -391,6 +391,16 @@ and a per-recompute report of a standing config error would be noise on every
 evaluation. (An unresolved `Ref` on that axis is not a configuration mistake
 and does still raise -- see above.)
 
+Whether a blind's `travel_time` is a usable number is likewise not decided
+here, for the same reason, even though this module is where the consequence
+lands: `travel_time: 0` yields `WaitForPosition(..., timeout=0.0)`, an arrival
+wait that expires instantly, a `Settle(2.0)` against a ~55 s run, and a tilt
+discarded mid-travel -- precisely what this module exists to prevent. That is
+a standing configuration error, so `validation._check_blinds` reports it once,
+statically, and `subentry_flow`'s own `travel_time` selector will not offer a
+non-positive value in the first place. `plan()` does not second-guess the
+number it is handed.
+
 ## `model.py`
 
 ### Why `Config` is frozen without `slots` (unresolved)

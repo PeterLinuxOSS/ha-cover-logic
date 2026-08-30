@@ -34,6 +34,25 @@ def test_blind_without_a_zone_is_an_error():
     assert "blind_without_zone" in codes(text)
 
 
+def test_a_non_positive_travel_time_is_an_error():
+    """`planner.plan` derives the arrival wait from this number.
+
+    `travel_time: 0` gives `WaitForPosition(..., timeout=0.0)`: the wait
+    expires the instant it starts, the 2 s settle runs against a ~55 s
+    journey, and the tilt command lands mid-travel where the motor discards
+    it -- the slats silently never arrive. The YAML path only does `float()`,
+    so a negative value gets through it too.
+    """
+    for bad in ("0", "-5", "0.0"):
+        text = BASE.replace("- {entity: cover.a}", f"- {{entity: cover.a, travel_time: {bad}}}")
+        assert "bad_travel_time" in codes(text), bad
+
+
+def test_a_positive_travel_time_is_not_reported():
+    text = BASE.replace("- {entity: cover.a}", "- {entity: cover.a, travel_time: 0.5}")
+    assert validate(load_config(text)) == []
+
+
 def test_zone_referring_to_an_unknown_blind_is_an_error():
     text = BASE.replace("members: [cover.a]", "members: [cover.a, cover.ghost]")
     assert "zone_member_unknown" in codes(text)
