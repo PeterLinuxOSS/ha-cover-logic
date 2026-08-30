@@ -82,6 +82,7 @@ def test_init_menu_lists_every_section_plus_import_export_and_check(subentry_ent
         "modes",
         "rules",
         "import_export",
+        "execution",
         "check_matrix",
     ]
     placeholders = result["description_placeholders"]
@@ -1148,6 +1149,7 @@ _ALL_STEP_IDS = [
     "edit_form",
     "remove",
     "import_export",
+    "execution",
     "check_matrix",
 ]
 
@@ -1226,6 +1228,7 @@ def test_main_menu_options_all_have_labels():
         "modes",
         "rules",
         "import_export",
+        "execution",
         "check_matrix",
     }
 

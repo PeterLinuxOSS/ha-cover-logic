@@ -135,8 +135,30 @@ test:
   refuses a symlink, a directory, a missing parent, or a target that
   already has whole-line comments (`dump_config` cannot reproduce them, so
   overwriting one would silently discard them).
+- `runner.py` — the executor. Takes one blind's decided `Action` (never a
+  `Plan`: a plan that waited in a queue was computed against a position the
+  blind no longer has, so `plan()` is called at the moment a sequence starts),
+  translates each `Command` into a **single-entity** `cover.*` call, and
+  serialises per blind through a depth-1 queue with three priorities
+  (`GUARD > MANUAL > SCHEDULED` — an interlock outranks a person on purpose).
+  Queues for different blinds run in parallel, deliberately: one house-wide
+  lock is what makes a house move in waves. Cancellation only ever happens *in
+  favour of a successor*, and an abandoned `SetTilt` is handed to that
+  successor exactly when `successor.action.tilt is KEEP` — the condition is on
+  the `Action`, not the `Plan`, so a tilt the dead band suppressed is not
+  re-sent. An arrival wait continues on timeout (loudly); an unreadable
+  position is never an arrival, and the predicate is evaluated on entry as
+  well as on each state change. It does **not** reach for `hass.services`
+  itself: the service caller is a constructor argument
+  (`call_cover(service, data)`), which is what lets the queue, the
+  cancellation rules and the translation table be tested without a Home
+  Assistant runtime — and what keeps `tests/test_no_movement.py` true and
+  passing until task 4 wires a real one up. Its Home Assistant imports are
+  deferred (`TYPE_CHECKING` plus call-time imports), like `__init__.py`'s and
+  for the same reason. Not in `PURE_MODULES`, and must not be added.
 - `const.py` — the few names shared across the split (`DOMAIN`, the config
-  entry data key, the current `CONFIG_ENTRY_VERSION`, the non-HA-native
+  entry data key, the current `CONFIG_ENTRY_VERSION`, the `dry_run` option key
+  and its `True` default, the non-HA-native
   condition-type strings), so the config-flow version bump and
   `async_migrate_entry`'s target version can never drift apart. No
   `homeassistant` import, but not in the purity-tested list below — it is
@@ -394,7 +416,7 @@ corresponding section:
   instructs whoever lands phase 3 to `git rm tests/test_no_movement.py` in
   that commit — not to carve an exception into the check for the new,
   correct code.
-- **Phase 3 — execution. Tasks 1, 2a and 2b landed; still moves nothing.**
+- **Phase 3 — execution. Tasks 1, 2a, 2b and 3 landed; still moves nothing.**
   `planner.py`
   (§2) turns a decided `Action` into a described sequence of commands, and
   is tested over the whole (capability × current position × current tilt ×
@@ -405,20 +427,27 @@ corresponding section:
   added `guards.py` (§2): a guard is now evaluated against a `World` and the
   engine's `Decision`, which is where the seven scattered re-implementations
   of the house's door/sauna interlock collapse into one. Nothing *calls* it
-  yet — that is `runner.py`, task 3, and the `Deferral` a deferred outcome
-  carries is the contract it will be built on. No
-  module in this repository issues a Home Assistant service call anywhere
-  (that is exactly what phase 2's guard proves) — `tests/test_no_movement.py`
-  is still in the repo, still passing, and now covers `planner.py` and
-  `guards.py` too.
+  yet, and the `Deferral` a deferred outcome carries is still unconsumed —
+  waiting one out belongs to whoever wires the runner up (task 4), not to
+  `runner.py`'s own API, which stops at `async_apply`. Task 3 added
+  `runner.py` (§2): the queue, the cancellation rules, the translation table
+  and the `dry_run` switch (`entry.options["dry_run"]`, default `True`, with
+  its own options-flow screen). It still moves nothing, because nothing
+  constructs it with a real service caller: the caller is injected, so **no
+  module in this repository issues a Home Assistant service call anywhere** —
+  `tests/test_no_movement.py` is still in the repo, untouched, still passing,
+  and now covers `planner.py`, `guards.py` and `runner.py` too. Task 4 wires a
+  real caller up; task 5 deletes that guard, in its own commit.
   **There is no oracle for this phase.** The migration gate compares
   *decisions*, not execution; a planner tested against a model of a blind is
   not tested against a motor, so tilt timing and arrival behaviour are
   verified live or not at all. The same is true of the guards: thirteen
   interlocks rewritten as one ordered list can be *watched*, not proved.
-  `runner.py` is still to come, and `tests/test_no_movement.py` is deleted in
-  its own commit when it lands — that commit is the visible boundary between
-  "moves nothing" and "moves things".
+  `runner.py` is no different: a queue proved correct against a recording
+  caller is not proved against a motor, which is what the `dry_run` day is
+  for. `tests/test_no_movement.py` is deleted in its own commit once a real
+  service caller is wired up — that commit is the visible boundary between
+  "moves nothing" and "moves things", and it has not happened yet.
 - **Phase 4 — UI: configuration through Home Assistant config-entry
   subentries. Complete, deployed, and live on the house.** Configuration
   now lives as six subentry types (`blind`, `zone`, `value`, `condition`,
@@ -475,7 +504,7 @@ Two interpreters, on purpose:
   already has, with no `homeassistant` package installed at all. As of
   this writing, run from this checkout (which sits inside the Home
   Assistant host's `/config`, so `tests/parity` finds `matica.py` and runs
-  — see §5): **302 passed, 11 skipped**. The 11 skips are the eleven
+  — see §5): **721 passed, 12 skipped**. The 12 skips are the twelve
   `tests/ha/*` modules, each behind its own module-level
   `pytest.importorskip("homeassistant")` — nothing under `homeassistant`
   is installed for this interpreter. On a checkout that is not this host,
@@ -484,7 +513,7 @@ Two interpreters, on purpose:
   tests/ -q`. `homeassistant==2026.8.0` itself requires Python ≥3.14.2;
   this venv exists so `tests/ha/` (everything behind
   `pytest.importorskip("homeassistant")`) actually runs instead of being
-  skipped. As of this writing, same checkout: **534 passed**, no skips —
+  skipped. As of this writing, same checkout: **997 passed**, no skips —
   `tests/ha/*` runs because `homeassistant` is installed in `.venv`, and
   `tests/parity` runs for the same host-adjacency reason as above.
   **This venv's `homeassistant==2026.8.0` is one version behind the house

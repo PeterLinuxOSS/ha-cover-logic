@@ -320,6 +320,7 @@
           "modes": "Modes ({modes_count})",
           "rules": "Rules ({rules_count})",
           "import_export": "Import / export YAML",
+          "execution": "Execution ({execution_summary})",
           "check_matrix": "Configuration health ({health_summary})"
         }
       },
@@ -496,6 +497,16 @@
           "path": "Path",
           "dry_run": "Dry run",
           "overwrite": "Overwrite"
+        }
+      },
+      "execution": {
+        "title": "Execution",
+        "description": "Whether this integration actually moves the covers, or only writes to the log what it would have moved. Dry run is the safe setting: every command is logged with the service and payload it would have used, so a day of it can be compared against the automations it replaces. Turning it off gives this integration hands.",
+        "data": {
+          "dry_run": "Dry run (log commands, move nothing)"
+        },
+        "data_description": {
+          "dry_run": "On: nothing is moved, every intended command is written to the log. Off: covers really move. This takes effect immediately, with no reload."
         }
       },
       "check_matrix": {
