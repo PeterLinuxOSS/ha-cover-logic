@@ -63,6 +63,20 @@ test:
   `__init__.py`'s startup repair-issue check and by the options-flow
   health overview to detect drift from `fixtures/dom_peter.yaml`.
 - `engine.py` — `evaluate(config, world) -> Decision`, the decision core.
+- `guards.py` — the safety interlocks, evaluated. Two entry points, one per
+  stage, and the stage is never a parameter: `screen(config, world)` runs the
+  `stage: input` guards (it takes no `Decision`, because at that moment there
+  is none) and `review(config, world, decision, positions, screening)` runs
+  the `stage: output` ones — and *requires* the `Screening` the first
+  produced, which is what makes "input stage first, each blind judged once"
+  a property of the signatures rather than of the caller's care. Returns one
+  `Outcome` per blind: the final action (or `None` for "nothing"), which
+  guard fired, which policy, and — for a `defer` — a `Deferral` carrying the
+  deadline `guards.py` cannot wait out itself (`max_wait`, `on_timeout`,
+  `recheck_every`, and the action `proceed` would perform). Shares
+  `engine.resolve_action`, `engine.resolve_ownership` and its own
+  `guard_blinds` (which `validation` reads) rather than re-deriving any of
+  them. See `docs/rationale.md` — "`guards.py`".
 - `validation.py` — static checks over a `Config` (`validate(config) ->
   list[Problem]`), including which subentry(ies) a problem is attributable
   to (`Problem.owners`, read by `subentry_flow.py`'s form-blocking logic
@@ -134,9 +148,9 @@ test:
 
 `tests/test_purity.py` enforces the split with an AST walk: it parses
 `model.py`, `world.py`, `conditions.py`, `config_schema.py`,
-`config_store.py`, `conformance.py`, `engine.py`, `validation.py`,
-`legacy.py`, `starter_config.py` and `planner.py` and fails if any of them
-imports anything
+`config_store.py`, `conformance.py`, `engine.py`, `guards.py`,
+`validation.py`, `legacy.py`, `starter_config.py` and `planner.py` and fails
+if any of them imports anything
 starting with `homeassistant`. That list, not anyone's intention, is what
 enforces the split — a new pure module is only pure once its filename is in
 `PURE_MODULES`. This is what makes exhaustive testing of the
@@ -177,7 +191,7 @@ all, or if a fallback exists but is not last (anything after it can never
 match). Choosing no mode at all is not a valid outcome — `evaluate` raises
 `EngineError` if it happens.
 
-**Zones.** Every blind belongs to exactly one zone (`_resolve_ownership`
+**Zones.** Every blind belongs to exactly one zone (`resolve_ownership`
 raises `EngineError` on a blind owned by two zones, or by none). A zone,
 not an individual blind, is the unit rules are written against.
 
@@ -211,10 +225,10 @@ orientation instead of needing a copy per facade.
 
 A `Config` is parsed by `config_schema.load_config`/`load_config_file` from
 one YAML document with up to seven top-level keys: `blinds`, `zones`,
-`modes`, `conditions`, `values`, `rules`, `guards`. (`guards` has a real,
-parsed, validated schema since phase 3 task 2, but nothing *evaluates* one
-yet — `guards.py` is the next task. See `docs/rationale.md`'s "The `guards:`
-schema" for the six decisions behind its shape.)
+`modes`, `conditions`, `values`, `rules`, `guards`. (See
+`docs/rationale.md`'s "The `guards:` schema" for the six decisions behind
+`guards`' shape, and "`guards.py`" for what evaluating one had to decide on
+top of them.)
 
 - **`blinds`** — a list of `{entity, facade_azimuth?, tolerance?,
   travel_time?, tilt_after_arrival?, has_tilt?}`. `entity` is the only
@@ -256,8 +270,10 @@ schema" for the six decisions behind its shape.)
   pending wait survives a restart without a second hand-written watchdog.
   A `force` states the action it imposes in `then`. Guards resolve
   first-match-wins in written order, exactly like rules; there are no
-  numeric priorities. `docs/example-config.yaml` has a worked example of
-  all four shapes.
+  numeric priorities. An `input` guard may not name a direction — it acts
+  before anything is decided for its target, so there is no command whose
+  direction it could mean (`validation`'s `guard_input_direction`).
+  `docs/example-config.yaml` has a worked example of all four shapes.
 
 A mode or zone id must not contain a `.` — `engine.evaluate` joins
 `f"{mode}.{zone_id}"` with a plain string concatenation and
@@ -378,28 +394,31 @@ corresponding section:
   instructs whoever lands phase 3 to `git rm tests/test_no_movement.py` in
   that commit — not to carve an exception into the check for the new,
   correct code.
-- **Phase 3 — execution. Tasks 1 and 2 landed; still moves nothing.**
+- **Phase 3 — execution. Tasks 1, 2a and 2b landed; still moves nothing.**
   `planner.py`
   (§2) turns a decided `Action` into a described sequence of commands, and
   is tested over the whole (capability × current position × current tilt ×
   target) grid in `tests/test_planner.py`. Task 2 gave `guards:` a real
   schema (§4): parsed by `config_schema`, validated by `validation`,
   round-tripped by `dump_config`/`config_store`, and read by
-  `referenced_entities` so a guard's own entities are subscribed to — but
-  **nothing evaluates a guard against a `World` yet.** There is no
-  `guards.py`; that is the next task, and it is where the seven scattered
-  re-implementations of the house's door/sauna interlock actually collapse
-  into one. Nothing consumes the schema yet: no
+  `referenced_entities` so a guard's own entities are subscribed to. Task 2b
+  added `guards.py` (§2): a guard is now evaluated against a `World` and the
+  engine's `Decision`, which is where the seven scattered re-implementations
+  of the house's door/sauna interlock collapse into one. Nothing *calls* it
+  yet — that is `runner.py`, task 3, and the `Deferral` a deferred outcome
+  carries is the contract it will be built on. No
   module in this repository issues a Home Assistant service call anywhere
   (that is exactly what phase 2's guard proves) — `tests/test_no_movement.py`
-  is still in the repo, still passing, and now covers `planner.py` too.
+  is still in the repo, still passing, and now covers `planner.py` and
+  `guards.py` too.
   **There is no oracle for this phase.** The migration gate compares
   *decisions*, not execution; a planner tested against a model of a blind is
   not tested against a motor, so tilt timing and arrival behaviour are
-  verified live or not at all. `guards.py` and `runner.py` are still to
-  come, and `tests/test_no_movement.py` is deleted in its own commit when
-  they land — that commit is the visible boundary between "moves nothing"
-  and "moves things".
+  verified live or not at all. The same is true of the guards: thirteen
+  interlocks rewritten as one ordered list can be *watched*, not proved.
+  `runner.py` is still to come, and `tests/test_no_movement.py` is deleted in
+  its own commit when it lands — that commit is the visible boundary between
+  "moves nothing" and "moves things".
 - **Phase 4 — UI: configuration through Home Assistant config-entry
   subentries. Complete, deployed, and live on the house.** Configuration
   now lives as six subentry types (`blind`, `zone`, `value`, `condition`,
