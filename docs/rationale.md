@@ -349,6 +349,26 @@ never grow. Treating it as `KEEP` would turn a wiring mistake into a blind that
 silently never moves, which is the failure this project keeps finding in the
 system it replaces.
 
+It raises on *either* axis of *any* blind, including the tilt axis of a
+`has_tilt: false` one, where no tilt command could be emitted anyway. It did
+not, once: the tilt axis was simply not resolved at all for such a blind, so
+the identical mistake raised on the position axis and vanished on the tilt
+axis. A guarantee that holds or not depending on the blind's capabilities is
+not a guarantee. The two facts are deliberately kept apart in `plan()`: the
+`Ref` raises, while an out-of-range *integer* on that same unreachable axis
+stays silent (below).
+
+### Why `bool` is rejected rather than clamped
+
+`bool` is a subclass of `int`, so `max(0, min(100, True))` returns `True`
+itself -- the clamp comparison `applied != value` is then False and
+`SetPosition(entity, True)` goes out with no `Clamp` to show for it.
+`config_schema._parse_axis` already guards this at the config door, with its
+own comment about `position: true` silently becoming 1. Neither configuration
+door can produce a bool axis today, so this is not a live bug; `plan()` is a
+public function of a pure module and this hardens its own contract one layer
+closer to the motor, where the failure would be a blind at 1%.
+
 ### What this module deliberately does not decide
 
 Which Home Assistant service realises a command is the runner's business, not
@@ -365,9 +385,11 @@ was sent, and this module never observes anything -- it is handed a single
 snapshot and returns a sequence. That belongs to the executor.
 
 A blind with `has_tilt: false` that is nonetheless given a tilt value is
-dropped silently rather than reported: `validation.py` is where a
-configuration mistake belongs, and a per-recompute report of a standing config
-error would be noise on every evaluation.
+dropped silently rather than reported -- including an out-of-range one, which
+produces no `Clamp`: `validation.py` is where a configuration mistake belongs,
+and a per-recompute report of a standing config error would be noise on every
+evaluation. (An unresolved `Ref` on that axis is not a configuration mistake
+and does still raise -- see above.)
 
 ## `model.py`
 

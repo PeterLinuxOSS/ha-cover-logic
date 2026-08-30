@@ -452,6 +452,33 @@ def test_an_unresolved_ref_raises_instead_of_being_treated_as_keep():
         plan(_blind(), 50, 50, Action(position=ref, tilt=0))
 
 
+def test_an_unresolved_ref_raises_on_the_tilt_axis_of_a_blind_with_no_slats():
+    """The guarantee must not depend on the blind's capabilities.
+
+    A `Ref` here means a caller skipped the engine -- the same wiring mistake
+    whatever the blind can do. It used to vanish silently on this one axis,
+    because the axis was not resolved at all when `has_tilt` was false, while
+    the identical mistake on the position axis raised.
+    """
+    ref = Ref(entity="input_number.kvety_pozicia_zaluzie", default=34)
+    with pytest.raises(PlannerError, match="unresolved"):
+        plan(_blind(has_tilt=False), 50, 50, Action(position=0, tilt=ref))
+
+
+def test_a_bool_axis_is_rejected_rather_than_quietly_driving_a_blind_to_one_percent():
+    """`bool` is a subclass of `int`, so the clamp cannot see it.
+
+    `max(0, min(100, True))` returns `True` itself, `applied != value` is
+    False, and `SetPosition(entity, True)` would go out with no `Clamp` to
+    show for it. `config_schema._parse_axis` guards `position: true` at the
+    config door for the same reason; neither configuration door can produce
+    one today, so this pins `plan()`'s own contract as a public function.
+    """
+    for action in (Action(position=True, tilt=0), Action(position=0, tilt=False)):
+        with pytest.raises(PlannerError, match="bool"):
+            plan(_blind(), 50, 50, action)
+
+
 def test_the_plan_and_its_commands_are_frozen():
     result = plan(_blind(), 100, 100, Action(position=0, tilt=0))
     with pytest.raises((AttributeError, TypeError)):

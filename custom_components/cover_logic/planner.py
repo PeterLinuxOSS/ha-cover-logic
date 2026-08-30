@@ -142,10 +142,23 @@ def plan(
     """
     clamps: list[Clamp] = []
     position = _axis_target(blind, AXIS_POSITION, action.position, clamps)
-    # A blind with no slats never gets a tilt command, and its tilt axis is
-    # not even range-checked: reporting a clamp for a command that can never
-    # be sent would be noise on every recompute.
-    tilt = _axis_target(blind, AXIS_TILT, action.tilt, clamps) if blind.has_tilt else None
+    if blind.has_tilt:
+        tilt = _axis_target(blind, AXIS_TILT, action.tilt, clamps)
+    else:
+        # A blind with no slats never gets a tilt command, and an out-of-range
+        # tilt for it is not even reported: a clamp for a command that can
+        # never be sent would be noise on every recompute.
+        #
+        # An unresolved `Ref` is the other kind of fact, and `_axis_target` is
+        # still called here for it alone -- with a throwaway clamp list, since
+        # a clamp is precisely what must not escape. A `Ref` arriving here at
+        # all means a caller skipped the engine (see "Why an unresolved `Ref`
+        # raises instead of being ignored"), and that guarantee must not
+        # depend on whether the blind happens to have slats. So: `Ref` raises
+        # on either axis of any blind; an out-of-range int on the tilt axis of
+        # a slat-less blind stays silent.
+        _axis_target(blind, AXIS_TILT, action.tilt, [])
+        tilt = None
 
     move_position = position is not None and _off_target(current_position, position)
     move_tilt = tilt is not None and _off_target(current_tilt, tilt)
@@ -186,6 +199,17 @@ def _axis_target(blind: Blind, axis: str, value: Value, clamps: list[Clamp]) -> 
     if isinstance(value, Ref):
         msg = f"blind {blind.entity!r}: unresolved {value!r} on the {axis} axis"
         raise PlannerError(msg)
+    # `bool` is a subclass of `int`, so `max(0, min(100, True))` hands back
+    # `True` itself: the clamp below cannot see it (`applied != value` is
+    # False) and `SetPosition(position=True)` would go out unremarked.
+    # `config_schema._parse_axis` rejects `position: true` at the config door
+    # for exactly this reason, so neither configuration door can produce one
+    # today -- this is hardening `plan()`'s own contract as a public function,
+    # not fixing a live path.
+    if isinstance(value, bool):
+        msg = f"blind {blind.entity!r}: {value!r} on the {axis} axis is a bool, not a position"
+        raise PlannerError(msg)
+
     applied = max(0, min(100, value))
     if applied != value:
         clamps.append(Clamp(blind.entity, axis, value, applied))
