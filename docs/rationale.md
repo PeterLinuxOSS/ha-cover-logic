@@ -88,12 +88,15 @@ and `_check_rule_keys` accepts it, because splitting on the first dot happens
 to name two ids that both exist. Rejecting the dot at parse time is cheaper
 than making the join unambiguous.
 
-### Why condition bodies and `guards` are exempt from strict key checking
+### Why condition bodies are exempt from strict key checking
 
 `_check_keys` is only ever called on structures this module owns the schema
-of: blind, zone, mode, rule, value and action entries, plus the top level.
-It is never called on a condition body (native HA condition schema, not
-ours) or on `guards` (unparsed until a later phase).
+of: blind, zone, mode, rule, value, action and guard entries, plus the top
+level. It is never called on a condition body (native HA condition schema,
+not ours). `guards` was exempt too for as long as there was no guard schema
+to check against; it is now checked like everything else this module owns,
+because a mistyped key in a safety interlock is the one place a silently
+ignored line is least affordable.
 
 ### Why a `!ref` default is range-checked exactly like a literal
 
@@ -103,6 +106,108 @@ otherwise `position: !ref` with an out-of-range fallback validates clean
 while the same value written literally as `position: 250` would raise. This
 cannot affect parity: parity depends on the helper's runtime value, never on
 the fallback used when it is missing or unparsable.
+
+## The `guards:` schema
+
+Spread over four modules by design -- the vocabularies in `const.py`, the
+`Guard` type in `model.py`, parsing and dumping in `config_schema.py`,
+every semantic check in `validation.py` -- so each of the sections below is
+pointed at from whichever of them the decision actually shows up in. The
+whole schema exists because the house being migrated re-implements one rule
+("do not drive a door blind down onto an open door or a running sauna")
+**seven** independent times, with conditions and timeouts that no longer
+agree; the smallest change to it is currently a sevenfold task, and one of
+the seven has already been missed once.
+
+### Why a guard's `when` is the ordinary condition dialect
+
+`conditions.py` and the `COND_*` types already express states, numeric
+thresholds, time, the sun and a target-relative azimuth -- everything the
+thirteen real interlocks key on. A second condition language living inside
+guards would give one idea two owners, and two owners of the same idea in
+this codebase have already diverged once silently (`config_store`'s rule
+grouping). So a guard is a condition, a policy and a target, and nothing
+more; `!ref` works in a guard's `when` exactly as it does in a mode's `when`
+or a rule's `if`, and `validation._condition_sites` yields guard bodies to
+the same two checks every other condition slot goes through rather than to
+guard-specific copies of them.
+
+### Why direction is a guard field and not a `skip_close` policy
+
+Nine of the house's thirteen interlocks block *closing* only: raising a
+blind is never the hazard. That could be modelled as two policies (`skip`
+and `skip_close`), and then every policy added later would face the same
+fork and double too. One `skip` plus an `applies_to` field does not.
+
+`closing` is a **decreasing position**, not the slats. For a blind with
+slats, "closing it" in ordinary speech is two-dimensional, and reading it
+that way here would make those nine guards start refusing tilt commands they
+have always allowed. The intent behind every one of them is unambiguous --
+do not drive it down onto an open door -- so the axis is the position axis.
+
+### Why `defer` states both `max_wait` and `on_timeout`
+
+The house contains both variants, and they do **opposite** things: two
+three-hour waits with `continue_on_timeout: false` (abandon the rest of the
+sequence) and 90-second waits with `true` (do it anyway). A default for
+`on_timeout` would silently pick one of two opposites, so there is none.
+
+`max_wait: null` -- wait indefinitely -- is a legitimate value, not a missing
+one: two of the five defers in the house wait without a limit on purpose.
+That is why absence has its own spelling (`model.UNSET`) rather than being
+folded into `None`; without the distinction, `validation` could not tell a
+guard that deliberately waits forever from one whose author never said.
+
+### Why restart resilience is a guard field, not a second automation
+
+`wait_for_trigger` does not survive a Home Assistant restart. Of the five
+deferred waits in the house, exactly one has a watchdog automation paired
+with it, and the second one (the bedroom's) had to be built by hand on
+2026-08-29 after the gap was found -- the incident it protects against had
+already happened to the living room a fortnight earlier. When remembering to
+pair two objects is a human's job, one day it will not be done.
+
+So `recheck_every` is a field on the guard, filled in by the parser for
+every `defer` whether its author wrote one or not (`const.GUARD_DEFAULT_
+RECHECK`, 900 s -- the interval the house's one working watchdog actually
+runs at). A runner reads `guard.recheck_every`; it never has to derive the
+interval or invent a fallback, and there is nothing to forget to write.
+
+### Why guards are ordered, first match wins, with no priorities
+
+The inventory records a real, unrefereed collision: the holiday-disarm branch
+can force the terrace blind open at exactly the moment wind protection is
+force-closing it, or while the sauna guard sits in its three-hour wait on the
+same blind. None of those automations checks whether the others are running,
+so which one wins depends on the order the events happened to arrive in.
+
+Order in the list decides, first match wins -- the same semantics rules
+already have, so there is one fewer concept to learn and one fewer way to
+express the same intent. Numeric priorities were rejected for the usual
+reason: they are a second, global ordering that nobody can keep consistent
+once there are more than a handful, and they make "what actually runs first"
+unanswerable without collecting every guard in the house first.
+
+The cost is that a guard written after an unconditional one covering the same
+blinds is dead, silently -- and unlike a dead rule, a dead interlock looks
+present right up until the day it was needed. `validation._check_guard_
+reachability` is what answers for that, the exact counterpart of
+`_check_unreachable_within` for rules.
+
+### Why a guard has a `stage`
+
+Two of the house's interlocks do not override a decided action at all: the
+flower-blind keeper and `script.zaluzie_zavriet`/`otvorit` drop a target from
+the list *before* the decision is made (`zony_kvety`, `chranene`/`na_dole`/
+`na_hore`). A schema modelling a guard only as "inspect the answer and
+override it" cannot express either of them, and they would vanish from the
+rewrite without anyone noticing -- which is precisely how an inventory of
+thirteen turns into an implementation of eleven.
+
+`stage: input` is that shape: the target is removed and no decision is made
+for it. `stage: output` is the other. They are separate moments, which is
+also why `_check_guard_reachability` never lets a guard at one stage shadow
+a guard at the other, however broadly the first is written.
 
 ## `engine.py`
 

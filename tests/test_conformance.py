@@ -73,7 +73,7 @@ def test_diff_configs_names_the_field_that_differs():
 
 def test_diff_configs_catches_a_guards_only_difference():
     a = load_config(BASE_TEXT)
-    b = load_config(BASE_TEXT + "guards: [{name: dummy}]\n")
+    b = load_config(BASE_TEXT + "guards: [{policy: skip, applies_to: closing}]\n")
     assert diff_configs(a, b) == ["guards"]
 
 

@@ -134,6 +134,27 @@ _CODE_OWNERS: dict[str, frozenset[str]] = {
     "blind_without_zone": frozenset({ZONE}),
     "no_fallback_mode": frozenset({MODE}),
     "fallback_mode_not_last": frozenset({MODE}),
+    # Guards own no subentry type yet: they live in `entry.data["guards"]`
+    # (see `config_store.py`'s module docstring), so there is no form whose
+    # fields could fix any of these -- an empty set is the honest answer, not
+    # an oversight, and it is written out rather than left absent so that the
+    # next person to read this dict sees the decision instead of a gap. It is
+    # also the only *safe* answer: mapping a guard's problem onto some
+    # existing type would block every save of that type on a defect that form
+    # cannot reach, which is exactly the deadlock this dict exists to prevent
+    # (`MODELS.md` §9 -- gotten wrong three times). When the `guard` subentry
+    # flow lands, these become `frozenset({GUARD})`, and the two codes tied
+    # to one *specific* guard rather than to the set as a whole
+    # (`guard_unknown_target`, `guard_unreachable`) want `_ATTRIBUTED_CODES`
+    # instead -- `validation._guard_owner` already populates `Problem.owners`
+    # for every guard problem in readiness for that.
+    "guard_unknown_policy": frozenset(),
+    "guard_defer_needs_timeout": frozenset(),
+    "guard_unused_field": frozenset(),
+    "guard_force_needs_action": frozenset(),
+    "guard_bad_direction": frozenset(),
+    "guard_bad_stage": frozenset(),
+    "guard_unknown_target": frozenset(),
 }
 
 # The codes whose owning type is not enough to say which save could fix them

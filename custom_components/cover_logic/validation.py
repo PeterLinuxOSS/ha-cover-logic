@@ -8,8 +8,20 @@ anything. Runs in the test suite and again on import in the UI.
 from collections.abc import Iterator
 from dataclasses import dataclass
 
-from .const import COND_EVENT_TARGETS_ZONE, COND_REF, COND_SUN_HITS_TARGET, RULE_DEFAULT_ZONE
-from .model import Config
+from .const import (
+    COND_EVENT_TARGETS_ZONE,
+    COND_REF,
+    COND_SUN_HITS_TARGET,
+    GUARD_ANY,
+    GUARD_DEFER,
+    GUARD_DIRECTIONS,
+    GUARD_FORCE,
+    GUARD_POLICIES,
+    GUARD_STAGES,
+    GUARD_TIMEOUTS,
+    RULE_DEFAULT_ZONE,
+)
+from .model import UNSET, Config, Guard
 
 ERROR = "error"
 WARNING = "warning"
@@ -56,10 +68,35 @@ def _rule_owner(key: str, index: int) -> tuple[str, str]:
     return ("rule", f"{key}#{index}")
 
 
+def _guard_owner(index: int) -> tuple[str, str]:
+    """The `(subentry_type, id)` naming one guard: its position in `Config.guards`.
+
+    Guards, like rules, have no id field of their own -- their identity is
+    where they sit in a first-match-wins list, and `Config.guards` no longer
+    carries whatever `order` a future `guard` subentry would have used by the
+    time this module sees it. Position in the tuple is therefore what is left
+    to name one by, exactly as `_rule_owner` names a rule.
+
+    Nothing matches this owner today: `guards` is still carried in
+    `entry.data`, not as a subentry type, so no form can be blocked by a
+    guard's problem and none should be -- see `subentry_flow._CODE_OWNERS`'s
+    guard entries. When the `guard` subentry flow lands, its `_candidate_id`
+    is what has to answer with this same string, the way
+    `config_store.rule_owner_ids` already does for rules.
+    """
+    return ("guard", f"guard#{index}")
+
+
+def _guard_label(index: int, guard: Guard) -> str:
+    """How a guard is named in a problem message: its position, plus its name if it has one."""
+    return f"guard #{index} {guard.name!r}" if guard.name else f"guard #{index}"
+
+
 def validate(config: Config) -> list[Problem]:
     """Run every static check and return all problems found, if any."""
     problems: list[Problem] = []
     problems += _check_blinds(config)
+    problems += _check_guards(config)
     problems += _check_ownership(config)
     problems += _check_modes(config)
     problems += _check_rule_keys(config)
@@ -100,6 +137,231 @@ def _check_blinds(config: Config) -> list[Problem]:
         for entity, blind in config.blinds.items()
         if not blind.travel_time > 0
     ]
+
+
+def _guard_blinds(config: Config, guard: Guard) -> set[str]:
+    """Which blinds `guard.targets` actually names.
+
+    No `targets` at all means every blind -- a guard is a house-wide safety
+    rule unless it says otherwise. A zone id stands for that zone's members,
+    so "do not close anything in the bedroom" survives a blind being added to
+    that zone later, which naming the blinds individually would not.
+
+    A target naming nothing real contributes nothing here (it is reported
+    separately as `guard_unknown_target`) rather than being treated as a
+    blind whose name happens not to exist yet -- otherwise a typo would widen
+    the guard's apparent scope in `_check_guard_reachability` below.
+    """
+    if not guard.targets:
+        return set(config.blinds)
+
+    out: set[str] = set()
+    for target in guard.targets:
+        if target in config.zones:
+            out |= set(config.zones[target].members)
+        elif target in config.blinds:
+            out.add(target)
+    return out
+
+
+def _direction_covers(outer: str, inner: str) -> bool:
+    """Whether a guard watching `outer` movements also sees every `inner` one."""
+    return outer in (GUARD_ANY, inner)
+
+
+def _check_guard_policy(guard: Guard, where: str, owners: frozenset) -> list[Problem]:
+    """One guard's policy and the fields that policy does or does not use.
+
+    A field the policy ignores is an `ERROR`, not a cosmetic warning, because
+    this exact mistake is already live in the house being migrated: the
+    bedroom door automation carries `continue_on_timeout: true` with no
+    `timeout` key at all, which Home Assistant silently ignores -- the wait is
+    unlimited and the line that looks like it bounds it does nothing. A
+    schema that accepted `max_wait` on a `skip` would reproduce that class of
+    dead configuration verbatim.
+    """
+    out: list[Problem] = []
+    if guard.policy not in GUARD_POLICIES:
+        return [
+            Problem(
+                ERROR,
+                "guard_unknown_policy",
+                f"{where}: unknown policy {guard.policy!r}; expected one of "
+                f"{', '.join(sorted(GUARD_POLICIES))}",
+                owners=owners,
+            )
+        ]
+
+    if guard.policy == GUARD_DEFER:
+        if guard.max_wait is UNSET:
+            out.append(
+                Problem(
+                    ERROR,
+                    "guard_defer_needs_timeout",
+                    f"{where}: a 'defer' must state 'max_wait'; write 'max_wait: null' "
+                    f"for a deliberately unlimited wait",
+                    owners=owners,
+                )
+            )
+        if guard.on_timeout is None:
+            out.append(
+                Problem(
+                    ERROR,
+                    "guard_defer_needs_timeout",
+                    f"{where}: a 'defer' must state 'on_timeout' ("
+                    f"{', '.join(sorted(GUARD_TIMEOUTS))}); there is no default because "
+                    f"the two do opposite things",
+                    owners=owners,
+                )
+            )
+        elif guard.on_timeout not in GUARD_TIMEOUTS:
+            out.append(
+                Problem(
+                    ERROR,
+                    "guard_defer_needs_timeout",
+                    f"{where}: unknown 'on_timeout' {guard.on_timeout!r}; expected one of "
+                    f"{', '.join(sorted(GUARD_TIMEOUTS))}",
+                    owners=owners,
+                )
+            )
+    else:
+        out.extend(
+            Problem(
+                ERROR,
+                "guard_unused_field",
+                f"{where}: {field!r} means nothing for policy {guard.policy!r}; "
+                f"it is only read for 'defer'",
+                owners=owners,
+            )
+            for field, given in (
+                ("max_wait", guard.max_wait is not UNSET),
+                ("on_timeout", guard.on_timeout is not None),
+                ("recheck_every", guard.recheck_every is not None),
+            )
+            if given
+        )
+
+    if guard.policy == GUARD_FORCE and guard.then is None:
+        out.append(
+            Problem(
+                ERROR,
+                "guard_force_needs_action",
+                f"{where}: a 'force' must state the action it imposes in 'then'",
+                owners=owners,
+            )
+        )
+    if guard.policy != GUARD_FORCE and guard.then is not None:
+        out.append(
+            Problem(
+                ERROR,
+                "guard_unused_field",
+                f"{where}: 'then' means nothing for policy {guard.policy!r}; "
+                f"it is only read for 'force'",
+                owners=owners,
+            )
+        )
+    return out
+
+
+def _check_guards(config: Config) -> list[Problem]:
+    """Every guard's own shape, then whether each one can ever be reached.
+
+    A guard's `when` is not checked here at all: it is an ordinary condition
+    body, so `_condition_sites` yields it alongside every mode's and rule's
+    and the existing `_check_unknown_condition_refs`/`_check_condition_shapes`
+    cover it unchanged. That is the point of reusing the condition dialect
+    rather than inventing a second one -- see `docs/rationale.md`, "Why a
+    guard's `when` is the ordinary condition dialect".
+    """
+    out: list[Problem] = []
+    for index, guard in enumerate(config.guards):
+        where = _guard_label(index, guard)
+        owners = frozenset({_guard_owner(index)})
+
+        out += _check_guard_policy(guard, where, owners)
+
+        if guard.applies_to not in GUARD_DIRECTIONS:
+            out.append(
+                Problem(
+                    ERROR,
+                    "guard_bad_direction",
+                    f"{where}: unknown 'applies_to' {guard.applies_to!r}; expected one of "
+                    f"{', '.join(sorted(GUARD_DIRECTIONS))}",
+                    owners=owners,
+                )
+            )
+        if guard.stage not in GUARD_STAGES:
+            out.append(
+                Problem(
+                    ERROR,
+                    "guard_bad_stage",
+                    f"{where}: unknown 'stage' {guard.stage!r}; expected one of "
+                    f"{', '.join(sorted(GUARD_STAGES))}",
+                    owners=owners,
+                )
+            )
+
+        out.extend(
+            Problem(
+                ERROR,
+                "guard_unknown_target",
+                f"{where}: target {target!r} is neither a configured blind nor a zone",
+                owners=owners,
+            )
+            for target in guard.targets
+            if target not in config.blinds and target not in config.zones
+        )
+
+    return out + _check_guard_reachability(config)
+
+
+def _check_guard_reachability(config: Config) -> list[Problem]:
+    """A guard an earlier unconditional one already answers for can never fire.
+
+    Guards resolve first-match-wins, the same way rules do (`MODELS.md` §3),
+    so the same dead-row question `_check_unreachable_within` asks of a rule
+    list has to be asked here -- and it is the only referee guards have.
+    Order is deliberately the whole conflict-resolution mechanism (no numeric
+    priorities), which makes "this guard is written after one that already
+    covers it" the single way a guard silently stops existing.
+
+    Shadowing is judged per blind, not per written target, so a guard naming
+    a zone and a later one naming a blind inside that zone are correctly seen
+    as overlapping. Three things have to line up before an earlier guard is
+    said to swallow a later one, and all three are conservative:
+
+    - the earlier guard has no `when`, so it matches unconditionally;
+    - it runs at the same `stage` -- an `input` guard removing a target and
+      an `output` guard overriding a decision are asked at different moments,
+      and neither hides the other;
+    - its `applies_to` covers the later one's direction.
+    """
+    out: list[Problem] = []
+    covered: dict[tuple[str, str], set[str]] = {}
+
+    for index, guard in enumerate(config.guards):
+        mine = _guard_blinds(config, guard)
+        if mine:
+            shadow = {
+                blind
+                for (stage, direction), blinds in covered.items()
+                if stage == guard.stage and _direction_covers(direction, guard.applies_to)
+                for blind in blinds
+            }
+            if mine <= shadow:
+                out.append(
+                    Problem(
+                        WARNING,
+                        "guard_unreachable",
+                        f"{_guard_label(index, guard)} can never fire; an earlier guard "
+                        f"with no condition already covers every blind it names",
+                        owners=frozenset({_guard_owner(index)}),
+                    )
+                )
+        if guard.when is None:
+            covered.setdefault((guard.stage, guard.applies_to), set()).update(mine)
+
+    return out
 
 
 def _check_ownership(config: Config) -> list[Problem]:
@@ -489,6 +751,13 @@ def _condition_sites(
     for key, rules in config.rules.items():
         for index, rule in enumerate(rules):
             yield rule.when, f"rule {key}#{index}", _rule_owner(key, index)
+    # A guard's `when` is a condition body like any other, so it is checked
+    # by the same two passes rather than by a guard-specific copy of them --
+    # a dangling `!ref` or a `condition: nonsense` inside a guard is the same
+    # mistake, and reporting it under a different code would mean two things
+    # to keep in step for no gain.
+    for index, guard in enumerate(config.guards):
+        yield guard.when, _guard_label(index, guard), _guard_owner(index)
 
 
 def _get_referenced_conditions(cond_name: str, registry: dict[str, dict]) -> set[str]:

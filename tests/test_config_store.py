@@ -25,6 +25,7 @@ from cover_logic.config_store import (
     duplicate_rule_order_problems,
     effective_rule_items,
     entry_from_subentry_items,
+    guards_to_data,
     rule_owner_ids,
     subentries_from_config,
 )
@@ -200,13 +201,35 @@ def test_empty_entry_produces_an_empty_config():
     assert config_from_subentries(make_entry([])) == load_config("")
 
 
-def test_guards_are_carried_through_unchanged():
-    entry = make_entry([], data={"guards": [{"anything": "goes"}]})
+def test_guards_from_entry_data_parse_exactly_as_the_same_yaml_would():
+    """The two doors into `Config` must agree about guards, not merely both
+    hold "something".
+
+    `entry.data["guards"]` and a YAML `guards:` key are the same list of
+    mappings read by the same parser (`config_schema.parse_guards`) -- that
+    is the whole reason guards can stay in `entry.data` while their schema is
+    real. Asserting equality against the YAML door, rather than against a
+    hand-written expected `Guard`, is what would catch this module growing a
+    second guard parser of its own.
+    """
+    guard_data = {
+        "policy": "skip",
+        "applies_to": "closing",
+        "stage": "input",
+        "targets": ["cover.a"],
+    }
+    entry = make_entry([], data={"guards": [guard_data]})
 
     config = config_from_subentries(entry)
 
-    assert config.guards == ({"anything": "goes"},)
-    assert config.guards == load_config("guards:\n  - {anything: goes}\n").guards
+    assert (
+        config.guards
+        == load_config(
+            "guards:\n  - {policy: skip, applies_to: closing, stage: input, targets: [cover.a]}\n"
+        ).guards
+    )
+    assert config.guards[0].policy == "skip"
+    assert config.guards[0].targets == ("cover.a",)
 
 
 def test_action_axis_can_be_keep_or_a_value_ref_not_just_an_integer():
@@ -755,3 +778,109 @@ def test_subentries_from_config_self_check_rejects_a_broken_conversion(monkeypat
     original = load_config(YAML_TEXT)  # cover.a has a non-default facade_azimuth
     with pytest.raises(ConfigError):
         subentries_from_config(original)
+
+
+# --- guards ------------------------------------------------------------------
+# Guards are not a subentry type: they live in `entry.data["guards"]`, as the
+# same list of mappings a YAML `guards:` key holds. What must hold is that the
+# two doors agree -- one parser, one serializer, no loss in either direction.
+
+
+def test_guards_survive_a_full_yaml_to_subentries_to_config_round_trip() -> None:
+    """The whole round trip, in one assertion, over a guard using every slot
+    that could be dropped silently: a condition ref, a value ref inside a
+    `force`'s action, a `max_wait` written as `null` (which must not come back
+    as an absent key), and a derived `recheck_every`.
+    """
+    original = load_config(
+        """
+blinds:
+  - {entity: cover.a}
+zones:
+  z: {members: [cover.a]}
+modes:
+  - {id: m}
+conditions:
+  door: {condition: state, entity_id: binary_sensor.door, state: "on"}
+values:
+  poz: {entity: input_number.poz, default: 34}
+rules:
+  m.z:
+    - {then: {position: keep}}
+guards:
+  - {name: door guard, policy: defer, applies_to: closing, targets: [z], when: !ref door,
+     max_wait: null, on_timeout: abandon}
+  - {policy: force, stage: input, then: {position: !ref poz}}
+"""
+    )
+
+    items = subentries_from_config(original)
+    rebuilt = config_from_subentries(entry_from_subentry_items(items, guards_to_data(original)))
+
+    assert rebuilt == original
+    assert rebuilt.guards[0].max_wait is None
+    assert rebuilt.guards[0].recheck_every == 900
+
+
+def test_guards_to_data_writes_this_modules_ref_marker_not_the_yaml_tag() -> None:
+    """Subentry data is plain, JSON-shaped data -- a `RefTag` in it would not
+    survive `.storage`. The two `!ref`-capable guard slots (`when`, and a
+    `force`'s `then`) must both come out as `{"ref": ...}` markers, the same
+    convention every other subentry uses.
+    """
+    config = load_config(
+        """
+blinds:
+  - {entity: cover.a}
+zones:
+  z: {members: [cover.a]}
+modes:
+  - {id: m}
+conditions:
+  door: {condition: state, entity_id: binary_sensor.door, state: "on"}
+values:
+  poz: {entity: input_number.poz, default: 34}
+rules:
+  m.z:
+    - {then: {position: keep}}
+guards:
+  - {policy: force, when: !ref door, then: {position: !ref poz}}
+"""
+    )
+
+    data = guards_to_data(config)
+
+    assert data[0]["when"] == {"ref": "door"}
+    assert data[0]["then"]["position"] == {"ref": "poz"}
+
+
+def test_the_round_trip_self_check_sees_a_guard_that_would_be_lost() -> None:
+    """`subentries_from_config` rebuilds a `Config` from exactly the pairs it
+    is about to return and refuses to hand back anything that does not compare
+    equal. Guards go through that same check via `guards_to_data`, so a future
+    change that dropped or mis-shaped one fails loudly here rather than
+    quietly exporting a house with its interlocks missing.
+    """
+    original = load_config(
+        """
+blinds:
+  - {entity: cover.a}
+zones:
+  z: {members: [cover.a]}
+modes:
+  - {id: m}
+rules:
+  m.z:
+    - {then: {position: keep}}
+guards:
+  - {policy: skip, applies_to: closing, targets: [cover.a]}
+"""
+    )
+
+    # The self-check compares against `config.guards`, so a config whose
+    # guards serialize losslessly round-trips; this is the positive control
+    # for the assertion that guards are part of that comparison at all.
+    items = subentries_from_config(original)
+    with_guards = entry_from_subentry_items(items, guards_to_data(original))
+    assert config_from_subentries(with_guards) == original
+    assert config_from_subentries(entry_from_subentry_items(items)) != original

@@ -53,7 +53,11 @@ test:
   than importing `homeassistant`, which is what keeps it on this list.
   Also the one place that groups and sorts rule subentries by
   `(mode, zone, order)` (`_grouped_rules`) — every other rule-ordering
-  consumer reads that function instead of re-deriving the sort (§9).
+  consumer reads that function instead of re-deriving the sort (§9) — and
+  the one writer of `entry.data["guards"]` (`guards_to_data`), which
+  `__init__.py`'s migration, `config_flow.py`'s first run and
+  `services.py`'s import all call rather than each serializing guards
+  themselves.
 - `conformance.py` — `diff_configs(live, reference)`, a field-by-field
   `Config` equality check, no YAML/text comparison. Used both by
   `__init__.py`'s startup repair-issue check and by the options-flow
@@ -207,9 +211,10 @@ orientation instead of needing a copy per facade.
 
 A `Config` is parsed by `config_schema.load_config`/`load_config_file` from
 one YAML document with up to seven top-level keys: `blinds`, `zones`,
-`modes`, `conditions`, `values`, `rules`, `guards`. (`guards` is accepted
-and stored on `Config.guards` but not otherwise interpreted anywhere in
-this codebase today — its schema is not settled; see `docs/rationale.md`.)
+`modes`, `conditions`, `values`, `rules`, `guards`. (`guards` has a real,
+parsed, validated schema since phase 3 task 2, but nothing *evaluates* one
+yet — `guards.py` is the next task. See `docs/rationale.md`'s "The `guards:`
+schema" for the six decisions behind its shape.)
 
 - **`blinds`** — a list of `{entity, facade_azimuth?, tolerance?,
   travel_time?, tilt_after_arrival?, has_tilt?}`. `entity` is the only
@@ -236,6 +241,23 @@ this codebase today — its schema is not settled; see `docs/rationale.md`.)
   them, ANDed); a rule with no `if` matches unconditionally and should be
   last in its list. `then` is `{position?, tilt?}`, each `keep`, an
   integer 0..100, or `!ref <value name>`.
+- **`guards`** — an ordered list of safety interlocks, each
+  `{policy, when?, targets?, applies_to?, stage?, max_wait?, on_timeout?,
+  recheck_every?, then?, name?}`. `policy` is `skip`/`defer`/`force`; `when`
+  is an ordinary condition body (the same dialect, `!ref` included — guards
+  deliberately do not have a language of their own); `targets` names blind
+  entity ids and/or zone ids and defaults to every blind; `applies_to` is
+  `closing`/`opening`/`any`, where `closing` means a *decreasing position*
+  and never the slats; `stage` is `output` (override the decided action) or
+  `input` (drop the target before the engine is asked at all). A `defer`
+  must state both `max_wait` (`null` = wait indefinitely, a value and not an
+  omission) and `on_timeout` (`proceed`/`abandon`, no default — the two are
+  opposites and both are in real use), and carries `recheck_every` so a
+  pending wait survives a restart without a second hand-written watchdog.
+  A `force` states the action it imposes in `then`. Guards resolve
+  first-match-wins in written order, exactly like rules; there are no
+  numeric priorities. `docs/example-config.yaml` has a worked example of
+  all four shapes.
 
 A mode or zone id must not contain a `.` — `engine.evaluate` joins
 `f"{mode}.{zone_id}"` with a plain string concatenation and
@@ -253,8 +275,11 @@ check.
 **The same seven keys, as Home Assistant config-entry subentries.** Since
 phase 4, a config entry can hold this same `Config` as six subentry types
 (`blind`, `zone`, `value`, `condition`, `mode`, `rule` — one per YAML key
-that is naturally "many small items"; `guards` is carried through in
-`entry.data` unchanged, its schema still unsettled) instead of, or as well
+that is naturally "many small items"; `guards` lives in `entry.data` as the
+same list of mappings a YAML `guards:` key holds, parsed by the same
+`config_schema.parse_guards` and written back by `config_store.guards_to_data`
+— only its *storage* is different, not its schema, and only until a `guard`
+subentry type exists) instead of, or as well
 as, a YAML file. `config_store.config_from_subentries` reads that shape into
 the identical `Config` `config_schema.load_config` builds from text;
 `config_store.subentries_from_config` is the inverse. A `mode`/`rule`
@@ -353,10 +378,18 @@ corresponding section:
   instructs whoever lands phase 3 to `git rm tests/test_no_movement.py` in
   that commit — not to carve an exception into the check for the new,
   correct code.
-- **Phase 3 — execution. Task 1 landed; still moves nothing.** `planner.py`
+- **Phase 3 — execution. Tasks 1 and 2 landed; still moves nothing.**
+  `planner.py`
   (§2) turns a decided `Action` into a described sequence of commands, and
   is tested over the whole (capability × current position × current tilt ×
-  target) grid in `tests/test_planner.py`. Nothing consumes it yet: no
+  target) grid in `tests/test_planner.py`. Task 2 gave `guards:` a real
+  schema (§4): parsed by `config_schema`, validated by `validation`,
+  round-tripped by `dump_config`/`config_store`, and read by
+  `referenced_entities` so a guard's own entities are subscribed to — but
+  **nothing evaluates a guard against a `World` yet.** There is no
+  `guards.py`; that is the next task, and it is where the seven scattered
+  re-implementations of the house's door/sauna interlock actually collapse
+  into one. Nothing consumes the schema yet: no
   module in this repository issues a Home Assistant service call anywhere
   (that is exactly what phase 2's guard proves) — `tests/test_no_movement.py`
   is still in the repo, still passing, and now covers `planner.py` too.

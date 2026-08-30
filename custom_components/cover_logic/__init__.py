@@ -277,7 +277,7 @@ async def async_migrate_entry(hass: "HomeAssistant", entry: "CoverLogicConfigEnt
             # top-level import.
             from homeassistant.config_entries import ConfigSubentry  # noqa: PLC0415
 
-            from .config_store import subentries_from_config  # noqa: PLC0415
+            from .config_store import guards_to_data, subentries_from_config  # noqa: PLC0415
             from .services import _title_for  # noqa: PLC0415  (reused, not reinvented)
 
             try:
@@ -303,7 +303,7 @@ async def async_migrate_entry(hass: "HomeAssistant", entry: "CoverLogicConfigEnt
                 )
 
             new_data = {k: v for k, v in entry.data.items() if k != CONF_CONFIG_PATH}
-            new_data["guards"] = list(config.guards)
+            new_data["guards"] = guards_to_data(config)
             hass.config_entries.async_update_entry(
                 entry, data=new_data, version=CONFIG_ENTRY_VERSION
             )

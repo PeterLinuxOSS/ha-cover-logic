@@ -21,7 +21,7 @@ from homeassistant.config_entries import ConfigSubentry
 
 from cover_logic import async_migrate_entry
 from cover_logic.config_schema import load_config
-from cover_logic.config_store import config_from_subentries, subentries_from_config
+from cover_logic.config_store import config_from_subentries, guards_to_data, subentries_from_config
 from cover_logic.const import CONF_CONFIG_PATH, CONFIG_ENTRY_VERSION
 
 # One blind, one zone, one fallback mode, an unconditional catch-all rule and
@@ -39,7 +39,7 @@ modes:
 rules:
   any.z:
     - {then: {position: keep, tilt: keep}}
-guards: [{name: dummy}]
+guards: [{policy: skip, applies_to: closing, targets: [cover.a]}]
 """
 
 
@@ -124,7 +124,7 @@ def test_migrate_skips_import_when_subentries_already_exist_at_the_old_version(
     # `async_update_entry` call (which sets `guards` and `version` together;
     # see the module docstring).
     entry = make_entry(
-        {CONF_CONFIG_PATH: path, "guards": list(config.guards)}, subentries=existing, version=1
+        {CONF_CONFIG_PATH: path, "guards": guards_to_data(config)}, subentries=existing, version=1
     )
     hass = setup_hass()
 

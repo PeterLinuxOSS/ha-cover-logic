@@ -6,11 +6,17 @@ Builds it from Home Assistant config subentries instead of YAML text.
 Six of them are naturally "many small items" -- a list or a mapping of
 individually-editable entries -- and each becomes its own subentry type here:
 `blind`, `zone`, `mode`, `condition`, `value`, `rule`. The seventh, `guards`,
-is not one of them: its schema is not settled (see `MODELS.md` §4 /
-`docs/rationale.md`), so it is never modelled as individual subentry rows --
-it is carried through unchanged from `entry.data["guards"]`, exactly as
-`config_schema.load_config` carries it through unchanged from the YAML
-top-level `guards:` key.
+is not one of them *yet*: it lives in `entry.data["guards"]` as the list of
+mappings a YAML `guards:` key holds, and is parsed out of there by
+`config_schema.parse_guards` -- the same function the YAML door uses, on the
+same shape, so the two doors cannot disagree about what a guard means. Only
+the *storage* differs, and only until a `guard` subentry type exists; nothing
+about the schema is deferred any more.
+
+`guards_to_data` is the inverse and the only place that writes that key --
+`__init__.py`'s migration, `config_flow.py`'s first run and `services.py`'s
+import all call it rather than each building the list themselves, because a
+`Guard` is no longer something `list()` can turn back into storable data.
 
 **Ordering.** A `rule` subentry carries an explicit integer `order`, and so
 does a `mode` subentry. Home Assistant subentries are a flat list with no
@@ -78,6 +84,8 @@ from .config_schema import (
     _reject_zone_id,
     _rule_to_dict,
     _zone_to_dict,
+    guard_to_dict,
+    parse_guards,
     unparse_condition,
 )
 from .const import RULE_DEFAULT_ZONE
@@ -318,7 +326,13 @@ def config_from_subentries(entry: Any) -> Config:
         rules=_build_rules(entry, raw_conditions, values),
         conditions=conditions,
         values=values,
-        guards=tuple((entry.data or {}).get("guards") or ()),
+        # `_to_reftag` first, for the same reason `_build_rules` does it: a
+        # guard's `when` and its `then` may point at a named condition or
+        # value through this module's `{"ref": ...}` marker, which is what
+        # the YAML door spells `!ref`.
+        guards=parse_guards(
+            _to_reftag((entry.data or {}).get("guards") or []), raw_conditions, values
+        ),
     )
 
 
@@ -472,17 +486,42 @@ class _StubEntry:
         self.subentries = subentries
 
 
+def guards_to_data(config: Config) -> list[dict[str, Any]]:
+    """`config.guards` as the plain list of mappings `entry.data["guards"]` holds.
+
+    The inverse of the `parse_guards` call in `config_from_subentries`, and
+    the only writer of that key: `__init__.async_migrate_entry`,
+    `config_flow`'s two entry-creating steps and `services._async_import_
+    config` all go through here. Before guards were parsed, each of those
+    wrote `list(config.guards)` -- with `Guard` a frozen dataclass that would
+    now store objects Home Assistant cannot serialize into `.storage`, and
+    four independent places to notice it.
+
+    Uses this module's own `{"ref": "<name>"}` marker, not the YAML `!ref`
+    tag, for the same reason `_ref_marker` exists at all: subentry data is
+    plain JSON-shaped data with no tags in it.
+    """
+    ref_names = {id(ref): name for name, ref in config.values.items()}
+    return [guard_to_dict(guard, ref_names, _ref_marker) for guard in config.guards]
+
+
 def entry_from_subentry_items(
-    items: list[tuple[str, dict[str, Any]]], guards: tuple = ()
+    items: list[tuple[str, dict[str, Any]]], guards_data: list[dict[str, Any]] | None = None
 ) -> _StubEntry:
     """Build the minimal entry `config_from_subentries` can read from `(type, data)` pairs.
 
     Shared by `subentries_from_config`'s own round-trip self-check below and
     by `tests/test_config_store.py`'s tests for it, so neither has to
     fabricate a second stand-in for "an entry with exactly these subentries".
+
+    `guards_data` is storage-shaped (what `guards_to_data` produces), not a
+    tuple of `Guard`s: this builds the entry as Home Assistant would have
+    stored it, and `config_from_subentries` parses it back exactly as it
+    would after a restart -- which is what makes the self-check below a check
+    on the serialization too, not only on the subentry list.
     """
     subentries = {str(i): _StubSubentry(kind, data) for i, (kind, data) in enumerate(items)}
-    return _StubEntry(data={"guards": list(guards)}, subentries=subentries)
+    return _StubEntry(data={"guards": list(guards_data or [])}, subentries=subentries)
 
 
 def subentries_from_config(config: Config) -> list[tuple[str, dict[str, Any]]]:
@@ -547,7 +586,7 @@ def subentries_from_config(config: Config) -> list[tuple[str, dict[str, Any]]]:
             data["order"] = index * _ORDER_STEP
             items.append((RULE, data))
 
-    rebuilt = config_from_subentries(entry_from_subentry_items(items, config.guards))
+    rebuilt = config_from_subentries(entry_from_subentry_items(items, guards_to_data(config)))
     if rebuilt != config:
         msg = (
             "subentries_from_config produced subentries that do not round-trip back to "

@@ -8,6 +8,8 @@ named constants into a single shape.
 from dataclasses import dataclass, field
 from typing import Self
 
+from .const import GUARD_ANY, GUARD_STAGE_OUTPUT
+
 
 class Keep:
     """Sentinel meaning 'do not touch this axis'.
@@ -38,6 +40,41 @@ class Keep:
 
 
 KEEP = Keep()
+
+
+class Unset:
+    """Sentinel meaning 'this key was not written at all'.
+
+    Distinct from `None`, which for `Guard.max_wait` is a *value*: `max_wait:
+    null` says "wait without any limit", which two of the house's five defers
+    genuinely mean. Absence and `null` therefore cannot share a spelling, or
+    `validation` could not tell a guard that states an unlimited wait from one
+    that forgot to state anything -- see `docs/rationale.md`, "Why `defer`
+    states both `max_wait` and `on_timeout`".
+
+    Singleton for the same reasons `Keep` is: `is UNSET` works, and two
+    `Guard`s built independently (one from YAML, one from subentries) still
+    compare equal.
+    """
+
+    _instance: "Unset | None" = None
+
+    def __new__(cls) -> Self:
+        """Return the one and only `Unset` instance, creating it on first use."""
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __repr__(self) -> str:
+        """Return the debug repr, always `"UNSET"`."""
+        return "UNSET"
+
+    def __reduce__(self):
+        """Unpickle back to the singleton instead of a new `Unset`."""
+        return (Unset, ())
+
+
+UNSET = Unset()
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,9 +139,58 @@ class Rule:
     name: str = ""
 
 
+@dataclass(frozen=True, slots=True)
+class Guard:
+    """One safety interlock: a condition, a policy, and what it applies to.
+
+    A guard is deliberately nothing more than that. `when` is an ordinary
+    condition body -- the same dialect `conditions.py` already evaluates for
+    modes and rules, refs included -- rather than a second condition language
+    living inside guards, which would give the same idea two owners and let
+    them diverge (`docs/rationale.md`, "Why a guard's `when` is the ordinary
+    condition dialect").
+
+    Fields:
+
+    - `policy` -- one of `const.GUARD_POLICIES`. Checked by `validation`, not
+      by the parser, so an unknown one is a reported problem rather than an
+      unloadable configuration.
+    - `when` -- condition body, or `None` for "always".
+    - `targets` -- blind entity ids and/or zone ids. Empty means every blind;
+      a zone id stands for its members. (The two namespaces cannot collide:
+      a zone id may not contain a `.` and a Home Assistant entity id always
+      does.)
+    - `applies_to` -- which movement this guard is about; see
+      `const.GUARD_CLOSING` for why `closing` is the position axis alone.
+    - `stage` -- `input` (drop the target before the engine decides it) or
+      `output` (override the action the engine decided).
+    - `max_wait`/`on_timeout`/`recheck_every` -- `defer` only. `max_wait` is
+      `UNSET` when the key was absent, `None` when it was written as `null`
+      (wait indefinitely), otherwise a whole number of seconds.
+    - `then` -- `force` only: the action to impose.
+    - `name` -- free label, for traces and the UI.
+
+    Order in `Config.guards` is meaning, not presentation: guards resolve
+    first-match-wins, exactly like rules, so a contradiction between two of
+    them is settled by which one is written first rather than by a numeric
+    priority nobody can keep globally consistent.
+    """
+
+    policy: str
+    when: dict | list | None = None
+    targets: tuple[str, ...] = ()
+    applies_to: str = GUARD_ANY
+    stage: str = GUARD_STAGE_OUTPUT
+    max_wait: "int | Unset | None" = UNSET
+    on_timeout: str | None = None
+    recheck_every: int | None = None
+    then: Action | None = None
+    name: str = ""
+
+
 @dataclass(frozen=True)
 class Config:
-    """The whole parsed configuration: blinds, zones, modes and rules."""
+    """The whole parsed configuration: blinds, zones, modes, rules and guards."""
 
     blinds: dict[str, Blind]
     zones: dict[str, Zone]
@@ -112,4 +198,4 @@ class Config:
     rules: dict[str, tuple[Rule, ...]]
     conditions: dict[str, dict] = field(default_factory=dict)
     values: dict[str, Ref] = field(default_factory=dict)
-    guards: tuple = ()
+    guards: tuple[Guard, ...] = ()

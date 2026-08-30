@@ -36,3 +36,63 @@ RULE_DEFAULT_ZONE = "*"
 # Default event kind used when nothing more specific applies.
 EVENT_ARRIVAL = "arrival"
 EVENT_STATE_CHANGE = "state_change"
+
+# ---------------------------------------------------------------------------
+# `guards:` -- the vocabularies one guard entry is written in.
+#
+# Here rather than in `model.py` for the same reason the `COND_*` strings are
+# here: the pure core (`config_schema` parsing them, `validation` checking
+# them, `model` defaulting to them) and the Home Assistant layer (a future
+# `guard` subentry flow's selectors, its `strings.json` labels) must spell
+# them identically, and a second copy of a string vocabulary is a second
+# thing that can drift.
+# ---------------------------------------------------------------------------
+
+# What a matching guard does. There is deliberately no `skip_close` here:
+# direction is a *field* (`GUARD_DIRECTIONS`), not a second copy of every
+# policy -- see `docs/rationale.md`, "Why direction is a guard field and not
+# a `skip_close` policy".
+GUARD_SKIP = "skip"
+GUARD_DEFER = "defer"
+GUARD_FORCE = "force"
+GUARD_POLICIES = (GUARD_SKIP, GUARD_DEFER, GUARD_FORCE)
+
+# Which movement a guard is about.
+#
+# `closing` means a DECREASING POSITION, and nothing else. For a blind with
+# slats, "closing it" is two-dimensional in ordinary speech -- drive it down
+# *and* shut the slats -- but every door/sauna interlock in the house this
+# schema is derived from exists to stop one specific thing: the blind being
+# driven down onto an open door or a running sauna. Slats moving on a blind
+# that is already where it is hurt nobody. Reading `closing` as "any downward
+# movement including the slats" would make nine of the house's thirteen
+# guards refuse tilt commands they have always allowed -- so the axis is the
+# position axis, on purpose.
+GUARD_CLOSING = "closing"
+GUARD_OPENING = "opening"
+GUARD_ANY = "any"
+GUARD_DIRECTIONS = (GUARD_ANY, GUARD_CLOSING, GUARD_OPENING)
+
+# When a guard gets its say: before the engine is asked (the guard removes
+# the target from the input, so no decision is made for it at all) or after
+# (the guard inspects the decided action and overrides it). Both shapes exist
+# in the house -- see `docs/rationale.md`, "Why a guard has a `stage`".
+GUARD_STAGE_INPUT = "input"
+GUARD_STAGE_OUTPUT = "output"
+GUARD_STAGES = (GUARD_STAGE_INPUT, GUARD_STAGE_OUTPUT)
+
+# What a `defer` does once `max_wait` has elapsed. These two are opposites,
+# both are in use in the house, and which one is meant is never inferable --
+# hence no default anywhere (see `docs/rationale.md`, "Why `defer` states
+# both `max_wait` and `on_timeout`").
+GUARD_TIMEOUT_PROCEED = "proceed"
+GUARD_TIMEOUT_ABANDON = "abandon"
+GUARD_TIMEOUTS = (GUARD_TIMEOUT_ABANDON, GUARD_TIMEOUT_PROCEED)
+
+# How often a pending `defer` is re-examined when the guard's own config does
+# not say. Restart resilience is a property of the guard, not a second object
+# a human has to remember to pair with it, so every parsed `defer` carries a
+# `recheck_every` whether its author wrote one or not. 900 s is the interval
+# the house's one *working* restart watchdog actually runs at
+# (`time_pattern: /15`), chosen over inventing a number.
+GUARD_DEFAULT_RECHECK = 900
