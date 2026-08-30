@@ -288,19 +288,57 @@ worth surfacing -- something in the configuration is producing an impossible
 number, and the only evidence is the clamp. Hanging it off a command would
 throw it away exactly when it matters.
 
-### Why tilt is skipped from the top, and why `None` is not "up"
+### Why there is no top threshold (and why there was one)
 
-The angle is only ever set by movement, so from the fully open position the
-tilt cannot be set at all; a plan that asks for one is wrong. The check is
-against where the blind will *end up* after this plan runs, not where it
-stands now -- a blind being driven to 100 must not be given a tilt command
-just because it currently reports 40.
+For two commits this module had a `TOP_THRESHOLD = 95` and skipped the tilt
+command for any blind that would end up at or above it, on the reasoning that
+the angle is only ever set by movement, so from the fully open position the
+tilt cannot be set at all. That is a deliberate reversal, and this section is
+the reversal, not a tidy-up of it.
 
-An unknown position (`None`) is deliberately *not* treated as "up". The safe
-direction throughout the house's scripts is to send a command rather than
-silently drop it when an attribute cannot be read ("Bezpecny smer je prikaz
-radsej poslat nez ho ticho zahodit"), and the same applies to an unknown
-current value on either axis: unknown means the command goes out.
+**The hardware claim may well be true.** The house's own memory says it
+outright (`zaluzie-motor-uhol-pohybom`: "z hornej polohy sa uhol nastavit
+nedá"), and nothing here contradicts it. The problem is what follows from it.
+If it is true, then the motor is the thing that ignores the command, and the
+house has been sending that harmless no-op for years: `/config/scripts.yaml`'s
+tilt filters -- `tilt100_f`, `tilt50_f`, `zavriet_t0_f`, `zavriet_t50_f`,
+`zavriet_t100_f`, `pozicia_tilt_f` -- read `current_tilt_position` and
+*nothing else*; not one of them looks at `current_position`. And
+`zaluzie_otvorit` drives to 100, waits for arrival, and *then* sends
+`open_cover_tilt` three times over, to every target, including the blinds
+that have just reached the top. Encoding the skip here therefore does not
+reproduce the house's behaviour, it diverges from it: `Action(KEEP, 50)`
+against a blind reporting 97 made this module emit nothing while the house
+sends `set_cover_tilt_position: 50`. "Parity first, improvements later"
+(MODELS.md §9) points squarely at removing it, and the migration gate cannot
+referee the question -- it compares *decisions*, and this band lives entirely
+below them.
+
+The skip also had a cost that was not theoretical. It let a tolerance on one
+axis silently kill the command on the *other*:
+`plan(blind, 99, 100, Action(position=94, tilt=0))` returned an empty plan.
+The dead band skipped the position (|99-94| is 5, not >5), so the "where will
+it end up" position fell back to the current 99, which read as "at the top",
+which killed the tilt as collateral -- a blind nowhere near either target
+receiving no command at all, and `Plan`'s own docstring ("empty means already
+where it should be") made into a lie. Nothing corrects it afterwards:
+`config_schema.referenced_entities(fixtures/dom_peter.yaml)` contains no
+`cover.*` entity, so a blind's own state change triggers no recompute. That
+is the same failure class as an `if` in `automations.yaml` that ANDs "what
+triggered this" with "what state it is in" and thereby mutes branches that
+had nothing to do with the state.
+
+So the tilt axis is now decided by the tilt axis alone: the axis is set (not
+`KEEP`) and the reported angle is outside the dead band. What settles the
+hardware question is the live `dry_run` day, not this file -- and if it turns
+out the motor really does ignore a tilt near the top, the correct place to
+learn that is from a real blind, with the house's own no-op as the baseline.
+
+`None` on either axis is deliberately not treated as any particular value.
+The safe direction throughout the house's scripts is to send a command rather
+than silently drop it when an attribute cannot be read ("Bezpecny smer je
+prikaz radsej poslat nez ho ticho zahodit"), so an unknown current value
+means the command goes out.
 
 ### Why an unresolved `Ref` raises instead of being ignored
 

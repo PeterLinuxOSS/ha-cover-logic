@@ -9,6 +9,7 @@ implementation that returns no commands at all must fail here, not sail
 through a suite of "if a command is emitted, then ..." implications.
 """
 
+import collections
 import itertools
 
 from hypothesis import given, settings, strategies as st
@@ -21,7 +22,6 @@ from cover_logic.planner import (
     AXIS_TILT,
     DEAD_BAND,
     SETTLE_SECONDS,
-    TOP_THRESHOLD,
     Clamp,
     Plan,
     PlannerError,
@@ -77,12 +77,6 @@ def _clamp(value):
     return max(0, min(100, value))
 
 
-def _resulting_position(result, current):
-    """Where the blind ends up if `result` runs -- read off the plan, not recomputed."""
-    command = _only(result.commands, SetPosition)
-    return current if command is None else command.position
-
-
 # --- the grid ---------------------------------------------------------------
 
 
@@ -114,7 +108,7 @@ def test_a_blind_far_from_its_target_always_gets_a_position_command():
     assert seen > 0
 
 
-def test_a_tilt_command_is_only_sent_when_it_is_reachable_and_worth_it():
+def test_a_tilt_command_is_only_sent_when_it_is_far_enough_to_be_worth_it():
     sent = skipped = 0
     for blind, position, tilt, action in _every_case():
         result = plan(blind, position, tilt, action)
@@ -126,12 +120,37 @@ def test_a_tilt_command_is_only_sent_when_it_is_reachable_and_worth_it():
         assert blind.has_tilt
         assert action.tilt is not KEEP, "KEEP must never produce a tilt command"
         assert tilt is None or abs(tilt - command.tilt) > DEAD_BAND
-        # The angle is only ever set by movement, so a tilt command is only
-        # ever legitimate for a blind that does not end up at the top.
-        final = _resulting_position(result, position)
-        assert final is None or final < TOP_THRESHOLD
     assert sent > 0
     assert skipped > 0
+
+
+def test_slats_far_from_their_target_always_get_a_tilt_command():
+    """The other half of the tilt dead band, and the half that was missing.
+
+    Its twin on the position axis
+    (`test_a_blind_far_from_its_target_always_gets_a_position_command`) had no
+    counterpart here, so nothing in this file asserted a tilt command must
+    ever be *emitted* -- only that one, if emitted, was justified. A `plan()`
+    that could close the slats but never open them satisfied the whole suite,
+    while "set the slats to 100" would have planned nothing at all: the "room
+    stayed dark" failure, arriving through the planner.
+
+    Hence the two counters. `seen` alone would not catch it -- the direction
+    is what matters, so `opening` pins that the closed-to-open half of the
+    grid is genuinely walked.
+    """
+    seen = opening = 0
+    for blind, position, tilt, action in _every_case():
+        if not blind.has_tilt or action.tilt is KEEP:
+            continue
+        target = _clamp(action.tilt)
+        if tilt is not None and abs(tilt - target) <= DEAD_BAND:
+            continue
+        seen += 1
+        opening += tilt is not None and target > tilt
+        assert SetTilt(ENTITY, target) in plan(blind, position, tilt, action).commands
+    assert seen > 0
+    assert opening > 0, "no slat-opening command was ever checked -- the invariant is half blind"
 
 
 def test_a_blind_without_tilt_never_receives_a_tilt_command():
@@ -225,27 +244,69 @@ def _apply(result: Plan, position, tilt):
     return position, tilt
 
 
-@given(
-    has_tilt=st.booleans(),
-    after=st.booleans(),
-    position=_CURRENT,
-    tilt=_CURRENT,
-    want_position=_AXIS,
-    want_tilt=_AXIS,
-)
-@settings(max_examples=1000, deadline=None)
-def test_replanning_from_the_state_the_plan_produces_asks_for_nothing(
-    has_tilt, after, position, tilt, want_position, want_tilt
-):
-    """Idempotence: the matrix recomputes every ~10 minutes and must not keep pushing."""
-    blind = _blind(has_tilt=has_tilt, tilt_after_arrival=after)
-    action = Action(position=want_position, tilt=want_tilt)
+def _wants_a_command(blind, position, tilt, action):
+    """Whether these inputs are genuinely off target on at least one axis.
 
-    first = plan(blind, position, tilt, action)
-    position, tilt = _apply(first, position, tilt)
-    second = plan(blind, position, tilt, action)
+    Computed from the inputs alone, never from a `Plan` -- a predicate read
+    off the thing under test could not contradict it.
+    """
+    for current, want, live in (
+        (position, action.position, True),
+        (tilt, action.tilt, blind.has_tilt),
+    ):
+        if not live or want is KEEP:
+            continue
+        if current is None or abs(current - _clamp(want)) > DEAD_BAND:
+            return True
+    return False
 
-    assert second.commands == (), f"second pass still wants {second.commands} after {first}"
+
+def test_replanning_from_the_state_the_plan_produces_asks_for_nothing():
+    """Idempotence: the matrix recomputes every ~10 minutes and must not keep pushing.
+
+    `second.commands == ()` on its own detects over-commanding and nothing
+    else: a `plan()` that returned an empty `Plan` for every input in the
+    world satisfies it unconditionally (22 of the other tests in this file
+    fail under that mutation; this property sailed through). So the property
+    also asserts the *first* plan was non-empty wherever the inputs were
+    genuinely off target, and counts that branch -- the module docstring
+    promises every vacuously-passable invariant carries a counter, and this
+    one did not.
+
+    The `@given` function is called from inside a plain test so the counter
+    can be asserted after the examples have run; a bare `@given` test body
+    executes once per example and has nowhere to put that check.
+    """
+    exercised = collections.Counter()
+
+    @given(
+        has_tilt=st.booleans(),
+        after=st.booleans(),
+        position=_CURRENT,
+        tilt=_CURRENT,
+        want_position=_AXIS,
+        want_tilt=_AXIS,
+    )
+    @settings(max_examples=1000, deadline=None)
+    def check(has_tilt, after, position, tilt, want_position, want_tilt):
+        blind = _blind(has_tilt=has_tilt, tilt_after_arrival=after)
+        action = Action(position=want_position, tilt=want_tilt)
+
+        first = plan(blind, position, tilt, action)
+        if _wants_a_command(blind, position, tilt, action):
+            exercised["off_target"] += 1
+            assert first.commands != (), (
+                f"nothing planned for a blind at ({position}, {tilt}) told {action}"
+            )
+        position, tilt = _apply(first, position, tilt)
+        second = plan(blind, position, tilt, action)
+
+        assert second.commands == (), f"second pass still wants {second.commands} after {first}"
+
+    check()
+    assert exercised["off_target"] > 0, (
+        "no example was ever off target -- the non-empty half of this property is vacuous"
+    )
 
 
 @given(
@@ -317,18 +378,45 @@ def test_a_move_with_no_tilt_behind_it_carries_no_wait():
     assert plan(_blind(), 100, 0, Action(position=0, tilt=0)).commands == (SetPosition(ENTITY, 0),)
 
 
-def test_no_tilt_is_asked_of_a_blind_that_ends_up_at_the_top():
-    # The angle is only ever set by movement; from the top it cannot be set.
+def test_a_blind_at_the_top_is_still_told_its_slat_angle():
+    """No position gate on the tilt axis -- the house has none either.
+
+    Every tilt filter in `/config/scripts.yaml` (`tilt100_f`, `tilt50_f`,
+    `zavriet_t0_f`, `zavriet_t50_f`, `zavriet_t100_f`, `pozicia_tilt_f`) reads
+    `current_tilt_position` and never `current_position`, and
+    `zaluzie_otvorit` drives to 100, waits for arrival and *then* sends
+    `open_cover_tilt` three times to every target including the blinds that
+    just reached the top. Whether the motor can act on it is a fact about the
+    hardware for the live `dry_run` day to settle; suppressing the command
+    here would be a divergence from the house in a band the migration gate
+    cannot see. See docs/rationale.md -- "Why there is no top threshold".
+    """
     assert plan(_blind(), 40, 0, Action(position=100, tilt=100)).commands == (
         SetPosition(ENTITY, 100),
+        WaitForPosition(ENTITY, 100, DEAD_BAND, 90.0),
+        Settle(SETTLE_SECONDS),
+        SetTilt(ENTITY, 100),
     )
-    assert plan(_blind(), 100, 0, Action(position=KEEP, tilt=100)).commands == ()
+    assert plan(_blind(), 100, 0, Action(position=KEEP, tilt=100)).commands == (
+        SetTilt(ENTITY, 100),
+    )
+    # The case that diverged from the house: `Action(KEEP, 50)` at 97.
+    assert plan(_blind(), 97, 100, Action(position=KEEP, tilt=50)).commands == (
+        SetTilt(ENTITY, 50),
+    )
 
 
-def test_a_blind_just_below_the_top_still_counts_as_up():
-    assert plan(_blind(), 40, 0, Action(position=95, tilt=100)).commands == (
-        SetPosition(ENTITY, 95),
-    )
+def test_a_tolerance_on_one_axis_never_silences_the_other():
+    """The defect the top threshold caused, pinned as its own case.
+
+    99 is five points from 94, so the position is inside the dead band and
+    skipped. Under the removed threshold the "where will it end up" position
+    then fell back to 99, read as "at the top", and killed the tilt too: a
+    blind nowhere near its slat target received nothing at all, and nothing
+    corrects that afterwards (`referenced_entities` names no `cover.*` entity,
+    so the blind's own state change triggers no recompute).
+    """
+    assert plan(_blind(), 99, 100, Action(position=94, tilt=0)).commands == (SetTilt(ENTITY, 0),)
 
 
 def test_an_unreadable_position_sends_the_command_anyway():
@@ -391,9 +479,22 @@ def test_constants_still_match_the_house():
     """Cisla, ktore dnes bezia v `/config/scripts.yaml`, pripnute na tvrdo."""
     # `- delay: {seconds: 2}` medzi dojazdom a tiltom (scripts.yaml 1457, 1517)
     assert SETTLE_SECONDS == 2.0
-    # `dol = 95 if c >= 100 else c - 5` -- dom drzi obe cisla oddelene
+    # `p > 5` v `zavriet_dole`, `p < 95` v `hore_f` -- pat bodov od koncoveho
+    # dorazu je prah, na ktorom sa dom ustalil.
     assert DEAD_BAND == 5
-    assert TOP_THRESHOLD == 95
+
+
+def test_the_settle_pause_is_two_seconds_whatever_the_blind():
+    """Pripina POUZITIE konstanty, nie ju samu.
+
+    `_blind()` fixuje `travel_time=60.0`, takze `Settle(SETTLE_SECONDS)` a
+    `Settle(blind.travel_time / 30.0)` davaju na kazdom doterajsom teste
+    rovnaku dvojku a odvodenie pauzy od jazdy by cez sadu preslo. Druhy
+    `travel_time` je jediny sposob, ako tie dve moznosti odlisit.
+    """
+    for travel in (30.0, 60.0, 120.0):
+        result = plan(_blind(travel_time=travel), 100, 100, Action(position=0, tilt=0))
+        assert _only(result.commands, Settle) == Settle(2.0), f"travel_time={travel}"
 
 
 def test_the_arrival_wait_is_the_ninety_seconds_the_house_waits():
@@ -403,17 +504,3 @@ def test_the_arrival_wait_is_the_ninety_seconds_the_house_waits():
     result = plan(blind, 100, 100, Action(position=0, tilt=0))
     wait = next(c for c in result.commands if isinstance(c, WaitForPosition))
     assert wait.timeout == 90.0
-
-
-def test_the_top_threshold_is_not_derived_from_the_dead_band():
-    """Su to nezavisle fakty; odvodene by sa hybali spolu.
-
-    Preladenie `DEAD_BAND` na 3 (legitimna oprava pre kmitajucu zaluziu) by
-    pri odvodeni ticho posunulo hranicu hore na 97, kym dom zostane na 95.
-    """
-    # Cez verejne API, nie cez `_at_top`: zaujima nas spravanie, nie vnutro.
-    blind = _blind()
-    at_threshold = plan(blind, TOP_THRESHOLD, 100, Action(position=KEEP, tilt=0))
-    assert at_threshold.commands == (), "na hranici uz su lamely nedosiahnutelne"
-    below = plan(blind, TOP_THRESHOLD - 1, 100, Action(position=KEEP, tilt=0))
-    assert below.commands == (SetTilt(ENTITY, 0),), "tesne pod hranicou sa este daju nastavit"
