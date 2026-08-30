@@ -154,6 +154,7 @@ _CODE_OWNERS: dict[str, frozenset[str]] = {
     "guard_force_needs_action": frozenset(),
     "guard_bad_direction": frozenset(),
     "guard_bad_stage": frozenset(),
+    "guard_input_direction": frozenset(),
     "guard_unknown_target": frozenset(),
 }
 

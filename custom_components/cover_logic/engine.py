@@ -32,7 +32,7 @@ def evaluate(config: Config, world: World) -> Decision:
     # The call must stay -- it raises on a duplicate or orphaned blind -- but
     # the ownership map itself is never read here; `_apply_rules` below
     # resolves each blind's rules straight from `config.rules`.
-    _resolve_ownership(config)
+    resolve_ownership(config)
 
     targets: dict[str, Action] = {}
     trace: dict[str, str] = {}
@@ -101,11 +101,16 @@ def _resolve_mode(config: Config, world: World) -> str:
     raise EngineError(msg)
 
 
-def _resolve_ownership(config: Config) -> dict[str, str]:
+def resolve_ownership(config: Config) -> dict[str, str]:
     """Exactly one zone owns each blind.
 
     Two owners and no owners are both the bug class this kills: a blind
     nobody decides is a blind nobody moves, silently, far from this check.
+
+    Public because `guards.py` needs the same blind -> zone map to build the
+    `Target` a guard's `when` is evaluated against, and a second copy of a
+    mapping that decides behaviour is the drift this project has already been
+    bitten by once (`MODELS.md` §9, the rule-grouping sort).
     """
     owner: dict[str, str] = {}
     for zone_id, zone in config.zones.items():
@@ -201,12 +206,19 @@ def _match_rules(
         label = f"{key}#{index}"
         if rule.name:
             label = f"{label} {rule.name}"
-        return _resolve_action(rule.then, world), label
+        return resolve_action(rule.then, world), label
 
     return None
 
 
-def _resolve_action(action: Action, world: World) -> Action:
+def resolve_action(action: Action, world: World) -> Action:
+    """Resolve both axes of `action` against `world`, leaving `KEEP` alone.
+
+    Public because a `force` guard's `then` has to be resolved the same way a
+    rule's `then` is -- same truncation, same unclamped result. Two spellings
+    of that would be two answers to "what does `!ref` mean", and only one of
+    them would be parity-checked.
+    """
     return Action(
         position=_resolve_value(action.position, world),
         tilt=_resolve_value(action.tilt, world),

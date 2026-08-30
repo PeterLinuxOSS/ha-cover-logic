@@ -209,6 +209,135 @@ for it. `stage: output` is the other. They are separate moments, which is
 also why `_check_guard_reachability` never lets a guard at one stage shadow
 a guard at the other, however broadly the first is written.
 
+## `guards.py`
+
+The schema above says what a guard *is*; this section is what evaluating one
+had to decide, and every one of these is a place a later reader would
+otherwise "simplify" in the wrong direction.
+
+### Why the stage is two entry points and never a parameter
+
+`screen(config, world)` runs the `input` guards; `review(config, world,
+decision, positions, screening)` runs the `output` ones. The stage is not an
+argument to either, and cannot be: `screen` has no `Decision` parameter to
+pass one through, because at that moment there is none. `review` in turn
+*requires* the `Screening` — the only thing that can produce one is `screen`,
+so "input stage first" is a fact about the signature rather than a sentence in
+a docstring, and a blind an input guard already claimed cannot be judged a
+second time because `review` is holding the record that it was.
+
+The alternative — one entry point taking `stage=` — is one keyword away from
+running the interlocks that drop a target at the moment the target has already
+been decided for, which is not an error any test would obviously catch: the
+result would still be a plausible action for every blind.
+
+### Why an `input` guard may not name a direction
+
+An `input` guard removes its target *before* anything has been decided for it.
+There is therefore no candidate command, and `applies_to` — which is a
+statement about a command — has nothing to be about. Both ways of guessing are
+bad, and in opposite directions:
+
+- honour it as `any` and the guard drops the blind from decisions its author
+  never meant to touch. That is the same harm `const.GUARD_CLOSING` warns
+  about (nine of the house's interlocks refusing commands they have always
+  allowed), reached through the stage rather than the axis;
+- ignore the guard at that stage and a safety interlock silently does nothing
+  — the failure this whole schema exists to end.
+
+So it is a configuration error: `validation`'s `guard_input_direction`
+(`ERROR`), and `guards.GuardError` if one reaches evaluation anyway. The
+house's real input-stage interlocks (the flower keeper's `zony_kvety`, the
+bedroom routing in `zaluzie_zavriet`) are all direction-agnostic, so nothing
+real is lost. The house's *directional* door filters — `zavriet_bezpecne` and
+friends — read the decided command and belong at the output stage, which is
+also where they are written today, inside the executor.
+
+### Why an unreadable position makes a directional guard fire
+
+Deciding "would this decrease the position" needs to know where the blind is.
+When the caller cannot say (no entry in `positions`, or an explicit `None` for
+an `unavailable` cover), the guard fires.
+
+This is the opposite polarity to `planner.plan`, where an unknown current
+position means "send the command anyway", and deliberately so: the planner is
+deciding whether an action is worth performing, and refusing to act on a
+missing reading is the worse of its two mistakes. A guard is deciding whether
+an action is *safe*, and an interlock switched off by a dead sensor is exactly
+the hazard it was installed against — the house has the case on file
+(`binary_sensor.sauna_running` is fail-open by construction: both its sources
+dying reads as "sauna is off").
+
+### Why a guard that fires governs the whole action, not half of it
+
+Direction *selects* whether the guard has anything to say. Once it does, a
+`skip` suppresses the entire `Action`, tilt axis included, rather than
+blocking the position and letting the slats through.
+
+Letting the tilt half survive would send the slats to a blind still standing
+where it was — the "lamely sa stratia" failure the house's own scripts already
+work around by waiting for arrival before tilting (`planner.py`'s
+`WaitForPosition`/`Settle` pair exists for it). A half-applied safety decision
+is also not a thing anyone can reason about later from a trace.
+
+`planner.DEAD_BAND` is likewise not consulted when judging the direction. A
+guard judges what a command *means*; the planner judges whether it is worth
+sending. Blocking a command the planner would have skipped anyway costs
+nothing, while a guard that stopped protecting inside the dead band would be a
+silent hole exactly where the two layers meet.
+
+### Why `Deferral` carries the deadline instead of `guards.py` waiting
+
+`guards.py` is pure and has no clock, so a `defer` cannot be executed here at
+all — but "cannot wait" is not the same as "cannot say what the wait is". The
+`Deferral` a deferred outcome carries names the guard, its `max_wait` (with
+`None` meaning indefinitely, a value and not an omission), its `on_timeout`,
+its `recheck_every`, and `held`: the action that "proceed" would perform.
+
+`held` is `None` for an input-stage defer, and that is the whole difference
+between the two stages once a wait is over. At the output stage a decision was
+made and held back, so proceeding means performing it. At the input stage no
+decision was ever made, so proceeding means asking the engine again — with
+whatever the world looks like by then, which three hours later is the right
+answer anyway.
+
+Without those fields on the outcome, `runner.py` would have to re-derive which
+guard deferred and re-read its configuration to find out how long for. That is
+the same "the explanation must travel with the answer" rule `Decision.trace`
+and `Problem.owners` already follow.
+
+### Why an unhonourable guard stops everything, loudly
+
+`_check_honourable` walks every guard — both stages, whether or not it would
+fire in this world — before either entry point does anything, and raises
+`GuardError` on an unknown policy, an unknown stage or direction, a `force`
+with no `then`, a `defer` missing `max_wait` or `on_timeout`, or the
+`input`+direction pair above.
+
+Every one of those is also an `ERROR` from `validate()`, so a configuration
+reaching this point failing one has skipped validation entirely — the same
+contract `planner.plan` has with an unresolved `Ref`. Checking all of them
+up front, rather than at the moment a guard would have fired, is deliberate:
+a check that only trips on some worlds is a check that ships broken and
+surfaces on the day the guard was needed.
+
+The tempting alternative — skip the broken guard and carry on — reproduces
+verbatim the defect the inventory found in the house: a `continue_on_timeout:
+true` with no `timeout` key, a line that looks like it bounds a wait and does
+nothing at all.
+
+### One owner, again
+
+Three things `guards.py` needs already existed, and all three are shared
+rather than re-written: `engine.resolve_action` (so a `force` guard's `!ref`
+resolves with the same truncation a rule's does), `engine.resolve_ownership`
+(so the `Target` a guard's `when` sees is built from the same blind→zone map
+the engine decides with), and `guards.guard_blinds`, which
+`validation._check_guard_reachability` now reads instead of its own copy — a
+static answer and a runtime answer to "which blinds does this guard cover"
+that could disagree is precisely the drift `MODELS.md` §9 records happening
+once already.
+
 ## `engine.py`
 
 ### Why `EngineError` must propagate uncontained out of `_evaluate_zone`

@@ -187,6 +187,19 @@ class Guard:
     then: Action | None = None
     name: str = ""
 
+    def label(self, index: int) -> str:
+        """How this guard is named to a human: its position, plus its name if it has one.
+
+        A method rather than two private helpers because both the health
+        report (`validation`) and the evaluation trace (`guards`) name the
+        same guard, and a reader who sees `guard #3 'wind'` in one and
+        something else in the other has to work out for themselves that they
+        are the same row. `index` is the argument because a guard's identity
+        *is* its position in a first-match-wins list -- it has no id of its
+        own (see `validation._guard_owner`).
+        """
+        return f"guard #{index} {self.name!r}" if self.name else f"guard #{index}"
+
 
 @dataclass(frozen=True)
 class Config:

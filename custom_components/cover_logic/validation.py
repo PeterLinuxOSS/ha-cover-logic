@@ -17,10 +17,12 @@ from .const import (
     GUARD_DIRECTIONS,
     GUARD_FORCE,
     GUARD_POLICIES,
+    GUARD_STAGE_INPUT,
     GUARD_STAGES,
     GUARD_TIMEOUTS,
     RULE_DEFAULT_ZONE,
 )
+from .guards import guard_blinds
 from .model import UNSET, Config, Guard
 
 ERROR = "error"
@@ -88,8 +90,13 @@ def _guard_owner(index: int) -> tuple[str, str]:
 
 
 def _guard_label(index: int, guard: Guard) -> str:
-    """How a guard is named in a problem message: its position, plus its name if it has one."""
-    return f"guard #{index} {guard.name!r}" if guard.name else f"guard #{index}"
+    """How a guard is named in a problem message: its position, plus its name if it has one.
+
+    Delegates to `Guard.label` so a health report and an evaluation trace name
+    the same guard the same way -- see that method for why it lives on the
+    model rather than being written out twice.
+    """
+    return guard.label(index)
 
 
 def validate(config: Config) -> list[Problem]:
@@ -137,31 +144,6 @@ def _check_blinds(config: Config) -> list[Problem]:
         for entity, blind in config.blinds.items()
         if not blind.travel_time > 0
     ]
-
-
-def _guard_blinds(config: Config, guard: Guard) -> set[str]:
-    """Which blinds `guard.targets` actually names.
-
-    No `targets` at all means every blind -- a guard is a house-wide safety
-    rule unless it says otherwise. A zone id stands for that zone's members,
-    so "do not close anything in the bedroom" survives a blind being added to
-    that zone later, which naming the blinds individually would not.
-
-    A target naming nothing real contributes nothing here (it is reported
-    separately as `guard_unknown_target`) rather than being treated as a
-    blind whose name happens not to exist yet -- otherwise a typo would widen
-    the guard's apparent scope in `_check_guard_reachability` below.
-    """
-    if not guard.targets:
-        return set(config.blinds)
-
-    out: set[str] = set()
-    for target in guard.targets:
-        if target in config.zones:
-            out |= set(config.zones[target].members)
-        elif target in config.blinds:
-            out.add(target)
-    return out
 
 
 def _direction_covers(outer: str, inner: str) -> bool:
@@ -300,6 +282,26 @@ def _check_guards(config: Config) -> list[Problem]:
                     owners=owners,
                 )
             )
+        elif guard.stage == GUARD_STAGE_INPUT and guard.applies_to != GUARD_ANY:
+            # Not a style objection: an `input` guard removes its target
+            # before anything has been decided for it, so there is no
+            # candidate command whose direction could be read. `guards.py`
+            # refuses to guess (it would either over-block -- dropping the
+            # blind from decisions the author never meant to touch, the same
+            # harm `const.GUARD_CLOSING` warns about, reached through the
+            # stage rather than the axis -- or silently delete an interlock),
+            # so this has to be caught before it ever loads.
+            out.append(
+                Problem(
+                    ERROR,
+                    "guard_input_direction",
+                    f"{where}: 'applies_to' is {guard.applies_to!r}, but a guard at stage "
+                    f"{GUARD_STAGE_INPUT!r} acts before anything is decided for its target, "
+                    f"so there is no command whose direction it could mean; use "
+                    f"{GUARD_ANY!r}, or move the guard to the output stage",
+                    owners=owners,
+                )
+            )
 
         out.extend(
             Problem(
@@ -340,7 +342,7 @@ def _check_guard_reachability(config: Config) -> list[Problem]:
     covered: dict[tuple[str, str], set[str]] = {}
 
     for index, guard in enumerate(config.guards):
-        mine = _guard_blinds(config, guard)
+        mine = guard_blinds(config, guard)
         if mine:
             shadow = {
                 blind
