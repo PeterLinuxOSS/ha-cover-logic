@@ -46,16 +46,31 @@ ARRIVAL_TIMEOUT_FACTOR = 1.5
 # motor changes the angle by moving, and from the top there is no movement
 # left to change it with.
 #
-# Deliberately its own number, NOT `100 - DEAD_BAND`, even though the two are
-# equal today. They are independent facts: the dead band is "how close counts
-# as arrived", this is "where the slats stop being reachable" -- a property of
-# the hardware, not of our tolerance for drift. The house keeps them apart the
-# same way (`scripts.yaml`: `hore -> current_position < 95` on one line,
-# `dol = 95 if c >= 100 else c - 5` on another, using both numbers side by
-# side). Derived, they would move together: retuning DEAD_BAND to 3 -- a
-# legitimate fix for a blind that chatters -- would silently drag this to 97,
-# and while both systems run, they would disagree about which blinds still
-# have slats to set.
+# Its own number, NOT `100 - DEAD_BAND`, so that retuning the dead band --
+# a legitimate fix for a blind that chatters -- cannot silently drag this
+# with it. That much stands on its own.
+#
+# WHAT THIS IS NOT: an earlier version of this comment claimed the house
+# keeps the two apart the same way, citing `scripts.yaml`'s
+# `dol = 95 if c >= 100 else c - 5`. That reading was WRONG and the correction
+# is worth keeping. That line lives inside `pozicia_tilt_f`, a *tilt* filter,
+# and its 95 is literally `c - 5` evaluated at c=100 -- the dead band, not a
+# separate constant. Three lines above it the house says the opposite outright:
+# "Prahy su ZAMERNE zhodne s tymi, ktore pouzivaju wait_template a until
+# nizsie". So there is no house precedent for separating them; this is our
+# decision, and it should be defended as one.
+#
+# OPEN QUESTION, do not settle it by reading this file: suppressing the tilt
+# at all is a planner invention. The house's own tilt filters (`tilt100_f`,
+# `tilt50_f`) look ONLY at `current_tilt_position` and never at the position,
+# and `zaluzie_otvorit` drives to 100, waits for arrival, and *then* sends
+# `open_cover_tilt` three times over -- to every target, including the blinds
+# that just went to the top. So at cutover `Action(KEEP, 50)` against a blind
+# at 97 makes this module emit nothing while the house sends
+# `set_cover_tilt_position: 50`. Whether the motor can act on a tilt near the
+# top is a fact about the hardware that only the live `dry_run` day can
+# settle; until it does, this threshold is a divergence from the house and
+# the project's "parity first, improvements later" rule points at removing it.
 TOP_THRESHOLD = 95
 
 # The two axis names, spelled exactly as `model.Action`'s own fields, so a
