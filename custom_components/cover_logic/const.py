@@ -107,6 +107,31 @@ GUARD_TIMEOUT_PROCEED = "proceed"
 GUARD_TIMEOUT_ABANDON = "abandon"
 GUARD_TIMEOUTS = (GUARD_TIMEOUT_ABANDON, GUARD_TIMEOUT_PROCEED)
 
+# ---------------------------------------------------------------------------
+# What the executor did, or deliberately did not do -- the five states one
+# entry in `command_log.CommandLog` can be in.
+#
+# Here for the same reason as everything else in this section: `runner.py`
+# names three of them when it tells an observer what it just logged,
+# `command_log.py` names all five when it stores them, `sensor.py` shows them,
+# and a person greps the log for them. Five spellings in four files is four
+# places for a typo to be invisible.
+# ---------------------------------------------------------------------------
+
+# The runner reached a command and dry run stopped it.
+COMMAND_WOULD_CALL = "would_call"
+# The runner reached a command and issued it (not a dry run).
+COMMAND_CALLED = "called"
+# An axis had a target and produced no command anyway -- the dead band, or a
+# blind with no slats. The difference between "it stood still" and "it was
+# never asked", which is what nobody could reconstruct on 2026-08-27.
+COMMAND_SUPPRESSED = "suppressed"
+# A guard took the decision away before the runner ever saw it. Recorded by the
+# coordinator: the runner is never told about a command it was not given.
+COMMAND_WITHHELD = "withheld"
+# The runner handed a command to its injected service caller.
+COMMAND_DISPATCHED = "dispatched"
+
 # How often a pending `defer` is re-examined when the guard's own config does
 # not say. Restart resilience is a property of the guard, not a second object
 # a human has to remember to pair with it, so every parsed `defer` carries a
