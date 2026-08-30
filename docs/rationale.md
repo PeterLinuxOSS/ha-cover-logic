@@ -264,9 +264,18 @@ position means "send the command anyway", and deliberately so: the planner is
 deciding whether an action is worth performing, and refusing to act on a
 missing reading is the worse of its two mistakes. A guard is deciding whether
 an action is *safe*, and an interlock switched off by a dead sensor is exactly
-the hazard it was installed against — the house has the case on file
-(`binary_sensor.sauna_running` is fail-open by construction: both its sources
-dying reads as "sauna is off").
+the hazard it was installed against — the house has the case on file: every
+one of its door interlocks asks `is_state('binary_sensor.…_dvere_senzor',
+'on')`, so an `unavailable` door sensor is not "open" and the blind comes
+down onto whatever the door is doing. `fixtures/dom_peter.yaml`'s guards
+therefore ask the opposite question ("is it *closed*?"), which is the one
+place they deliberately differ from the config they were transcribed from.
+
+Not every sensor in that house has this polarity, and the difference is worth
+knowing before writing a guard against one: `binary_sensor.sauna_running` is
+a template helper that is **fail-closed** by construction — both its sources
+(`sensor.isauna_mode_2`, `sensor.isauna_temperature_2`) dying reads as `on` —
+so a guard may test its state directly and needs nothing behind it.
 
 ### Why a guard that fires governs the whole action, not half of it
 
