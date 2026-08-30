@@ -21,6 +21,7 @@ from cover_logic.planner import (
     AXIS_TILT,
     DEAD_BAND,
     SETTLE_SECONDS,
+    TOP_THRESHOLD,
     Clamp,
     Plan,
     PlannerError,
@@ -128,7 +129,7 @@ def test_a_tilt_command_is_only_sent_when_it_is_reachable_and_worth_it():
         # The angle is only ever set by movement, so a tilt command is only
         # ever legitimate for a blind that does not end up at the top.
         final = _resulting_position(result, position)
-        assert final is None or final < 100 - DEAD_BAND
+        assert final is None or final < TOP_THRESHOLD
     assert sent > 0
     assert skipped > 0
 
@@ -369,3 +370,50 @@ def test_the_plan_and_its_commands_are_frozen():
         result.commands = ()
     with pytest.raises((AttributeError, TypeError)):
         result.commands[0].position = 50
+
+
+# --- Ukotvenie konstant proti domu -------------------------------------
+#
+# Kazdy iny test v tomto subore importuje konstanty z `planner.py` a overuje
+# vztahy MEDZI nimi. To dokazuje, ze planovac je vnutorne konzistentny -- a
+# nedokaze nic o tom, ci sedi s domom. `assert wait.timeout == travel_time *
+# ARRIVAL_TIMEOUT_FACTOR` je pravda pre AKUKOLVEK hodnotu toho faktora.
+#
+# Tieto tri testy preto pripinaju holé čísla, ktoré dnes naozaj bežia v
+# `/config/scripts.yaml`. Nie su to duplicity -- su to jediné miesto, kde sa
+# tichy drift zmeni na padnuty test. Ked sa cislo v dome legitimne zmeni,
+# tento test padne a donuti niekoho zmenit oboje naraz. Presne tu ulohu hra
+# `conformance.diff_configs` pre konfiguracnu polovicu projektu; pre
+# vykonavaciu ziadne orakulum neexistuje (MODELS.md), takze toto je nahrada.
+
+
+def test_constants_still_match_the_house():
+    """Cisla, ktore dnes bezia v `/config/scripts.yaml`, pripnute na tvrdo."""
+    # `- delay: {seconds: 2}` medzi dojazdom a tiltom (scripts.yaml 1457, 1517)
+    assert SETTLE_SECONDS == 2.0
+    # `dol = 95 if c >= 100 else c - 5` -- dom drzi obe cisla oddelene
+    assert DEAD_BAND == 5
+    assert TOP_THRESHOLD == 95
+
+
+def test_the_arrival_wait_is_the_ninety_seconds_the_house_waits():
+    """`timeout: "00:01:30"` (scripts.yaml 1455, 1515) pri default travel_time."""
+    blind = Blind(entity=ENTITY)
+    assert blind.travel_time == 60.0
+    result = plan(blind, 100, 100, Action(position=0, tilt=0))
+    wait = next(c for c in result.commands if isinstance(c, WaitForPosition))
+    assert wait.timeout == 90.0
+
+
+def test_the_top_threshold_is_not_derived_from_the_dead_band():
+    """Su to nezavisle fakty; odvodene by sa hybali spolu.
+
+    Preladenie `DEAD_BAND` na 3 (legitimna oprava pre kmitajucu zaluziu) by
+    pri odvodeni ticho posunulo hranicu hore na 97, kym dom zostane na 95.
+    """
+    # Cez verejne API, nie cez `_at_top`: zaujima nas spravanie, nie vnutro.
+    blind = _blind()
+    at_threshold = plan(blind, TOP_THRESHOLD, 100, Action(position=KEEP, tilt=0))
+    assert at_threshold.commands == (), "na hranici uz su lamely nedosiahnutelne"
+    below = plan(blind, TOP_THRESHOLD - 1, 100, Action(position=KEEP, tilt=0))
+    assert below.commands == (SetTilt(ENTITY, 0),), "tesne pod hranicou sa este daju nastavit"

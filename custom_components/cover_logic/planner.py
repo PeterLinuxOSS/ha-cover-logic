@@ -42,6 +42,22 @@ SETTLE_SECONDS = 2.0
 # its own configuration.
 ARRIVAL_TIMEOUT_FACTOR = 1.5
 
+# At or above this the blind is up and the slats cannot be set at all -- the
+# motor changes the angle by moving, and from the top there is no movement
+# left to change it with.
+#
+# Deliberately its own number, NOT `100 - DEAD_BAND`, even though the two are
+# equal today. They are independent facts: the dead band is "how close counts
+# as arrived", this is "where the slats stop being reachable" -- a property of
+# the hardware, not of our tolerance for drift. The house keeps them apart the
+# same way (`scripts.yaml`: `hore -> current_position < 95` on one line,
+# `dol = 95 if c >= 100 else c - 5` on another, using both numbers side by
+# side). Derived, they would move together: retuning DEAD_BAND to 3 -- a
+# legitimate fix for a blind that chatters -- would silently drag this to 97,
+# and while both systems run, they would disagree about which blinds still
+# have slats to set.
+TOP_THRESHOLD = 95
+
 # The two axis names, spelled exactly as `model.Action`'s own fields, so a
 # `Clamp` report names the axis the configuration names.
 AXIS_POSITION = "position"
@@ -203,4 +219,4 @@ def _at_top(position: int | None) -> bool:
     Unknown is not "up": the safe direction is to send the tilt command and
     let the motor ignore it, not to skip it on a guess.
     """
-    return position is not None and position >= 100 - DEAD_BAND
+    return position is not None and position >= TOP_THRESHOLD
