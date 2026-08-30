@@ -23,10 +23,12 @@ PURE_MODULES = [
     "starter_config.py",
     "planner.py",
     # Execution-layer, but genuinely HA-free and listed here so it has to stay
-    # that way: `command_log.py` holds no clock either (its timestamp is
-    # injected). It is one convenience import away from needing `hass`, and
+    # that way. `command_log.py` holds no clock (its timestamp is injected);
+    # `deferrals.py` holds no clock either (`now` is an argument) and no
+    # storage. Both are one convenience import away from needing `hass`, and
     # that import should have to argue with a failing test first.
     "command_log.py",
+    "deferrals.py",
 ]
 
 PKG = Path(__file__).resolve().parent.parent / "custom_components" / "cover_logic"
