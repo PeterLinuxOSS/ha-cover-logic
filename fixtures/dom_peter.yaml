@@ -138,6 +138,65 @@ conditions:
   nie_akt_mimka: {condition: state, entity_id: input_boolean.zaluzie_aktivna_mimka,  state: "off"}
   nie_akt_spalna: {condition: state, entity_id: input_boolean.zaluzie_aktivna_spalna, state: "off"}
 
+  # ---- Podmienky, ktoré číta LEN `guards:` ------------------------------
+  # Žiadne pravidlo sa na ne neodkazuje a nemá — sú to poistky, nie
+  # rozhodnutia. Matica sa o dvere ani o saunu opiera výhradne cez
+  # `dvere_zatvorene` vyššie (a to len v `horucava.terasa`).
+
+  # #9 (Wind cover protection, automations.yaml:1520). Tri nezávislé zdroje,
+  # a to PRAHY SPÚŠŤANIA (40/55/35), nie prahy upokojenia (40/55/30), ktoré
+  # drží `vietor_ok` vyššie pre maticu. Nemiešať: keby poistka používala
+  # nižší prah predpovede, prestala by platiť skôr, než sa vietor upokojí.
+  # `default: 999` = odpojený senzor sa tvári ako víchor, rovnako ako v
+  # `vietor_ok` — poistku nesmie vypnúť mŕtvy senzor.
+  vietor_silny:
+    condition: or
+    conditions:
+      - {condition: numeric_state, default: 999, above: 40,
+         entity_id: sensor.netatmo_veterny_senzor_rychlost_vetra}
+      - {condition: numeric_state, default: 999, above: 55,
+         entity_id: sensor.netatmo_veterny_senzor_sila_narazov}
+      - {condition: numeric_state, default: 999, above: 35,
+         entity_id: weather.forecast_home, attribute: wind_speed}
+
+  # Dvere pre poistku: pýtame sa „je ZATVORENÉ?", nie „je otvorené?".
+  # Živý config to má naopak — `zavriet_bezpecne` (scripts.yaml:1244) aj
+  # `zaluzie_zavriet` (scripts.yaml:1839) testujú `is_state(...,'on')`, takže
+  # `unavailable` dverový senzor žalúziu spustí. Tu je polarita obrátená
+  # zámerne a je to jediné miesto, kde sa poistka od živého configu líši:
+  # pre interlock je mŕtvy senzor dôvod NEzatvárať (docs/rationale.md,
+  # „Why an unreadable position makes a directional guard fire").
+  dvere_nezatvorene:
+    condition: not
+    conditions: [!ref dvere_zatvorene]
+
+  spalna_dvere_nezatvorene:
+    condition: not
+    conditions:
+      - {condition: state, entity_id: binary_sensor.spalna_dvere_senzor_2, state: "off"}
+
+  # `binary_sensor.sauna_running` je UI template helper (`.storage`, nie YAML —
+  # inventúra ho preto nenašla). Overené na živom dome 2026-08-30:
+  #   (mode aj temp mŕtve) OR (mode != 'off') OR (temp > 50)
+  # Je teda FAIL-CLOSED: keď zomrú oba zdroje, hlási `on` a poistka drží.
+  # Prah 50 °C je zmeraný, nie odhadnutý: päť týždňov histórie oddeľuje
+  # seansy (30→50 °C za ~6 min, 6 dní) od kabíny ohriatej slnkom
+  # (30→45 °C za ~5 h, 11 dní) bezchybne. Preto sa tu smie testovať
+  # priamo stav — netreba k nemu žiadnu ďalšiu poistku.
+  sauna_bezi:  {condition: state, entity_id: binary_sensor.sauna_running, state: "on"}
+  sauna_nebezi:
+    condition: not
+    conditions: [!ref sauna_bezi]
+
+  # #11 (automations.yaml:8702). Nastavuje ho automatizácia, ktorá „človeka"
+  # dokazuje NEGATÍVNE (žiadna zo štyroch automatík nebeží) — `context.user_id`
+  # hlas ani vypínač nemajú. Je to iný príznak než `rucne_kuchyna`, ktorý
+  # číta matica.
+  kvety_rucny_override:
+    condition: state
+    entity_id: input_boolean.kvety_rucny_override
+    state: "on"
+
 modes:
   - {id: noc,       when: !ref cover_down}
   - {id: dovolenka, when: !ref alarmo_vacation}
@@ -309,3 +368,194 @@ rules:
     - {events: [arrival], then: {position: keep, tilt: 100}}
     - {if: [!ref doma_spalna, !ref nie_akt_spalna], then: {position: keep, tilt: keep}}
     - {then: {position: keep, tilt: 100}}
+
+# ---- POISTKY ----------------------------------------------------------
+# Zdroj: `/config/docs/superpowers/specs/2026-08-29-inventura-poistiek.md`
+# (13 skutočných poistiek), prečítané a overené proti živému
+# `automations.yaml` / `scripts.yaml` 2026-08-30. Kde sa inventúra a živý
+# config rozišli, platí živý config — rozdiely sú pomenované nižšie.
+#
+# Poistky sa vyhodnocujú MIMO `evaluate()` (`guards.screen` pred ním,
+# `guards.review` po ňom), takže tento blok neposúva ani jedno rozhodnutie
+# migračnej brány.
+#
+# PORADIE JE VÝZNAM: prvá poistka, ktorá sadne, vyhráva — presne ako
+# pravidlá, bez číselných priorít. Dnes v dome rozhodcu niet vôbec: VAC
+# disarm vie otvoriť terasu presne vtedy, keď ju vetrová ochrana zatvára
+# alebo keď na nej sedí 3-hodinové saunové čakanie (inventúra, prierezový
+# nález 4). Tu je rozhodcom tento zoznam.
+#
+# ČO SA SEM NEDÁ NAPÍSAŤ (nefalšuje sa to, len sa to pomenuje):
+#
+#  - #13 „VAC auto-on/off, vetva home" — je to UDALOSŤ (disarm alarmu), nie
+#    trvalý interlock. Guard nemá `events:` a v dome neexistuje príznak,
+#    ktorý by „práve sme prišli" držal; viazať to na `alarm_control_panel`
+#    v stave `disarmed` by znamenalo držať terasu otvorenú celý deň.
+#
+#  - #12, spálňové routovanie (`zaluzie_zavriet`/`zaluzie_otvorit` vyhadzujú
+#    spálňu a nechajú ju `script.spalna_zatvorenie`) — je to vlastnosť
+#    VOLACEJ CESTY, nie stavu sveta. `when` je podmienka nad `World`; nič v
+#    dome nehovorí „toto volanie prišlo z hlasu". Preto tu nie je ani jedna
+#    poistka so `stage: input`.
+#
+#  - #12, ochrana kvetov („kým je `kvety_on`, mení sa LEN tilt, nie výška") —
+#    to je skip na JEDNEJ OSI. Poistka, ktorá sadne, ovláda celú `Action`
+#    (docs/rationale.md, „Why a guard that fires governs the whole action"),
+#    takže „nechaj výšku, ale lamely nastav" sa povedať nedá. V matici to
+#    zatiaľ drží `bezny_den.kvety` / `horucava.kvety` samo (`position:
+#    !ref kvety_poz`), takže sa nič nestráca — ale je to vlastnosť pravidiel.
+#
+#  - #10 „Kvety - strážca pozície" ako celok — kľúčuje na polohe SVOJEJ
+#    žalúzie („nad 45 % dlhšie než 10 min", „pod 20 %"). Jedna poistka mieri
+#    na obe kuchynské žalúzie naraz a `when` nevie povedať „poloha práve
+#    tohto cieľa"; a 10-minútová hysteréza sa v podmienke povedať nedá vôbec.
+#    Jeho užitočná polovica („drž pozíciu z helpera") NIE JE interlock — to
+#    už vracia engine sám (`!ref kvety_poz` v oboch denných režimoch), a
+#    prepočet pri každej zmene stavu je ten strážca. Zostáva len #11 nižšie.
+#
+#  - #9, „vietor je pod prahom SÚVISLE 5 minút" — `repeat/until` s `for: 5 min`.
+#    Podmienka nemá trvanie, takže poistka na prahu bude kmitať. Jediné, čo
+#    to dnes tlmí, je `planner.DEAD_BAND`.
+#
+#  - #8, „v kresle 5 minút nikto" — to isté trvanie, ten istý dôvod.
+#    Okamžitá polovica (`kreslo_senzor_occupancy == off`) by sa napísať dala,
+#    ale do spoločnej terasovej poistky nepatrí: #6/#7 (Lighting SUN) kreslo
+#    netestujú, takže by sa začali odkladať aj bežné večerné zatvorenia.
+#
+#  - #3 a #1787900000002 (poistky po reštarte) — nie sú to poistky nad
+#    coverom, sú to hliadky nad `wait_for_trigger`, ktorý reštart zabije.
+#    Táto schéma ich pohltila do `recheck_every` (docs/rationale.md, „Why
+#    restart resilience is a guard field, not a second automation").
+#
+#  - #16 (len loguje), #17 (mŕtvy skript) a #15 (`teplotna_ochrana_zatvor`,
+#    bez volajúceho) nie sú poistky. #15 je štvrtá kópia toho istého
+#    pravidla, ktorej dodnes chýba spálňová vetva — presne to, čo jeden
+#    zoznam ruší.
+#
+# `cover.obyvacka_zaluzia_dvere_2` ZÁMERNE nie je v žiadnej dverovej
+# poistke: napriek názvu visí nad OKNOM, nie nad otváracím krídlom (overené
+# užívateľom 30. 8. 2026, poznámka aj v scripts.yaml:1824). Výskyt entity v
+# Lighting SUN a vo vetrovej ochrane NIE JE dôkaz, že ju niekto stráži na
+# dverovom senzore — a jej vyradenie by len znamenalo, že sa cez leto pri
+# otvorených dverách nedá zatvoriť. Dverové žalúzie sú práve dve:
+# `cover.obyvacka_zaluzia_dvere_1_3` a `cover.spalna_zaluzia_dvere_1`.
+guards:
+  # #9 — Wind cover protection. Prvá zámerne: je to jediný interlock, ktorý
+  # musí platiť aj vtedy, keď je všetko ostatné pokazené, a `description` aj
+  # návrhový dokument ho volajú „najvyššia priorita". Bez `targets`, teda celý
+  # dom — živá automatizácia mieri na `cover.dom` + obe kvetinové + tri
+  # `area_id`, čo je to isté. `tilt` zostáva `keep`: `cover.open_cover` žiadny
+  # tilt neposiela a z hornej polohy sa uhol nastaviť ani nedá.
+  #
+  # To, že je napísaná PRVÁ, nahrádza podmienku „vietor je pod prahom", ktorú
+  # dnes musí mať #10 (a nemá ju #13) — kolízia sa rieši poradím, nie tým, že
+  # si každá poistka zopakuje podmienky tých ostatných.
+  - name: vietor - otvor celý dom
+    policy: force
+    applies_to: any
+    when: !ref vietor_silny
+    then: {position: 100}
+
+  # #11 — človek vytiahol kvetinovú žalúziu rukou; strážca (#10) ju už nesmie
+  # stiahnuť späť.
+  #
+  # `stage: output`, hoci v dome je to filter VSTUPU (`zony_kvety` vyhodí
+  # žalúziu zo zoznamu ešte pred volaním `script.zaluzie_uplatnit`) a hoci
+  # `docs/rationale.md` uvádza práve tento filter ako príklad vstupnej fázy.
+  # Dôvod je poradie: `review()` preberá `screening.outcomes` a cieľ, ktorý si
+  # nárokovala vstupná fáza, už druhýkrát nesúdi — vstupná poistka teda
+  # prebíja KAŽDÚ výstupnú bez ohľadu na to, kde je v zozname napísaná.
+  # So `stage: input` by táto poistka prebila aj vetrovú ochranu a rukou
+  # vytiahnutá žalúzia by vo víchrici zostala vonku. V dome to nehrozí, lebo
+  # strážca má vietor vo vlastných podmienkach; tu to rieši poradie — a to
+  # funguje len v rámci jednej fázy.
+  - name: kvety - clovek ich vytiahol rukou
+    policy: skip
+    stage: output
+    applies_to: any
+    targets: [kvety]
+    when: !ref kvety_rucny_override
+
+  # #1 + #5 + #6 + #7 + #8 + #14 (terasová polovica) — „nespúšťaj dverovú
+  # žalúziu na otvorené dvere ani na bežiacu saunu", sedem nezávislých kópií
+  # v jednom riadku.
+  #
+  # `defer`, nie `skip`, hoci `zavriet_bezpecne` (#1) je skip: skip zabudne,
+  # defer si pamätá a zatvorí, keď prekážka pominie. Presne to robia štyri zo
+  # siedmich kópií (#7 a #8 s 3 h, #2 a #4 bez limitu) a `skip`-ové kópie sa
+  # spoliehajú na to, že maticu niekto neskôr prepočíta. Jeden zoznam si musí
+  # vybrať jeden tvar — a toto je ten, čo prežije večer.
+  #
+  # 3 h a `abandon` sú doslova #7/#8: `timeout: {hours: 3}` +
+  # `continue_on_timeout: false`. `recheck_every: 900` je pohltená #3.
+  # `applies_to: closing` = klesajúca POLOHA, nie lamely: cesta hore aj tilt
+  # sú aj dnes bez prekážky (inventúra, prierezový nález 2).
+  - name: terasa - dvere alebo sauna
+    policy: defer
+    applies_to: closing
+    targets: [terasa]
+    when:
+      condition: or
+      conditions: [!ref dvere_nezatvorene, !ref sauna_bezi]
+    max_wait: 10800
+    on_timeout: abandon
+    recheck_every: 900
+
+  # #2 — „Obývačka dvere auto": kým sú terasové dvere otvorené, žalúzia je
+  # HORE. Napísaná AŽ ZA odkladom vyššie, a to je jediné, čo ju drží pri
+  # živote: `applies_to: any` by inak zobralo aj zatváracie rozhodnutia a
+  # odklad by nikdy nesadol.
+  #
+  # `sauna_nebezi` je doslovná podmienka spustenia tejto automatizácie
+  # (`binary_sensor.sauna_running == off`). POZOR: inventúra tu uvádza
+  # `sensor.isauna_temperature_2 below 40` — to už neplatí, prepnuté
+  # 2026-08-29, lebo prah 40 °C sa mýlil v 11 zo 17 prípadov a automatizácia
+  # bola celé horúce poobedie vypnutá. Živý config vyhráva.
+  #
+  # ZOSTÁVAJÚCA DIERA, prenesená vedome: počas skutočnej seansy túto žalúziu
+  # nedrží hore nikto (`automation.sauna_on_dvere_open` je vypnutá od 3/2025 a
+  # menuje neexistujúcu entitu). Odklad vyššie ju aspoň nezatvorí.
+  - name: terasove dvere otvorene - drz zaluziu hore
+    policy: force
+    applies_to: any
+    targets: [terasa]
+    when:
+      condition: and
+      conditions: [!ref dvere_nezatvorene, !ref sauna_nebezi]
+    then: {position: 100}
+
+  # #1 (spálňová polovica) + #14 (`script.spalna_zatvorenie`) — tá istá vec
+  # bez saunového člena: spálňová terasa saunu nemá.
+  #
+  # `max_wait: null` = čakaj bez limitu. Je to HODNOTA, nie vynechanie —
+  # #4 čaká bez limitu zámerne („rozhodnutie užívateľa 29. 8.: kým sú dvere
+  # otvorené, žalúzia zostáva hore"). `on_timeout` sa pri `null` nedosiahne
+  # nikdy, ale schéma ho žiada napísať; `abandon` preto, že keby sem niekto
+  # neskôr dopísal konečný limit, `proceed` by žalúziu spustil na dvere,
+  # ktoré sa dovtedy nemuseli zavrieť.
+  #
+  # Cieľ je ENTITA, nie zóna: zóna `spalna` obsahuje aj
+  # `cover.spalna_zaluzia_2`, ktorá s dverami nemá nič spoločné.
+  - name: spalna - terasove dvere
+    policy: defer
+    applies_to: closing
+    targets: [cover.spalna_zaluzia_dvere_1]
+    when: !ref spalna_dvere_nezatvorene
+    max_wait: null
+    on_timeout: abandon
+    recheck_every: 900
+
+  # #4 — „Spálňa dvere", obývačkový vzor pre spálňu. Za odkladom z rovnakého
+  # dôvodu ako #2.
+  #
+  # Inventúra pri #4 hlási dva defekty: mŕtvy `continue_on_timeout: true` bez
+  # `timeout` a chýbajúcu poistku po reštarte. ANI JEDEN UŽ NEPLATÍ —
+  # automatizácia bola 2026-08-29 prepísaná na štruktúru obývačky (mŕtvy kľúč
+  # je preč) a `automation` id `1787900000002` „Spálňa dvere - poistka po
+  # reštarte" existuje (automations.yaml:8784). Živý config vyhráva.
+  - name: spalnove dvere otvorene - drz zaluziu hore
+    policy: force
+    applies_to: any
+    targets: [cover.spalna_zaluzia_dvere_1]
+    when: !ref spalna_dvere_nezatvorene
+    then: {position: 100}
