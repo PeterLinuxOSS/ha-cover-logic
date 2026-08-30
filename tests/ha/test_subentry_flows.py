@@ -55,6 +55,8 @@ from cover_logic.config_store import (
 from cover_logic.const import RULE_DEFAULT_ZONE
 from cover_logic.model import KEEP, Blind, Ref
 from cover_logic.subentry_flow import (
+    _ATTRIBUTED_CODES,
+    _CODE_OWNERS,
     SUBENTRY_FLOW_HANDLERS,
     BlindSubentryFlowHandler,
     ConditionSubentryFlowHandler,
@@ -2713,3 +2715,76 @@ def test_every_field_of_every_rendered_form_has_a_label(subentry_entry, subentry
         .get("data", {})
     ]
     assert missing == []
+
+
+# ---------------------------------------------------------------------------
+# Guards and `_CODE_OWNERS`: guards are not a subentry type (they live in
+# `entry.data["guards"]` -- see `config_store.py`'s module docstring), so no
+# form's fields can fix a guard's problem and none may be blocked by one.
+# That is what every guard code being mapped to an empty owner set means, and
+# this is the test that says so out loud: the failure it guards against is
+# silent, permanent, and has already happened three times in this file's
+# history under other codes -- a defect nobody can reach from any form leaves
+# the whole configuration unbuildable through the UI.
+# ---------------------------------------------------------------------------
+
+
+def test_every_guard_problem_code_is_declared_in_one_of_the_two_owner_dicts(
+    subentry_entry, subentry_hass
+):
+    """A code in neither dict silently blocks nothing -- which is the right
+    behaviour for guards today, but must be a decision on record rather than
+    an omission, or the `guard` subentry flow will land without anyone
+    noticing these were never wired up. Every `ERROR` a broken guard can
+    produce is enumerated here by running one, not by copying a list.
+    """
+    entry = subentry_entry(
+        data={
+            "guards": [
+                {"policy": "nonsense", "applies_to": "sideways", "stage": "whenever"},
+                {"policy": "defer"},
+                {"policy": "force"},
+                {"policy": "skip", "max_wait": 90, "then": {"position": 100}},
+                {"policy": "skip", "targets": ["cover.ghost"]},
+            ]
+        }
+    )
+    entry.add_subentry(BLIND, {"entity": "cover.a", "tolerance": 45, "travel_time": 60})
+    entry.add_subentry(ZONE, {"id": "z", "members": ["cover.a"], "occupants": []})
+
+    codes = {
+        problem.code
+        for problem in validate(config_from_subentries(entry))
+        if problem.severity == ERROR and problem.code.startswith("guard_")
+    }
+
+    assert codes, "the fixture above must actually produce guard errors"
+    assert codes <= set(_CODE_OWNERS) | _ATTRIBUTED_CODES
+
+
+def test_a_broken_guard_blocks_no_subentry_save(subentry_entry, subentry_hass):
+    """The deadlock check, from the guards side.
+
+    `entry.data["guards"]` is shared by every candidate entry the flows
+    validate, so a guard error attributed to a form that cannot fix it would
+    block *every* save of that type at once, permanently -- there is no guard
+    form to go and repair it in. A blind add is the sharpest case: it is the
+    first thing a new house needs and it has no guard field of any kind.
+    """
+    entry = subentry_entry(data={"guards": [{"policy": "nonsense"}]})
+    entry.add_subentry(ZONE, {"id": "z", "members": ["cover.b"], "occupants": []})
+    flow = _make_flow(BlindSubentryFlowHandler, subentry_hass(entry), BLIND)
+
+    result = asyncio.run(
+        flow.async_step_user(
+            {
+                "entity": "cover.b",
+                "tolerance": 45,
+                "travel_time": 60,
+                "has_tilt": True,
+                "tilt_after_arrival": True,
+            }
+        )
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY

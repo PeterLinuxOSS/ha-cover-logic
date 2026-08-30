@@ -833,3 +833,271 @@ rules:
     problems = [p for p in validate(load_config(text)) if p.code == "circular_condition_ref"]
     assert len(problems) == 1
     assert problems[0].owners == frozenset({("condition", "cond_a"), ("condition", "cond_b")})
+
+
+# ---------------------------------------------------------------------------
+# `guards:`
+#
+# The guard schema exists because the house being migrated re-implements one
+# rule -- "do not drive a door blind down onto an open door or a running
+# sauna" -- seven times, in seven slightly different ways. Validation is what
+# stops the single re-implementation from acquiring the same defects the
+# seven had: a `defer` that never says what to do when its wait runs out, a
+# `max_wait` on a policy that ignores it (which is live in the house today as
+# `continue_on_timeout: true` with no `timeout` key at all), a target naming
+# a blind that no longer exists, a guard written after another that already
+# answers for it.
+# ---------------------------------------------------------------------------
+
+GUARD_BASE = (
+    BASE
+    + """
+guards:
+"""
+)
+
+
+def guard_codes(body: str) -> set[str]:
+    return codes(GUARD_BASE + body)
+
+
+def test_a_config_with_a_well_formed_guard_has_no_problems():
+    assert validate(load_config(GUARD_BASE + "  - {policy: skip, applies_to: closing}\n")) == []
+
+
+def test_an_unknown_policy_is_an_error():
+    assert "guard_unknown_policy" in guard_codes("  - {policy: block}\n")
+
+
+def test_an_unknown_policy_suppresses_the_per_policy_field_checks():
+    """One wrong word, one message.
+
+    A guard with `policy: blok` and a `max_wait` is not *also* guilty of
+    putting `max_wait` on a policy that ignores it -- nobody knows yet
+    whether the intended policy ignores it. Reporting both would send the
+    reader to fix the field rather than the typo.
+    """
+    assert guard_codes("  - {policy: blok, max_wait: 90}\n") == {"guard_unknown_policy"}
+
+
+def test_a_defer_without_on_timeout_is_an_error():
+    """The hardest single finding in the inventory.
+
+    The house has both variants and they do opposite things: two 3-hour waits
+    that abandon the rest of the sequence on timeout, and 90-second waits that
+    proceed anyway. Any default here silently picks one of two opposites, so
+    the key is required and the message says why.
+    """
+    problems = [
+        p
+        for p in validate(load_config(GUARD_BASE + "  - {policy: defer, max_wait: 90}\n"))
+        if p.code == "guard_defer_needs_timeout"
+    ]
+    assert len(problems) == 1
+    assert "on_timeout" in problems[0].message
+    assert "opposite" in problems[0].message
+
+
+def test_a_defer_without_max_wait_is_an_error():
+    problems = [
+        p
+        for p in validate(load_config(GUARD_BASE + "  - {policy: defer, on_timeout: proceed}\n"))
+        if p.code == "guard_defer_needs_timeout"
+    ]
+    assert len(problems) == 1
+    assert "max_wait: null" in problems[0].message
+
+
+def test_max_wait_null_is_a_stated_value_not_a_missing_key():
+    """Two of the house's five defers wait without a limit on purpose.
+
+    `max_wait: null` must therefore satisfy the requirement that a `defer`
+    states its wait -- if it did not, the only way to express "wait as long
+    as it takes" would be to leave the key out, which is exactly what a guard
+    that forgot to state anything looks like.
+    """
+    assert (
+        validate(
+            load_config(GUARD_BASE + "  - {policy: defer, max_wait: null, on_timeout: abandon}\n")
+        )
+        == []
+    )
+
+
+def test_an_unknown_on_timeout_is_an_error():
+    codes_found = guard_codes("  - {policy: defer, max_wait: 90, on_timeout: maybe}\n")
+    assert "guard_defer_needs_timeout" in codes_found
+
+
+def test_a_defer_field_on_a_policy_that_ignores_it_is_an_error():
+    """Dead configuration that reads as if it does something.
+
+    `automation.spalna_dvere` in the house carries `continue_on_timeout: true`
+    with no `timeout` key: Home Assistant ignores it, the wait is unlimited,
+    and the line that looks like it bounds the wait does nothing at all. A
+    schema that silently accepted the mirror image of that would reproduce the
+    same class of defect.
+    """
+    for field in ("max_wait: 90", "on_timeout: proceed", "recheck_every: 60"):
+        assert "guard_unused_field" in guard_codes(f"  - {{policy: skip, {field}}}\n"), field
+
+
+def test_a_force_without_an_action_is_an_error():
+    assert "guard_force_needs_action" in guard_codes("  - {policy: force}\n")
+
+
+def test_a_force_with_an_action_is_accepted():
+    assert validate(load_config(GUARD_BASE + "  - {policy: force, then: {position: 100}}\n")) == []
+
+
+def test_an_action_on_a_policy_that_imposes_nothing_is_an_error():
+    assert "guard_unused_field" in guard_codes("  - {policy: skip, then: {position: 100}}\n")
+
+
+def test_an_unknown_direction_is_an_error():
+    assert "guard_bad_direction" in guard_codes("  - {policy: skip, applies_to: down}\n")
+
+
+def test_an_unknown_stage_is_an_error():
+    assert "guard_bad_stage" in guard_codes("  - {policy: skip, stage: later}\n")
+
+
+def test_a_target_naming_neither_a_blind_nor_a_zone_is_an_error():
+    problems = [
+        p
+        for p in validate(load_config(GUARD_BASE + "  - {policy: skip, targets: [cover.ghost]}\n"))
+        if p.code == "guard_unknown_target"
+    ]
+    assert len(problems) == 1
+    assert "cover.ghost" in problems[0].message
+
+
+def test_a_target_may_be_a_blind_or_a_zone():
+    assert validate(load_config(GUARD_BASE + "  - {policy: skip, targets: [z, cover.a]}\n")) == []
+
+
+def test_a_guard_an_earlier_unconditional_one_covers_can_never_fire():
+    """Order is the only referee guards have.
+
+    First match wins, exactly as for rules, so a guard written after an
+    unconditional one covering the same blinds is dead -- and unlike a dead
+    rule, a dead safety interlock looks present in the config right up until
+    the day it was supposed to fire.
+    """
+    problems = [
+        p
+        for p in validate(
+            load_config(
+                GUARD_BASE
+                + "  - {policy: skip, targets: [z]}\n"
+                + "  - {policy: force, targets: [cover.a], then: {position: 100}}\n"
+            )
+        )
+        if p.code == "guard_unreachable"
+    ]
+    assert len(problems) == 1
+    assert problems[0].severity == WARNING
+    assert "guard #1" in problems[0].message
+
+
+def test_an_earlier_conditional_guard_does_not_shadow_a_later_one():
+    assert (
+        validate(
+            load_config(
+                GUARD_BASE
+                + "  - {policy: skip, targets: [z], when: !ref vzdy}\n"
+                + "  - {policy: skip, targets: [cover.a]}\n"
+            )
+        )
+        == []
+    )
+
+
+def test_an_earlier_guard_at_the_other_stage_does_not_shadow_a_later_one():
+    """An `input` guard removes a target before the engine is asked; an
+    `output` guard overrides the answer it gave. They are asked at different
+    moments, so neither can hide the other however broadly it is written.
+    """
+    assert (
+        validate(
+            load_config(
+                GUARD_BASE
+                + "  - {policy: skip, stage: input}\n"
+                + "  - {policy: skip, stage: output}\n"
+            )
+        )
+        == []
+    )
+
+
+def test_an_earlier_opening_guard_does_not_shadow_a_later_closing_one():
+    assert (
+        validate(
+            load_config(
+                GUARD_BASE
+                + "  - {policy: skip, applies_to: opening}\n"
+                + "  - {policy: skip, applies_to: closing}\n"
+            )
+        )
+        == []
+    )
+
+
+def test_an_earlier_any_direction_guard_does_shadow_a_later_closing_one():
+    assert "guard_unreachable" in guard_codes(
+        "  - {policy: skip, applies_to: any}\n  - {policy: skip, applies_to: closing}\n"
+    )
+
+
+def test_a_guard_naming_an_unknown_target_does_not_widen_its_own_shadow():
+    """A typo must not make the guard before it look broader than it is.
+
+    The first guard here names one blind that exists and one that does not.
+    If the unknown name were treated as a blind, the second guard would be
+    reported unreachable on the strength of a target that is itself already
+    an error -- two problems for one typo, the second of them wrong.
+    """
+    text = (
+        GUARD_BASE
+        + "  - {policy: skip, targets: [cover.ghost]}\n"
+        + "  - {policy: skip, targets: [cover.a]}\n"
+    )
+    assert {p.code for p in validate(load_config(text))} == {"guard_unknown_target"}
+
+
+def test_a_dangling_condition_ref_inside_a_guards_when_is_an_error():
+    """A guard's `when` is checked by the same passes every other condition
+    slot is, not by a guard-specific copy of them.
+    """
+    problems = [
+        p
+        for p in validate(
+            load_config(GUARD_BASE + "  - {policy: skip, when: {condition: ref, name: nope}}\n")
+        )
+        if p.code == "unknown_condition_ref"
+    ]
+    assert len(problems) == 1
+    assert problems[0].owners == frozenset({("guard", "guard#0")})
+
+
+def test_a_broken_condition_shape_inside_a_guards_when_is_an_error():
+    problems = [
+        p
+        for p in validate(
+            load_config(GUARD_BASE + "  - {policy: skip, when: {condition: nonsense}}\n")
+        )
+        if p.code == "bad_condition_shape"
+    ]
+    assert len(problems) == 1
+    assert problems[0].owners == frozenset({("guard", "guard#0")})
+
+
+def test_a_guard_problem_names_the_guard_by_position_and_name():
+    problems = [
+        p
+        for p in validate(load_config(GUARD_BASE + "  - {name: wind, policy: force}\n"))
+        if p.code == "guard_force_needs_action"
+    ]
+    assert len(problems) == 1
+    assert problems[0].message.startswith("guard #0 'wind'")
+    assert problems[0].owners == frozenset({("guard", "guard#0")})
