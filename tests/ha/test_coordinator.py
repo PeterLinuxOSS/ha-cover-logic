@@ -44,14 +44,14 @@ def _counting_evaluate(monkeypatch):
     return calls
 
 
-def test_initial_evaluation_happens_at_startup(config, hass_factory, monkeypatch):
+def test_initial_evaluation_happens_at_startup(config, hass_factory, runtime_entry, monkeypatch):
     """`decision` is populated by `async_setup` itself, before any state change."""
     calls = _counting_evaluate(monkeypatch)
 
     async def _run():
         hass = hass_factory()
         try:
-            coordinator = CoverLogicCoordinator(hass, config)
+            coordinator = CoverLogicCoordinator(hass, config, runtime_entry())
             await coordinator.async_setup()
 
             assert len(calls) == 1
@@ -67,14 +67,14 @@ def test_initial_evaluation_happens_at_startup(config, hass_factory, monkeypatch
     asyncio.run(_run())
 
 
-def test_unrelated_entity_triggers_no_evaluation(config, hass_factory, monkeypatch):
+def test_unrelated_entity_triggers_no_evaluation(config, hass_factory, runtime_entry, monkeypatch):
     """Only `referenced_entities(config)` is subscribed -- everything else is silent."""
     calls = _counting_evaluate(monkeypatch)
 
     async def _run():
         hass = hass_factory()
         try:
-            coordinator = CoverLogicCoordinator(hass, config)
+            coordinator = CoverLogicCoordinator(hass, config, runtime_entry())
             await coordinator.async_setup()
             calls.clear()  # drop the startup evaluation counted above
 
@@ -90,14 +90,14 @@ def test_unrelated_entity_triggers_no_evaluation(config, hass_factory, monkeypat
     asyncio.run(_run())
 
 
-def test_burst_of_changes_produces_one_evaluation(config, hass_factory, monkeypatch):
+def test_burst_of_changes_produces_one_evaluation(config, hass_factory, runtime_entry, monkeypatch):
     """A rapid burst on a referenced entity coalesces into exactly one evaluation."""
     calls = _counting_evaluate(monkeypatch)
 
     async def _run():
         hass = hass_factory()
         try:
-            coordinator = CoverLogicCoordinator(hass, config)
+            coordinator = CoverLogicCoordinator(hass, config, runtime_entry())
             await coordinator.async_setup()
             calls.clear()
 
@@ -116,14 +116,14 @@ def test_burst_of_changes_produces_one_evaluation(config, hass_factory, monkeypa
 
 
 def test_evaluation_error_keeps_previous_decision_and_is_recorded(
-    config, hass_factory, monkeypatch, caplog
+    config, hass_factory, runtime_entry, monkeypatch, caplog
 ):
     """A raising `evaluate` is logged and recorded, but never blanks `decision`."""
 
     async def _run():
         hass = hass_factory()
         try:
-            coordinator = CoverLogicCoordinator(hass, config)
+            coordinator = CoverLogicCoordinator(hass, config, runtime_entry())
             await coordinator.async_setup()
             previous = coordinator.decision
             assert previous is not None
@@ -152,7 +152,9 @@ def test_evaluation_error_keeps_previous_decision_and_is_recorded(
     asyncio.run(_run())
 
 
-def test_non_engine_error_is_also_caught_and_recorded(config, hass_factory, monkeypatch, caplog):
+def test_non_engine_error_is_also_caught_and_recorded(
+    config, hass_factory, runtime_entry, monkeypatch, caplog
+):
     """The realistic failures are not `EngineError`.
 
     A typo'd condition type raises `ValueError` from the evaluator, and a broken
@@ -165,7 +167,7 @@ def test_non_engine_error_is_also_caught_and_recorded(config, hass_factory, monk
     async def _run():
         hass = hass_factory()
         try:
-            coordinator = CoverLogicCoordinator(hass, config)
+            coordinator = CoverLogicCoordinator(hass, config, runtime_entry())
             await coordinator.async_setup()
             previous = coordinator.decision
             assert previous is not None
@@ -191,7 +193,7 @@ def test_non_engine_error_is_also_caught_and_recorded(config, hass_factory, monk
 
 
 def test_unload_removes_subscription_and_cancels_pending_debounce(
-    config, hass_factory, monkeypatch
+    config, hass_factory, runtime_entry, monkeypatch
 ):
     """Unload drops the bus listener and a call already scheduled never fires."""
     calls = _counting_evaluate(monkeypatch)
@@ -201,7 +203,7 @@ def test_unload_removes_subscription_and_cancels_pending_debounce(
         try:
             before = hass.bus.async_listeners().get(EVENT_STATE_CHANGED, 0)
 
-            coordinator = CoverLogicCoordinator(hass, config)
+            coordinator = CoverLogicCoordinator(hass, config, runtime_entry())
             await coordinator.async_setup()
             calls.clear()
 

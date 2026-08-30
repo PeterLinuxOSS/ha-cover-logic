@@ -1,10 +1,24 @@
-"""Watch state, evaluate the engine, and hold the current `Decision`.
+"""Watch state, run the whole decision path, and hand the result to the executor.
 
-The seam between "the house changed" and "the engine ran": subscribes to
-exactly the entities `config_schema.referenced_entities(config)` names,
-coalesces bursts of change into one evaluation, and keeps the last-known-good
-`Decision` on the shelf so a later diagnostic sensor always has something to
-show, even mid-error.
+The seam between "the house changed" and "the house was told what to do".
+Subscribes to exactly the entities the configuration reads, coalesces bursts of
+change into one evaluation, and then runs the full path in the one order that
+is allowed to exist:
+
+    screen()  ->  evaluate()  ->  review()  ->  CoverRunner.async_apply()
+
+`guards.screen` takes no `Decision` and `guards.review` refuses to run without
+the `Screening` that `screen` produced, so that order is a property of the
+signatures rather than of this module's care -- see `guards.py`'s docstring.
+The last-known-good `Decision` stays on the shelf through a failing evaluation
+so the diagnostic sensor always has something to show; a failing evaluation
+also dispatches nothing at all, because a `Guarded` that could not be computed
+is not a `Guarded` whose guards can be trusted.
+
+**Nothing here moves a cover.** The runner is constructed with
+`command_log.CommandLog` as its service caller, which records what would have
+gone out and issues nothing -- see `_build_runner` for why that specific object
+and not a lambda, a flag or a `dry_run` default.
 
 This module imports `homeassistant` unconditionally at module level, the same
 choice `ha_world.py` makes and for the same reason (see that module's own
@@ -17,21 +31,41 @@ system-Python 3.12 test run that has no `homeassistant` installed at all --
 never touches this file.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 import datetime as dt
 import logging
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers.debounce import Debouncer
-from homeassistant.helpers.event import EventStateChangedData, async_track_state_change_event
+from homeassistant.helpers.event import (
+    EventStateChangedData,
+    async_track_point_in_utc_time,
+    async_track_state_change_event,
+)
 import homeassistant.util.dt as dt_util
 
+from .command_log import CommandLog
 from .config_schema import referenced_entities
+from .const import DEFAULT_DRY_RUN, GUARD_ANY, OPT_DRY_RUN
+from .deferrals import DeferralRegistry, Elapsed
 from .engine import Decision, evaluate
+from .guards import Guarded, guard_blinds, review, screen
 from .ha_world import build_world
-from .model import Config
+from .model import KEEP, Action, Config
+from .runner import CoverRunner, Priority, current_position
+
+if TYPE_CHECKING:
+    from homeassistant.config_entries import ConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
+
+# `runner.async_apply`'s `source` field for the two ways this module asks for a
+# movement. They are the field that answers "why did it move" -- the question
+# `last_triggered` provably cannot answer once a blind has moved twice inside
+# the window being investigated.
+SOURCE_RECOMPUTE = "coordinator"
+SOURCE_GUARD_TIMEOUT = "guard-timeout"
 
 # Debounce window between the last watched state change and the evaluation it
 # triggers.
@@ -62,16 +96,86 @@ class CoverLogicCoordinator:
     the entity would have no way to know when to call `async_write_ha_state`.
     """
 
-    def __init__(self, hass: HomeAssistant, config: Config) -> None:
-        """Store `hass` and `config`; subscribe nothing yet -- see `async_setup`."""
+    def __init__(self, hass: HomeAssistant, config: Config, entry: "ConfigEntry") -> None:
+        """Store `hass`/`config`/`entry` and build the executor; subscribe nothing yet.
+
+        `entry` is required, not optional, and the runner is built here rather
+        than being injectable. A coordinator that could be constructed without
+        an executor would have two code paths -- one that dispatches and one
+        that only computes -- and the one running in the house would be
+        whichever `__init__.py` happened to pick. There is one path.
+        """
         self.hass = hass
         self.config = config
+        self.entry = entry
         self.decision: Decision | None = None
+        self.guarded: Guarded | None = None
         self.last_error: str | None = None
         self.last_success: dt.datetime | None = None
+        self.commands = CommandLog()
+        self.deferrals = DeferralRegistry()
+        self.runner = self._build_runner()
         self._unsub_state_change: Callable[[], None] | None = None
+        self._unsub_recheck: Callable[[], None] | None = None
         self._debouncer: Debouncer | None = None
         self._listeners: list[Callable[[], None]] = []
+        # The last reason each blind's action was withheld by a guard, so a
+        # standing suppression is recorded once instead of on every recompute.
+        # Without this, a single open sauna door writes a `withheld` entry
+        # every time the weather updates and `last_command` degenerates into a
+        # clock.
+        self._withheld: dict[str, str] = {}
+
+    def _build_runner(self) -> CoverRunner:
+        """The executor, with its service caller bound to this entry's `CommandLog`.
+
+        **This is the one wire task 4 deliberately leaves unconnected**, and
+        binding it to an object rather than to a flag is what makes that
+        checkable rather than trusted. `CoverRunner` takes its service caller
+        as a constructor argument; here it is given `command_log.CommandLog`,
+        a pure module with no `homeassistant` import of any kind, so there is
+        nothing in the object graph that *could* reach `hass.services` even
+        with `dry_run` switched off. `tests/test_no_movement.py` still passes
+        over the whole package unchanged, and it is passing because it is
+        accurate, not because an exception was carved into it.
+
+        The same object is also the runner's `observer`, which is how a dry run
+        is visible at all: in dry run the service caller is never reached (the
+        runner stops before it, by design), so a log bound only to the caller
+        would stay empty for exactly the day it exists for.
+        """
+        return CoverRunner(self.hass, self.entry, self.commands, observer=self.commands.observe)
+
+    @property
+    def dry_run(self) -> bool:
+        """Whether the executor is currently only describing what it would do.
+
+        Read live off `entry.options`, never cached -- the same reason
+        `runner._dry_run` reads it live: the one path this switch exists for is
+        "turn the hands off right now", and a cached copy would need a reload
+        to notice.
+        """
+        return bool(self.entry.options.get(OPT_DRY_RUN, DEFAULT_DRY_RUN))
+
+    @property
+    def last_command(self) -> dict[str, Any] | None:
+        """The newest thing the executor did, or deliberately did not do."""
+        return self.commands.last
+
+    @property
+    def pending(self) -> dict[str, dict[str, Any]]:
+        """What is waiting: deferred by a guard, or queued behind a movement.
+
+        Two sub-mappings rather than one merged per-blind view, because the two
+        are genuinely independent -- a blind can be deferred *now* while a
+        sequence started before the guard fired is still finishing -- and a
+        merged shape would have to decide which of those a reader meant.
+        """
+        now = dt_util.utcnow().timestamp()
+        return {
+            "deferred": self.deferrals.as_attributes(now),
+            "queued": self.runner.in_flight,
+        }
 
     async def async_setup(self) -> None:
         """Subscribe to the config's referenced entities and run the first evaluation.
@@ -106,13 +210,23 @@ class CoverLogicCoordinator:
         leave the old subscription (and a possibly-pending debounce call)
         alive alongside the new one, doubling up on evaluations against
         whichever `Config` object it captured.
+
+        The executor is shut down last and is *not* cancelled: `async_shutdown`
+        lets a sequence already in flight finish and names whatever it could
+        not send, because a sequence killed halfway can leave a blind down with
+        its slats untouched and there is no successor left to hand them to.
+        Subscriptions come first so nothing new arrives while it drains.
         """
         if self._unsub_state_change is not None:
             self._unsub_state_change()
             self._unsub_state_change = None
+        if self._unsub_recheck is not None:
+            self._unsub_recheck()
+            self._unsub_recheck = None
         if self._debouncer is not None:
             self._debouncer.async_shutdown()
             self._debouncer = None
+        await self.runner.async_shutdown()
 
     def add_listener(self, listener: Callable[[], None]) -> Callable[[], None]:
         """Register `listener` to be called after every completed evaluation.
@@ -153,7 +267,7 @@ class CoverLogicCoordinator:
         self._debouncer.async_schedule_call()
 
     async def _async_evaluate(self) -> None:
-        """Snapshot the world once and evaluate it, keeping `decision` on error.
+        """Snapshot the world once, run the whole path, and execute the result.
 
         Any evaluation failure is caught, logged with its traceback, and
         recorded in `last_error` rather than propagated: a transient bad state
@@ -170,10 +284,18 @@ class CoverLogicCoordinator:
         `EngineError` would let those escape into the debouncer's callback,
         where `last_error` is never set and the sensor keeps showing a stale
         answer with no sign that anything is wrong.
+
+        The guards are inside the same `try` as the engine, and deliberately so:
+        `guards.GuardError` means an interlock cannot be honoured as written,
+        and the answer to "a safety rule is unusable" is to move nothing and say
+        so -- never to fall back to the unguarded decision, which is exactly the
+        movement the guard existed to stop.
         """
         world = build_world(self.hass, self.config)
         try:
+            screening = screen(self.config, world)
             decision = evaluate(self.config, world)
+            guarded = review(self.config, world, decision, self._positions(), screening)
         except Exception as err:
             _LOGGER.exception("cover_logic: evaluation failed, keeping previous decision")
             self.last_error = f"{type(err).__name__}: {err}"
@@ -181,19 +303,208 @@ class CoverLogicCoordinator:
             return
 
         self.decision = decision
+        self.guarded = guarded
         self.last_error = None
         self.last_success = dt_util.utcnow()
+
+        now = self.last_success.timestamp()
+        elapsed = self.deferrals.sync(guarded, decision, now)
+        self._reschedule(self.deferrals.next_recheck(now))
+        await self._execute(guarded, elapsed, decision.mode)
+
+        # Last, not first: the sensor reads `last_command` and `pending`, and a
+        # listener fired before the executor ran would show the previous
+        # recompute's answer next to this one's mode.
         self._notify_listeners()
+
+    def _positions(self) -> dict[str, int | None]:
+        """Every configured blind's reported position, for `guards.review`.
+
+        Read fresh on every evaluation and read through `runner.current_position`,
+        not through a second copy of "what does this cover report" -- a
+        directional guard has to be judged against the same number the runner
+        would act on, or the two layers can disagree about which way a blind is
+        about to move.
+
+        A blind with no state, or an unreadable one, is `None`, which
+        `guards.review` treats as "the position could not be read" and which
+        makes a directional guard fire rather than silently stand down.
+        """
+        return {
+            entity: current_position(self.hass.states.get(entity)) for entity in self.config.blinds
+        }
+
+    async def _execute(self, guarded: Guarded, elapsed: Elapsed, mode: str) -> None:
+        """Hand this evaluation's answers to the runner, in priority order.
+
+        Three groups, in this order and never merged:
+
+        1. **Withheld.** Every blind a guard suppressed outright is recorded --
+           once per change of reason, not once per recompute -- so that "the
+           new system did nothing here" is distinguishable from "the new system
+           was never asked", which is the single most valuable thing the dry-run
+           day produces. Nothing is dispatched for these.
+        2. **Timed-out deferrals**, at `Priority.GUARD`. A guard's own deadline
+           expiring outranks a routine recompute, and it outranks a person, for
+           the reason `runner.Priority` states: an interlock that a later
+           recompute could quietly overtake is a suggestion.
+        3. **The ordinary decision**, at `Priority.SCHEDULED`.
+
+        Groups 2 and 3 cannot collide: a blind whose deferral just resolved is
+        still in `Guarded.deferrals` for this evaluation, so its `Outcome.action`
+        is `None` and it is absent from `Guarded.actions`.
+        """
+        for entity, outcome in sorted(guarded.outcomes.items()):
+            if outcome.action is not None:
+                self._withheld.pop(entity, None)
+                continue
+            if self._withheld.get(entity) == outcome.reason:
+                continue
+            self._withheld[entity] = outcome.reason
+            self.commands.withheld(
+                entity, outcome.reason, policy=outcome.policy, guard=outcome.guard
+            )
+
+        for entity in elapsed.abandoned:
+            _LOGGER.warning(
+                "cover_logic: %s waited out its guard and gave up (on_timeout: abandon); "
+                "nothing was issued for it",
+                entity,
+            )
+
+        await self._apply(elapsed.proceed, Priority.GUARD, SOURCE_GUARD_TIMEOUT, mode)
+        await self._apply(guarded.actions, Priority.SCHEDULED, SOURCE_RECOMPUTE, mode)
+
+    async def _apply(
+        self, actions: Mapping[str, Action], priority: Priority, source: str, mode: str
+    ) -> None:
+        """Ask the runner for each of `actions`, skipping the ones that ask for nothing.
+
+        An `Action(KEEP, KEEP)` is not dispatched. It is a complete, meaningful
+        decision -- "leave both axes alone", which is how the engine spells both
+        "a rule said keep" and "no rule matched" -- but there is nothing in it
+        to execute, and handing it to a blind's queue is not free: the waiting
+        slot holds exactly one request, so a no-op arriving mid-movement would
+        evict a real request that was queued behind it.
+
+        Re-sending an action the blind is already at is *not* filtered here, on
+        purpose. That is the planner's dead band, which compares against the
+        position the blind reports at the moment the sequence starts; filtering
+        on a stale idea of "we already sent this" is how a blind ends up never
+        being corrected after somebody moved it by hand.
+        """
+        for entity, action in sorted(actions.items()):
+            blind = self.config.blinds.get(entity)
+            if blind is None:
+                # `Decision.targets` is built from `config.blinds`, so this is
+                # unreachable from the engine; a guard's `force` could name
+                # anything, though, and a missing blind has no `travel_time` to
+                # plan against.
+                _LOGGER.warning("cover_logic: %s is not a configured blind, not applying", entity)
+                continue
+            if action.position is KEEP and action.tilt is KEEP:
+                continue
+            try:
+                await self.runner.async_apply(
+                    blind, action, priority=priority, source=source, mode=mode
+                )
+            except Exception:
+                _LOGGER.exception("cover_logic: could not queue %s for %s", entity, source)
+
+    def _reschedule(self, seconds: float | None) -> None:
+        """Arm (or disarm) the periodic re-examination a pending `defer` needs.
+
+        `None` means nothing is waiting: the timer is cancelled outright rather
+        than left ticking, so a still house costs nothing.
+
+        This is the restart-resilient half of a deferral, and it is worth being
+        explicit about why it is enough. A deferral is never an in-flight
+        `await` here -- `guards.screen`/`guards.review` re-derive the whole
+        pending set from `(config, world)` on every evaluation, so a restart
+        has no task to kill and the first evaluation after startup re-creates
+        every wait that is still warranted. What a restart *could* still break
+        is a wait whose release depends on nothing anyone is watching, i.e. a
+        timeout: that is what this timer is, and `async_setup` runs an
+        evaluation itself, so it is armed again before Home Assistant has
+        finished starting. See `deferrals.py`'s module docstring.
+
+        A one-shot point in time rather than a repeating interval, because the
+        interval this needs is not constant: `next_recheck` shortens itself to
+        whatever is closest -- a guard's `recheck_every` or the deadline it is
+        counting down to -- and that answer changes on every evaluation.
+
+        (`async_track_point_in_utc_time` rather than the shorter helper that
+        takes a delay: that one's *name* contains the substring
+        `tests/test_no_movement.py`'s grep-style backstop refuses, and the
+        right response to a temporary guard firing is to satisfy it, not to
+        carve a hole in it. This is the equivalent call.)
+        """
+        if self._unsub_recheck is not None:
+            self._unsub_recheck()
+            self._unsub_recheck = None
+        if seconds is None:
+            return
+        when = dt_util.utcnow() + dt.timedelta(seconds=seconds)
+        self._unsub_recheck = async_track_point_in_utc_time(self.hass, self._handle_recheck, when)
+
+    @callback
+    def _handle_recheck(self, _now: dt.datetime) -> None:
+        """The recheck timer fired: evaluate again, through the same debouncer.
+
+        Through the debouncer rather than straight into `_async_evaluate`, so a
+        recheck landing in the middle of a burst of state changes coalesces
+        with them instead of racing them.
+        """
+        self._unsub_recheck = None
+        if self._debouncer is None:
+            return
+        self._debouncer.async_schedule_call()
 
 
 def _entity_ids(config: Config) -> set[str]:
-    """Plain entity ids to subscribe to, one per `referenced_entities` entry.
+    """Plain entity ids to subscribe to: what the config reads, plus directional guards' blinds.
 
-    An attribute-read entry is `(entity_id, attribute)` -- there is no
-    per-attribute subscription in Home Assistant's state-change event, so its
-    `entity_id` is what gets watched; a change to any attribute (or the state
-    itself) of that entity is what triggers re-evaluation.
+    An attribute-read entry from `referenced_entities` is `(entity_id,
+    attribute)` -- there is no per-attribute subscription in Home Assistant's
+    state-change event, so its `entity_id` is what gets watched; a change to
+    any attribute (or the state itself) of that entity is what triggers
+    re-evaluation.
+
+    `referenced_entities` alone is not the whole answer any more, and this is
+    the gap `_directional_guard_blinds` closes -- see its own docstring.
     """
-    return {
+    watched = {
         entry[0] if isinstance(entry, tuple) else entry for entry in referenced_entities(config)
     }
+    return watched | _directional_guard_blinds(config)
+
+
+def _directional_guard_blinds(config: Config) -> set[str]:
+    """The blinds whose *own* position can change a guard's verdict.
+
+    A guard with `applies_to: closing`/`opening` is judged against where the
+    blind is right now (`guards._direction_matches`), so its answer can change
+    with nothing but the blind itself moving -- somebody pulling it up by hand,
+    or another system putting it down. Nothing in `referenced_entities` sees
+    that: it enumerates what *conditions* read, and a directional guard reads a
+    position no condition mentions. On this house's own configuration
+    `referenced_entities(fixtures/dom_peter.yaml)` contains no `cover.*` entry
+    at all, so without this the verdict would go stale silently and only be
+    noticed on the day the interlock was needed.
+
+    Narrow on purpose. Subscribing the coordinator to *every* cover would make
+    the layer that decides listen to the layer that moves: the runner's own
+    movement would feed back as a recompute several times a second during a
+    55-second travel. Only blinds a directional guard could actually judge are
+    watched, which is none at all on a configuration with no directional
+    guards, and the debouncer plus the planner's dead band bound what is left.
+
+    An `input`-stage guard can never name a direction (`validation`'s
+    `guard_input_direction`), so this only ever collects `output`-stage guards'
+    targets without having to filter by stage.
+    """
+    watched: set[str] = set()
+    for guard in config.guards:
+        if guard.applies_to != GUARD_ANY:
+            watched |= guard_blinds(config, guard)
+    return watched

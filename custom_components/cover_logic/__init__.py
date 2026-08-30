@@ -145,7 +145,7 @@ async def async_setup_entry(hass: "HomeAssistant", entry: "CoverLogicConfigEntry
     # import.
     from .coordinator import CoverLogicCoordinator  # noqa: PLC0415
 
-    coordinator = CoverLogicCoordinator(hass, config)
+    coordinator = CoverLogicCoordinator(hass, config, entry)
     await coordinator.async_setup()
 
     entry.runtime_data = CoverLogicData(config=config, coordinator=coordinator)

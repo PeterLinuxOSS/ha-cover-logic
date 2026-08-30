@@ -54,6 +54,34 @@ def config():
     return load_config(CONFIG_TEXT)
 
 
+class FakeRuntimeEntry:
+    """The one attribute the *runtime* side of a config entry is read for.
+
+    `CoverLogicCoordinator` and `CoverRunner` read `entry.options` and nothing
+    else off the entry -- the `dry_run` switch lives there so it can be flipped
+    without a reload (`const.OPT_DRY_RUN`). A plain dict rather than the real
+    `MappingProxyType` so a test can flip it mid-run the way
+    `async_update_entry` does in production, which is the whole point of the
+    option living in `options` at all.
+
+    Separate from `FakeConfigEntry` above because that one stands in for the
+    *setup* side (`data`, `subentries`, `version`, `runtime_data`); nothing
+    that only needs the switch should have to construct a config file path to
+    get it.
+    """
+
+    def __init__(self, options=None, entry_id="entry1"):
+        """Store `options` (defaulting to none set) and an entry id."""
+        self.options = dict(options or {})
+        self.entry_id = entry_id
+
+
+@pytest.fixture
+def runtime_entry():
+    """Factory: `runtime_entry({"dry_run": False})` -> a `FakeRuntimeEntry`."""
+    return FakeRuntimeEntry
+
+
 class FakeStateMachine:
     """Stands in for `hass.states`: only the `.get()` read path `build_world` uses."""
 
@@ -110,13 +138,20 @@ class FakeConfigEntry:
     "start empty"). `version` defaults to `1`, the original shape's version,
     matching every entry these fixtures built before `async_migrate_entry`
     existed.
+
+    `options` defaults to `{}` -- an entry that has never had its options
+    touched, which is what every entry created before the `dry_run` switch
+    existed looks like. `CoverRunner`/`CoverLogicCoordinator` read the switch
+    through `entry.options.get(OPT_DRY_RUN, DEFAULT_DRY_RUN)`, so an empty
+    mapping is the "dry run on" default and not a missing attribute.
     """
 
-    def __init__(self, data, *, subentries=None, version=1):
-        """Store `data`/`subentries`/`version`; `runtime_data` is left unset."""
+    def __init__(self, data, *, subentries=None, version=1, options=None):
+        """Store `data`/`subentries`/`version`/`options`; `runtime_data` is left unset."""
         self.data = data
         self.subentries = subentries or {}
         self.version = version
+        self.options = dict(options or {})
 
 
 @pytest.fixture
@@ -210,19 +245,23 @@ class FakeSetupHass:
     """Stands in for `hass` as seen by `async_setup_entry`/`async_unload_entry`.
 
     `.config_entries` and (since both functions now also (un)register the
-    `import_config`/`export_config` services) `.services` are the only two
-    attributes touched -- the coordinator they build reads/writes nothing on
-    `hass` beyond what `hass_factory`'s real minimal `HomeAssistant` covers,
-    but `test_init.py`'s fixtures (`VALID_CONFIG` and friends) reference no
-    entity at all, so `build_world` never calls `hass.states.get` either;
-    this fake needs nothing beyond those two to stand in for `hass` in those
-    tests.
+    `import_config`/`export_config` services) `.services` are the two
+    attributes those two functions touch directly.
+
+    `.states` is here for the coordinator they build. `test_init.py`'s
+    fixtures (`VALID_CONFIG` and friends) reference no entity at all, so
+    `build_world` still never reads anything -- but since task 4 the
+    coordinator also builds a `positions` map for `guards.review`, one entry
+    per *configured blind*, and those configs do have a blind. An empty state
+    machine answers `None` for it, which is exactly "this cover reports
+    nothing" and is a state the real house can be in too.
     """
 
     def __init__(self, *, unload_result=True):
-        """Wrap a fresh `FakeEntryConfigEntries` and a fresh `FakeServiceRegistry`."""
+        """Wrap a fresh `FakeEntryConfigEntries`, `FakeServiceRegistry` and empty states."""
         self.config_entries = FakeEntryConfigEntries(unload_result=unload_result)
         self.services = FakeServiceRegistry()
+        self.states = FakeStateMachine({})
 
     async def async_add_executor_job(self, target, *args):
         """Genuinely run `target` off the current thread, like the real one does.

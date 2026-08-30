@@ -41,13 +41,33 @@ class FakeCoordinator:
     entity's actual lifecycle methods against it, without pulling in the real
     coordinator's event-loop/debounce machinery (already covered on its own
     in `test_coordinator.py`).
+
+    `dry_run`/`pending`/`last_command` are the executor-facing three the sensor
+    gained in task 4. They are plain attributes here on purpose: the real ones
+    are read-only properties over a `CommandLog`, a `DeferralRegistry` and a
+    `CoverRunner`, and a fake that rebuilt those three would be testing them
+    rather than the sensor. That the real coordinator actually *fills* them is
+    `tests/ha/test_wiring.py`'s job, driven end to end -- exactly the split
+    that stops this file from passing while the layer beneath it is broken.
     """
 
-    def __init__(self, decision=None, last_error=None, last_success=None):
-        """Store the three attributes `CoverLogicModeSensor` reads."""
+    def __init__(
+        self,
+        decision=None,
+        last_error=None,
+        last_success=None,
+        *,
+        dry_run=True,
+        pending=None,
+        last_command=None,
+    ):
+        """Store the six attributes `CoverLogicModeSensor` reads."""
         self.decision = decision
         self.last_error = last_error
         self.last_success = last_success
+        self.dry_run = dry_run
+        self.pending = pending if pending is not None else {"deferred": {}, "queued": {}}
+        self.last_command = last_command
         self.listeners = []
 
     def add_listener(self, listener):

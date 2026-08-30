@@ -138,7 +138,27 @@ class CoverLogicModeSensor(SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """`targets`, `trace`, error/success bookkeeping, and the live matrix comparison."""
+        """The decision, the executor's state, and the live matrix comparison.
+
+        Three of these are what a person needs during the dry-run day and
+        nothing else surfaces:
+
+        - `dry_run` -- whether the executor is describing or doing. Read live
+          off `entry.options`, so the attribute changes the moment the switch
+          does, with no reload.
+        - `pending` -- `deferred` (which blind, which guard, how long it has
+          waited, what happens when it runs out) and `queued` (which blind is
+          mid-sequence and what is waiting behind it). The queue is the one
+          thing the log genuinely cannot show: a log says what already
+          happened, and this is about what has not happened yet.
+        - `last_command` -- the newest thing the executor did or deliberately
+          did not do, `withheld` guard suppressions included.
+
+        `matica_diff` stays, unchanged. While the old Jinja matrix is still the
+        system actually running the house, both views are wanted -- the
+        comparison against it, and what this engine's own executor would have
+        done -- and they answer different questions.
+        """
         decision = self._coordinator.decision
         targets: dict[str, Any] = {}
         trace: dict[str, str] = {}
@@ -156,6 +176,9 @@ class CoverLogicModeSensor(SensorEntity):
             "trace": trace,
             "last_error": self._coordinator.last_error,
             "last_success": last_success.isoformat() if last_success is not None else None,
+            "dry_run": self._coordinator.dry_run,
+            "pending": self._coordinator.pending,
+            "last_command": self._coordinator.last_command,
             "matica_mode": matica_mode,
             "matica_diff": matica_diff,
         }
