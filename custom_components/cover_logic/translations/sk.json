@@ -320,6 +320,7 @@
           "modes": "Režimy ({modes_count})",
           "rules": "Pravidlá ({rules_count})",
           "import_export": "Import / export YAML",
+          "execution": "Vykonávanie ({execution_summary})",
           "check_matrix": "Zdravie konfigurácie ({health_summary})"
         }
       },
@@ -496,6 +497,16 @@
           "path": "Cesta",
           "dry_run": "Skúšobný beh",
           "overwrite": "Prepísať"
+        }
+      },
+      "execution": {
+        "title": "Vykonávanie",
+        "description": "Či integrácia žalúziami naozaj hýbe, alebo len zapisuje do logu, čím by pohla. Suchý beh je bezpečné nastavenie: každý príkaz sa zaloguje aj so službou a dátami, ktoré by použil, takže sa dá deň porovnať s automatizáciami, ktoré nahrádza. Vypnutím dostane integrácia ruky.",
+        "data": {
+          "dry_run": "Suchý beh (príkazy len zapisovať, nehýbať ničím)"
+        },
+        "data_description": {
+          "dry_run": "Zapnuté: nič sa nehýbe, každý zamýšľaný príkaz ide do logu. Vypnuté: žalúzie sa naozaj hýbu. Prejaví sa okamžite, bez reloadu."
         }
       },
       "check_matrix": {

@@ -396,10 +396,15 @@ class FakeSubentryEntry:
     manager.
     """
 
-    def __init__(self, entry_id="entry1", data=None):
-        """Start with no subentries; `data` defaults to `{}` (no `guards`)."""
+    def __init__(self, entry_id="entry1", data=None, options=None):
+        """Start with no subentries; `data`/`options` default to `{}`."""
         self.entry_id = entry_id
         self.data = data or {}
+        # A plain dict, unlike the real `MappingProxyType`. Only ever read
+        # through `.get(...)` and replaced wholesale by `async_update_entry`
+        # below, which is exactly what `options_flow.async_step_execution`
+        # (the one screen that writes options at all) does to the real one.
+        self.options = dict(options or {})
         self.subentries: dict[str, FakeSubentry] = {}
 
     def add_subentry(self, subentry_type, data, *, title=""):
@@ -619,10 +624,18 @@ class FakeOptionsConfigEntries:
         del entry.subentries[subentry_id]
         return True
 
-    def async_update_entry(self, entry, *, data=None, **_ignored):
-        """Replace `entry.data`; every other keyword the real signature accepts is unused here."""
+    def async_update_entry(self, entry, *, data=None, options=None, **_ignored):
+        """Replace `entry.data`/`entry.options`, like the real manager does.
+
+        `options` is named explicitly rather than swallowed by `**_ignored`:
+        `async_step_execution` writes the `dry_run` switch through exactly this
+        keyword, and a fake that silently dropped it would let a test assert a
+        toggle "worked" while nothing was ever stored.
+        """
         if data is not None:
             entry.data = dict(data)
+        if options is not None:
+            entry.options = dict(options)
         return True
 
 

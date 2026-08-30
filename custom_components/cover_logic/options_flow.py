@@ -71,13 +71,19 @@ fresh at render time, not a fixed list -- so there is nothing to catch: the
 option a user could pick to reach an empty edit/remove flow is simply not on
 the menu.
 
-**Never touches `entry.options`.** This flow's whole point is to mutate
-*subentries*, which live independently of `ConfigEntry.options`. It never
-calls `self.async_create_entry(...)`; every screen either shows another
-form/menu or loops back to one, so the flow simply stays open (as any
-menu-driven UI does) until the user closes it -- Home Assistant's own
-generic "flow aborted by the user" handling, needing no strings.json entry
-of this integration's own.
+**One screen writes `entry.options`; the rest write subentries.** Almost all
+of this flow's point is to mutate *subentries*, which live independently of
+`ConfigEntry.options`, and until phase 3 gave this integration an executor
+nothing here touched options at all. `async_step_execution` is the exception
+and, so far, the only one: `dry_run` (`const.OPT_DRY_RUN`) is an operational
+option of the installation, not a fact about the house, and it belongs in
+options precisely because a write there reaches `runner.py` without a reload
+-- see `const.OPT_DRY_RUN`'s own comment for why not `entry.data`. It is
+written with `async_update_entry(options=...)`, not `self.async_create_entry`:
+this flow never finishes. Every screen either shows another form/menu or loops
+back to one, so it simply stays open (as any menu-driven UI does) until the
+user closes it -- Home Assistant's own generic "flow aborted by the user"
+handling, needing no strings.json entry of this integration's own.
 """
 
 from typing import Any
@@ -102,7 +108,7 @@ from .config_store import (
     effective_rule_items,
 )
 from .conformance import diff_configs, repo_fixture_path
-from .const import DEFAULT_CONFIG_PATH, RULE_DEFAULT_ZONE
+from .const import DEFAULT_CONFIG_PATH, DEFAULT_DRY_RUN, OPT_DRY_RUN, RULE_DEFAULT_ZONE
 from .model import Config
 from .services import (
     ATTR_DRY_RUN,
@@ -139,7 +145,7 @@ _SECTION_TYPE: dict[str, str] = {
     _RULES_SECTION: RULE,
 }
 
-_MAIN_MENU_OPTIONS = [*_SECTION_TYPE, "import_export", "check_matrix"]
+_MAIN_MENU_OPTIONS = [*_SECTION_TYPE, "import_export", "execution", "check_matrix"]
 
 _PICK_FIELD = "subentry_id"
 _CONFIRM_FIELD = "confirm"
@@ -376,6 +382,17 @@ def _health_summary_text(entry: Any) -> str:
     return ", ".join(parts)
 
 
+def _execution_summary_text(entry: Any) -> str:
+    """One short phrase for the main menu's `execution` label: does this move covers?
+
+    Deliberately on the menu itself rather than only inside the screen. "Is
+    this installation actually driving the blinds right now?" is the one
+    question whose wrong answer is expensive in both directions, and a menu
+    that reads `Execution (dry run)` answers it without a click.
+    """
+    return "dry run" if entry.options.get(OPT_DRY_RUN, DEFAULT_DRY_RUN) else "live"
+
+
 def _validation_report_text(problems: list[Problem]) -> str:
     """`"N error(s), M warning(s)."`, followed by one attributed line per problem."""
     errors, warnings = _severity_counts(problems)
@@ -545,6 +562,7 @@ class CoverLogicOptionsFlow(OptionsFlow):
         # not only after opening that screen -- see `_health_summary_text`'s
         # own docstring for why it is safe to recompute on every render.
         placeholders["health_summary"] = _health_summary_text(entry)
+        placeholders["execution_summary"] = _execution_summary_text(entry)
         return self.async_show_menu(
             step_id="init", menu_options=_MAIN_MENU_OPTIONS, description_placeholders=placeholders
         )
@@ -1004,6 +1022,35 @@ class CoverLogicOptionsFlow(OptionsFlow):
             data_schema=schema,
             errors=errors,
             description_placeholders=placeholders,
+        )
+
+    # -- Execution mode (the one screen that writes `entry.options`) --------
+
+    async def async_step_execution(
+        self, user_input: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Turn `runner.py`'s hands on or off, without a reload.
+
+        The only screen in this flow that writes `ConfigEntry.options` rather
+        than a subentry -- see this module's own docstring and
+        `const.OPT_DRY_RUN` for why this one switch belongs there. The write is
+        a merge into whatever options already exist, not a replacement: a
+        future second option must not be erased by someone toggling this one.
+        """
+        entry = self.config_entry
+        if user_input is not None:
+            self.hass.config_entries.async_update_entry(
+                entry,
+                options={**dict(entry.options), OPT_DRY_RUN: bool(user_input[OPT_DRY_RUN])},
+            )
+            return await self._show_main_menu()
+
+        current = entry.options.get(OPT_DRY_RUN, DEFAULT_DRY_RUN)
+        return self.async_show_form(
+            step_id="execution",
+            data_schema=vol.Schema(
+                {vol.Required(OPT_DRY_RUN, default=bool(current)): selector.BooleanSelector()}
+            ),
         )
 
     # -- Check against the old matrix --------------------------------------

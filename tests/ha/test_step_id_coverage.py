@@ -230,10 +230,21 @@ def test_options_flow_every_reachable_step_id_is_dispatchable(subentry_entry, op
         session.choose(section)
         session.choose("back")
 
-    for step in ("import_export", "check_matrix"):
+    for step in ("import_export", "execution", "check_matrix"):
         session = _Session(hass, CoverLogicOptionsFlow(), handler=_ENTRY_ID, context={})
         session.start()
         session.choose(step)
+
+    # Submitting `execution` renders the *main menu* from inside
+    # `async_step_execution` -- another render-from-a-different-step, the exact
+    # shape this file exists to catch, and the only screen that writes
+    # `entry.options` on the way.
+    session = _Session(hass, CoverLogicOptionsFlow(), handler=_ENTRY_ID, context={})
+    session.start()
+    session.choose("execution")
+    result = session.configure({"dry_run": False})
+    assert result["type"] == "menu"
+    assert entry.options["dry_run"] is False
 
 
 # ---------------------------------------------------------------------------
