@@ -465,7 +465,7 @@ def test_subentries_from_config_round_trips_a_default_rule() -> None:
         )
     )
     items = subentries_from_config(original)
-    rebuilt = config_from_subentries(entry_from_subentry_items(items, original.guards))
+    rebuilt = config_from_subentries(entry_from_subentry_items(items, guards_to_data(original)))
     assert rebuilt == original
     assert rebuilt.rules["m.*"][0].then.position == 0
 
@@ -698,7 +698,7 @@ def test_tied_order_breaks_ties_by_subentry_id_not_by_subentries_mapping_order()
 def test_subentries_from_config_round_trips_the_yaml_text_config():
     original = load_config(YAML_TEXT)
     items = subentries_from_config(original)
-    rebuilt = config_from_subentries(entry_from_subentry_items(items, original.guards))
+    rebuilt = config_from_subentries(entry_from_subentry_items(items, guards_to_data(original)))
     assert rebuilt == original
 
 
@@ -724,7 +724,7 @@ def test_subentries_from_config_round_trips_the_real_fixture(fixtures_dir):
     """
     original = load_config_file(fixtures_dir / "dom_peter.yaml")
     items = subentries_from_config(original)
-    rebuilt = config_from_subentries(entry_from_subentry_items(items, original.guards))
+    rebuilt = config_from_subentries(entry_from_subentry_items(items, guards_to_data(original)))
     assert rebuilt == original
 
 
