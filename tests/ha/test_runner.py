@@ -29,7 +29,7 @@ pytest.importorskip("homeassistant")
 
 from homeassistant.exceptions import HomeAssistantError
 
-from cover_logic.const import OPT_DRY_RUN
+from cover_logic.const import COMMAND_CALLED, COMMAND_SUPPRESSED, COMMAND_WOULD_CALL, OPT_DRY_RUN
 from cover_logic.model import KEEP, Action, Blind
 from cover_logic.runner import CoverRunner, Priority
 
@@ -671,3 +671,139 @@ def test_shutdown_names_every_command_it_could_not_send(hass_factory, caplog):
     abandoned = [r.getMessage() for r in caplog.records if "never issued" in r.getMessage()]
     assert any("SetTilt(0)" in message for message in abandoned)
     assert all("cover.a" in message for message in abandoned)
+
+
+# ---------------------------------------------------------------------------
+# The observer, and the read-only queue view (task 4's two additions).
+# ---------------------------------------------------------------------------
+
+
+def test_the_observer_sees_every_line_with_its_own_kind(hass_factory):
+    """One notification per logged line, and the kind is told, not inferred.
+
+    The suppressed line matters most: `cover.a` already reports position 0, so
+    the dead band drops that axis and the *only* evidence it was ever asked for
+    is the suppression. An observer that only saw issued commands would make a
+    dry run's most valuable finding invisible.
+    """
+    calls = []
+    seen = []
+
+    async def _run():
+        hass = hass_factory()
+        try:
+            hass.states.async_set(
+                "cover.a", "open", {"current_position": 0, "current_tilt_position": 100}
+            )
+            runner = CoverRunner(
+                hass,
+                _Entry({OPT_DRY_RUN: False}),
+                _motor(hass, calls),
+                observer=lambda kind, fields: seen.append((kind, dict(fields))),
+            )
+            await runner.async_apply(FAST, CLOSE, priority=Priority.SCHEDULED, source="t")
+            await runner.async_wait_idle()
+        finally:
+            await hass.async_stop(force=True)
+
+    asyncio.run(_run())
+
+    kinds = [kind for kind, _fields in seen]
+    assert COMMAND_SUPPRESSED in kinds
+    assert COMMAND_CALLED in kinds
+    assert COMMAND_WOULD_CALL not in kinds  # counter: dry run is off here
+    suppressed = [fields for kind, fields in seen if kind == COMMAND_SUPPRESSED]
+    assert [fields["axis"] for fields in suppressed] == ["position"]
+    assert suppressed[0]["reason"] == "dead_band"
+
+
+def test_the_observer_sees_would_call_in_a_dry_run(hass_factory):
+    """The same lines, the other kind -- the switch is `dry_run`, nothing else."""
+    seen = []
+
+    async def _run():
+        hass = hass_factory()
+        try:
+            hass.states.async_set(
+                "cover.a", "open", {"current_position": 100, "current_tilt_position": 100}
+            )
+            runner = CoverRunner(
+                hass,
+                _Entry({OPT_DRY_RUN: True}),
+                _motor(hass, []),
+                observer=lambda kind, fields: seen.append((kind, dict(fields))),
+            )
+            await runner.async_apply(FAST, CLOSE, priority=Priority.SCHEDULED, source="t")
+            await runner.async_wait_idle()
+        finally:
+            await hass.async_stop(force=True)
+
+    asyncio.run(_run())
+
+    assert {kind for kind, _fields in seen} == {COMMAND_WOULD_CALL}
+
+
+def test_an_observer_that_raises_cannot_stop_a_sequence(hass_factory, caplog):
+    """Something that merely watches must never be able to leave a blind halfway.
+
+    Without the guard around the callback, the exception escapes `_log_fields`
+    into `_run` and the tilt is never sent -- the 2026-08-21 incident, reached
+    through a diagnostic.
+    """
+    calls = []
+    caplog.set_level(logging.ERROR, logger=_LOGGER_NAME)
+
+    def _explode(_kind, _fields):
+        msg = "observer is broken"
+        raise RuntimeError(msg)
+
+    async def _run():
+        hass = hass_factory()
+        try:
+            hass.states.async_set(
+                "cover.a", "open", {"current_position": 100, "current_tilt_position": 100}
+            )
+            runner = CoverRunner(
+                hass, _Entry({OPT_DRY_RUN: False}), _motor(hass, calls), observer=_explode
+            )
+            await runner.async_apply(FAST, CLOSE, priority=Priority.SCHEDULED, source="t")
+            await runner.async_wait_idle()
+        finally:
+            await hass.async_stop(force=True)
+
+    asyncio.run(_run())
+
+    assert _services(calls) == ["close_cover", "close_cover_tilt"]
+    assert any("observer raised" in record.getMessage() for record in caplog.records)
+
+
+def test_in_flight_reports_what_is_running_and_what_waits_behind_it(hass_factory):
+    """The one question a log cannot answer: what has *not* happened yet."""
+    views = []
+
+    async def _run():
+        hass = hass_factory()
+        try:
+            hass.states.async_set(
+                "cover.a", "open", {"current_position": 100, "current_tilt_position": 100}
+            )
+            runner = _live_runner(hass, [], arrives=False)
+            assert runner.in_flight == {}  # counter: empty when nothing is asked
+
+            await runner.async_apply(SLOW, CLOSE, priority=Priority.SCHEDULED, source="matrix")
+            await asyncio.sleep(0.05)
+            views.append(runner.in_flight)
+
+            await runner.async_apply(SLOW, OPEN, priority=Priority.SCHEDULED, source="voice")
+            views.append(runner.in_flight)
+
+            await runner.async_shutdown(grace=0)
+        finally:
+            await hass.async_stop(force=True)
+
+    asyncio.run(_run())
+
+    assert set(views[0]) == {"cover.a"}
+    assert views[0]["cover.a"]["running"] == "SCHEDULED/matrix"
+    assert "waiting" not in views[0]["cover.a"]
+    assert views[1]["cover.a"]["waiting"] == "SCHEDULED/voice"

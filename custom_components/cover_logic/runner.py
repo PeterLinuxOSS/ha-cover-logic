@@ -28,9 +28,19 @@ the whole translation table be tested without a Home Assistant runtime at all,
 and it is why this module can land while `tests/test_no_movement.py` -- the
 phase-2 guard asserting this integration still has no hands -- is still in the
 repository and still true: nothing in this package constructs a runner with a
-real service caller yet. Wiring one up is task 4, and deleting that guard is
-task 5, in its own commit. This is not an exception carved into the guard; it
-is the guard still being accurate.
+real service caller. Since task 4 the coordinator does construct one, with
+`command_log.CommandLog` in that slot: a pure module with no `homeassistant`
+import at all, which records what would have gone out and issues nothing. So
+the whole path -- guards, queue, planner, translation -- runs on the real house
+with exactly one wire left unconnected, and that wire is an object, not a flag.
+Connecting it is task 5, and deleting that guard is the same commit. This is
+not an exception carved into the guard; it is the guard still being accurate.
+
+`observer` is the other end of the same idea: an optional, synchronous
+`(kind, fields)` callback fired from the one funnel every line here goes
+through (`_log_fields`), so a dry run is visible somewhere other than the log.
+It may not raise into a sequence and it may not block one -- something that
+merely watches must never be able to stop a blind mid-movement.
 
 **Why the Home Assistant imports are deferred.** Like `__init__.py` (see its
 own docstring), and unlike `coordinator.py`: the pure test run under system
@@ -57,7 +67,13 @@ import logging
 from typing import TYPE_CHECKING, Any
 import uuid
 
-from .const import DEFAULT_DRY_RUN, OPT_DRY_RUN
+from .const import (
+    COMMAND_CALLED,
+    COMMAND_SUPPRESSED,
+    COMMAND_WOULD_CALL,
+    DEFAULT_DRY_RUN,
+    OPT_DRY_RUN,
+)
 from .model import KEEP, Action, Blind
 from .planner import (
     AXIS_POSITION,
@@ -147,6 +163,13 @@ class Priority(IntEnum):
 # docstring on why never a list).
 CoverCall = Callable[[str, dict[str, Any]], Awaitable[None]]
 
+# An optional second pair of eyes on every line this module logs: the same
+# `kind` and the same already-built field mapping, handed to whoever wants to
+# keep it somewhere a person can see without tailing a log. Synchronous and
+# return-less on purpose -- an observer that could block or fail would be able
+# to delay or break a movement, and nothing that merely watches may do that.
+CommandObserver = Callable[[str, Mapping[str, object]], None]
+
 
 # ---------------------------------------------------------------------------
 # Translation: `Command` -> a `cover.*` service and its data.
@@ -209,6 +232,19 @@ def _reported(state: "State | None", attribute: str) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int | float):
         return None
     return int(value)
+
+
+def current_position(state: "State | None") -> int | None:
+    """What a cover reports as its position, or `None` when it reports nothing usable.
+
+    Public because `guards.review` needs a `positions` map and must be given
+    exactly the number this module would act on. Two readers of the same
+    attribute, each deciding for itself what `unavailable` or a non-numeric
+    value means, is the class of duplication `MODELS.md` §9 names: a directional
+    guard could then judge a movement the runner sees differently, and the
+    disagreement would only ever surface on a blind that was already broken.
+    """
+    return _reported(state, ATTR_CURRENT_POSITION)
 
 
 def _arrived(state: "State | None", target: int, tolerance: int) -> bool:
@@ -558,16 +594,48 @@ class CoverRunner:
     what it is not.
     """
 
-    def __init__(self, hass: "HomeAssistant", entry: "ConfigEntry", call_cover: CoverCall) -> None:
+    def __init__(
+        self,
+        hass: "HomeAssistant",
+        entry: "ConfigEntry",
+        call_cover: CoverCall,
+        *,
+        observer: CommandObserver | None = None,
+    ) -> None:
         """Store the runtime handles; nothing is scheduled until `async_apply`."""
         self.hass = hass
         self._entry = entry
         self._call_cover = call_cover
+        self._observer = observer
         self._queues: dict[str, _BlindQueue] = {}
         self._clamped: set[tuple[str, str, int]] = set()
         self._closing = False
 
     # -- Public API ------------------------------------------------------
+
+    @property
+    def in_flight(self) -> dict[str, dict[str, str]]:
+        """Read-only: what each blind is doing and what is waiting behind it.
+
+        A view, never a handle -- plain strings, no `_Sequence`, no `_Request`,
+        nothing a caller could cancel or mutate. It exists so "what is queued"
+        is answerable from the diagnostic sensor during the dry-run day, which
+        is the one question the log genuinely cannot answer: a log says what
+        already happened, and a queue is about what has not happened yet.
+        """
+        out: dict[str, dict[str, str]] = {}
+        for entity, queue in sorted(self._queues.items()):
+            view: dict[str, str] = {}
+            if queue.running is not None:
+                request = queue.running.request
+                view["running"] = f"{request.priority.name}/{request.source or '-'}"
+                view["seq"] = queue.running.id
+                view["step"] = f"{queue.running.index}/{len(queue.running.plan.commands)}"
+            if queue.pending is not None:
+                view["waiting"] = f"{queue.pending.priority.name}/{queue.pending.source or '-'}"
+            if view:
+                out[entity] = view
+        return out
 
     async def async_apply(
         self,
@@ -883,16 +951,39 @@ class CoverRunner:
             tilt,
             sequence.dry_run,
         )
-        self._log_fields(sequence, fields)
+        kind = COMMAND_WOULD_CALL if sequence.dry_run else COMMAND_CALLED
+        self._log_fields(sequence, kind, fields)
 
     def _log_suppressed(self, sequence: _Sequence, suppressed: _Suppressed) -> None:
         """The same line shape for a command that was asked for and not sent."""
-        self._log_fields(sequence, _suppressed_fields(sequence.id, sequence.request, suppressed))
+        self._log_fields(
+            sequence,
+            COMMAND_SUPPRESSED,
+            _suppressed_fields(sequence.id, sequence.request, suppressed),
+        )
 
-    def _log_fields(self, sequence: _Sequence, fields: Mapping[str, object]) -> None:
-        """Emit one already-built field mapping at this sequence's own level."""
+    def _log_fields(self, sequence: _Sequence, kind: str, fields: Mapping[str, object]) -> None:
+        """Emit one already-built field mapping at this sequence's own level.
+
+        The single funnel for every line this class writes, which is why the
+        observer is notified here and nowhere else: a second call site is a
+        second thing to forget. `kind` is passed down from the two callers
+        rather than sniffed back out of `fields` -- each of them knows for
+        certain which of the three states it is in, and re-deriving that from
+        the presence of a key would be the same fact implemented twice.
+
+        The observer is called after the log, and its failure is not allowed to
+        become the sequence's failure: something that merely watches must never
+        be able to stop a blind mid-movement.
+        """
         level = logging.INFO if sequence.dry_run else logging.DEBUG
         _LOGGER.log(level, "%s", _format_line(sequence.dry_run, fields))
+        if self._observer is None:
+            return
+        try:
+            self._observer(kind, fields)
+        except Exception:
+            _LOGGER.exception("cover_logic: command observer raised, ignoring")
 
     def _log_timeout(self, sequence: _Sequence, command: WaitForPosition, elapsed: float) -> None:
         """A blind that never reported arrival: one line, one entity, one number to check."""
