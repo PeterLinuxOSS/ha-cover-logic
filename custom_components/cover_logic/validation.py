@@ -59,6 +59,7 @@ def _rule_owner(key: str, index: int) -> tuple[str, str]:
 def validate(config: Config) -> list[Problem]:
     """Run every static check and return all problems found, if any."""
     problems: list[Problem] = []
+    problems += _check_blinds(config)
     problems += _check_ownership(config)
     problems += _check_modes(config)
     problems += _check_rule_keys(config)
@@ -67,6 +68,38 @@ def validate(config: Config) -> list[Problem]:
     problems += _check_unknown_condition_refs(config)
     problems += _check_condition_shapes(config)
     return problems
+
+
+def _check_blinds(config: Config) -> list[Problem]:
+    """Every blind's own fields, independently of any zone or rule.
+
+    Only `travel_time` so far, and only that it is positive. It is not a
+    cosmetic number: `planner.plan` derives the arrival wait from it
+    (`travel_time * ARRIVAL_TIMEOUT_FACTOR`), so `travel_time: 0` produces a
+    wait that expires the instant it starts, a 2 s settle against a ~55 s run,
+    and a tilt command landing mid-travel -- which these motors discard. The
+    slats then silently never end up where they were told to, which is the
+    exact failure `planner.py` exists to prevent, arriving through the
+    configuration instead of through the code.
+
+    Checked here rather than in the planner on purpose: this is a standing
+    property of the configuration, so it is reported once, statically, by the
+    module that owns static checks, not re-derived on every recompute by the
+    module that has to live with it. `subentry_flow`'s `travel_time` selector
+    refuses to *offer* a non-positive value, but a YAML file (which only does
+    `float()`) and a hand-edited subentry both reach here unfiltered, so the
+    selector's `min` is a convenience and this is the check.
+    """
+    return [
+        Problem(
+            ERROR,
+            "bad_travel_time",
+            f"blind {entity!r} has travel_time={blind.travel_time!r}; it must be positive, "
+            f"or the arrival wait derived from it expires before the blind has moved",
+        )
+        for entity, blind in config.blinds.items()
+        if not blind.travel_time > 0
+    ]
 
 
 def _check_ownership(config: Config) -> list[Problem]:

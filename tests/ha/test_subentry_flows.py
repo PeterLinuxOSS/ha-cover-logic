@@ -698,6 +698,42 @@ def test_blind_add_is_never_blocked_by_blind_without_zone(subentry_entry, subent
     assert len([s for s in entry.subentries.values() if s.subentry_type == BLIND]) == 2
 
 
+def test_a_blind_save_is_blocked_by_a_non_positive_travel_time(subentry_entry, subentry_hass):
+    """`bad_travel_time` must actually block its owning form.
+
+    A code in neither `_CODE_OWNERS` nor `_ATTRIBUTED_CODES` silently blocks
+    nothing at all -- no crash, no message, just a validation error that never
+    stops a save (MODELS.md §9). This is the test that says otherwise for the
+    new code. The `blind` form is the one with a `travel_time` field, so it is
+    the one that can fix it.
+
+    The schema's own `min=1` means the form will not *offer* this value; a
+    YAML file or a hand-edited subentry still reaches the same `Config`, which
+    is why the check exists in `validation.py` rather than only in the
+    selector, and why this test submits the resolved dict directly.
+    """
+    entry = subentry_entry()
+    entry.add_subentry(BLIND, {"entity": "cover.a", "tolerance": 45, "travel_time": 60})
+    entry.add_subentry(ZONE, {"id": "terasa", "members": ["cover.a", "cover.b"], "occupants": []})
+    flow = _make_flow(BlindSubentryFlowHandler, subentry_hass(entry), BLIND)
+
+    result = asyncio.run(
+        flow.async_step_user(
+            {
+                "entity": "cover.b",
+                "tolerance": 45,
+                "travel_time": 0,
+                "has_tilt": True,
+                "tilt_after_arrival": True,
+            }
+        )
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "invalid_config"}
+    assert "bad_travel_time" in result["description_placeholders"]["error_detail"]
+
+
 def test_zone_edit_that_orphans_a_blind_is_still_blocked(subentry_entry, subentry_hass):
     """The fix above must not widen into "blind_without_zone never blocks
     anything": a `zone` form's own `members` field is exactly what decides a

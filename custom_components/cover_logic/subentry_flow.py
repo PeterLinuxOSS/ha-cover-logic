@@ -118,6 +118,17 @@ _NEW_SUBENTRY_ID = "__new__"
 #   something *adding a rule to a different pair* either caused or can fix;
 #   before attribution, either one blocked every rule save in the entry.
 _CODE_OWNERS: dict[str, frozenset[str]] = {
+    # `bad_travel_time` is about one blind's own field, and the `blind` form
+    # is the only one with that field -- but every `blind` subentry is
+    # interchangeable for fixing it in the sense this dict means: a save of
+    # *any* blind that leaves a bad `travel_time` standing anywhere is a save
+    # that could have fixed it, because the form being submitted carries a
+    # `travel_time` of its own. It therefore needs no `_ATTRIBUTED_CODES`
+    # entry. (Blocking every blind save on one bad blind is not the deadlock
+    # `_ATTRIBUTED_CODES` exists for either: unlike a zone, a blind needs
+    # nothing else to exist first, so the offending blind can always be
+    # edited.)
+    "bad_travel_time": frozenset({BLIND}),
     "zone_member_unknown": frozenset({ZONE}),
     "blind_in_two_zones": frozenset({ZONE}),
     "blind_without_zone": frozenset({ZONE}),
@@ -476,9 +487,14 @@ _BLIND_SCHEMA = vol.Schema(
                 min=0, max=180, step=1, unit_of_measurement="°", mode=_BOX
             ),
         ),
+        # `min=1`, not 0: `planner.plan` derives the arrival wait from this
+        # number, so 0 means a wait that expires before the blind has moved
+        # and a tilt command discarded mid-travel. `validation._check_blinds`
+        # is the check (a YAML file reaches the same `Config` without passing
+        # through this form); this stops the form offering the value at all.
         vol.Optional("travel_time", default=60): selector.NumberSelector(
             selector.NumberSelectorConfig(
-                min=0, max=600, step=1, unit_of_measurement="s", mode=_BOX
+                min=1, max=600, step=1, unit_of_measurement="s", mode=_BOX
             ),
         ),
         vol.Optional("has_tilt", default=True): selector.BooleanSelector(),

@@ -66,6 +66,16 @@ test:
 - `legacy.py` — translates the *old* Jinja matrix's action vocabulary into
   `(position, tilt)`, shared by the migration gate and the live comparison
   sensor so the two can never define "matches" differently.
+- `starter_config.py` — the bundled example a first run can start from.
+- `planner.py` — `plan(blind, current_position, current_tilt, action) ->
+  Plan`: one blind's decided `Action` turned into the ordered `Command`s that
+  would realise it (`SetPosition`, `WaitForPosition`, `Settle`, `SetTilt`),
+  plus the `Clamp`s that had to be applied. Descriptions only — it issues
+  nothing. This is where the motor-level facts live: a tilt command sent
+  during travel is discarded, the angle is only ever set by movement, a
+  repeated absolute command is itself a movement (hence a dead band, not
+  equality), and 0..100 clamping happens here because the engine
+  deliberately does not clamp (§6). See `docs/rationale.md` — "`planner.py`".
 
 **Home Assistant layer:**
 
@@ -120,9 +130,12 @@ test:
 
 `tests/test_purity.py` enforces the split with an AST walk: it parses
 `model.py`, `world.py`, `conditions.py`, `config_schema.py`,
-`config_store.py`, `conformance.py`, `engine.py`, `validation.py` and
-`legacy.py` and fails if any of them imports anything
-starting with `homeassistant`. This is what makes exhaustive testing of the
+`config_store.py`, `conformance.py`, `engine.py`, `validation.py`,
+`legacy.py`, `starter_config.py` and `planner.py` and fails if any of them
+imports anything
+starting with `homeassistant`. That list, not anyone's intention, is what
+enforces the split — a new pure module is only pure once its filename is in
+`PURE_MODULES`. This is what makes exhaustive testing of the
 decision logic possible without an HA runtime, event loop or I/O — the whole
 `tests/test_scenarios.py` / `tests/parity/` machinery depends on the core
 being callable as plain, fast, synchronous Python.
@@ -340,10 +353,20 @@ corresponding section:
   instructs whoever lands phase 3 to `git rm tests/test_no_movement.py` in
   that commit — not to carve an exception into the check for the new,
   correct code.
-- **Phase 3 — execution. Not started.** No module in this repository
-  issues a Home Assistant service call anywhere yet (that is exactly what
-  phase 2's guard proves) — `tests/test_no_movement.py` is still in the
-  repo and still passing.
+- **Phase 3 — execution. Task 1 landed; still moves nothing.** `planner.py`
+  (§2) turns a decided `Action` into a described sequence of commands, and
+  is tested over the whole (capability × current position × current tilt ×
+  target) grid in `tests/test_planner.py`. Nothing consumes it yet: no
+  module in this repository issues a Home Assistant service call anywhere
+  (that is exactly what phase 2's guard proves) — `tests/test_no_movement.py`
+  is still in the repo, still passing, and now covers `planner.py` too.
+  **There is no oracle for this phase.** The migration gate compares
+  *decisions*, not execution; a planner tested against a model of a blind is
+  not tested against a motor, so tilt timing and arrival behaviour are
+  verified live or not at all. `guards.py` and `runner.py` are still to
+  come, and `tests/test_no_movement.py` is deleted in its own commit when
+  they land — that commit is the visible boundary between "moves nothing"
+  and "moves things".
 - **Phase 4 — UI: configuration through Home Assistant config-entry
   subentries. Complete, deployed, and live on the house.** Configuration
   now lives as six subentry types (`blind`, `zone`, `value`, `condition`,
