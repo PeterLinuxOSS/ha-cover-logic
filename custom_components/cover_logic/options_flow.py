@@ -969,17 +969,14 @@ class CoverLogicOptionsFlow(OptionsFlow):
         (`services._async_import_config`/`_async_export_config`).
 
         Deliberately *not* a dispatch through `hass.services` by domain and
-        service name, even though that would look like the more natural way
-        to "wire it to the service": `tests/test_no_movement.py` still bans
-        every such dispatch site anywhere under `custom_components/
-        cover_logic/`, unconditionally, until phase 3 gives this integration
-        "hands" -- see that test module's own docstring. That guard does not
-        distinguish a cover-moving service from this integration's own
-        already-reviewed import/export services; calling the identical
-        handler function the registered service wraps -- coerced through
-        that service's own `vol.Schema` first, so the two paths validate
-        input identically -- satisfies both this task's "reuse the service,
-        don't reimplement it" requirement and that still-binding guard.
+        service name, even though that would look like the more natural way to
+        "wire it to the service". It calls the identical handler function the
+        registered service wraps, coerced through that service's own
+        `vol.Schema` first so the two paths validate input identically -- which
+        reuses the service without adding a second, name-resolved way to reach
+        it. (The original reason was the phase-2 no-movement guard, which
+        banned every `services.async_call` site in the package; that guard is
+        gone, and only `coordinator._build_runner` calls a service now.)
         """
         errors: dict[str, str] = {}
         placeholders: dict[str, str] | None = None

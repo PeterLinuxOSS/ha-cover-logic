@@ -114,9 +114,12 @@ jobs:
             - **A form may only be blocked by a problem it can fix.** This defect
               appeared three times; twice it made the configuration literally
               unbuildable. `_CODE_OWNERS` and `Problem.owners` are the mechanism.
-            - **This integration moves nothing.** `tests/test_no_movement.py`
-              forbids `.services.async_call` anywhere in the package. A PR that
-              relaxes it needs a very good stated reason.
+            - **`dry_run` is the only brake left.** Since phase 3 task 5 the
+              integration does call `cover.*` services, from exactly one place:
+              `coordinator._build_runner`. `dry_run` defaults to `True`
+              (`const.DEFAULT_DRY_RUN`) and `runner._execute` returns before the
+              caller while it is on. A second service-call site, a cached
+              `dry_run`, or a changed default is a real finding.
             - **Translations.** No value may be a `[%key:...%]` reference — it does
               not resolve in a custom integration and the user reads the raw
               placeholder. No string carrying a `{placeholder}` may contain an

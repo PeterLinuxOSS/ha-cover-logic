@@ -101,11 +101,13 @@ test:
   sooner.
 - `command_log.py` — `CommandLog`, a bounded ring of what the executor did or
   deliberately did not do (`would_call`/`called`/`suppressed`/`withheld`/
-  `dispatched`, spelled once in `const.py`). Two doors in: it *is* the
-  `runner.CoverCall` the coordinator binds the runner's service caller to (see
-  §7, phase 3 task 4), and it is the runner's `observer`. No clock (injected)
-  and no `homeassistant` import — that absence is what makes "the whole path is
-  wired and nothing moves" a fact about the object graph.
+  `dispatched`, spelled once in `const.py`). Three doors in, all of them
+  reporting: it is the runner's `observer` (`would_call`/`called`/`suppressed`),
+  the coordinator writes `withheld` on it, and the coordinator's service caller
+  writes `dispatched` on it once a call has actually been accepted by Home
+  Assistant. It stopped being the runner's `CoverCall` in phase 3 task 5 (§7).
+  No clock (injected) and no `homeassistant` import — it is the record of the
+  hands, never the hands.
 - `planner.py` — `plan(blind, current_position, current_tilt, action) ->
   Plan`: one blind's decided `Action` turned into the ordered `Command`s that
   would realise it (`SetPosition`, `WaitForPosition`, `Settle`, `SetTilt`),
@@ -144,7 +146,12 @@ test:
   `CommandLog`, `DeferralRegistry` and `CoverRunner`, arms the deferral
   recheck timer, records guard suppressions once per change of reason rather
   than once per recompute, and never dispatches an `Action(KEEP, KEEP)` — a
-  no-op in a blind's one-deep waiting slot would evict a real request.
+  no-op in a blind's one-deep waiting slot would evict a real request. Since
+  phase 3 task 5 it is also **the one place in this package that calls a Home
+  Assistant service**: `_build_runner` binds the runner's `CoverCall` to
+  `hass.services.async_call(COVER_DOMAIN, service, data, blocking=True)`, one
+  entity per call. `blocking=True` is a decision with three reasons, in
+  `docs/rationale.md` — "Why the service call blocks".
 - `sensor.py` — `sensor.cover_logic_mode`, a diagnostic entity: mode,
   per-blind targets, trace, a live diff against the old matrix
   (`matica_diff`, which stays while that matrix still runs the house), and the
@@ -198,10 +205,11 @@ test:
   itself: the service caller is a constructor argument
   (`call_cover(service, data)`), which is what lets the queue, the
   cancellation rules and the translation table be tested without a Home
-  Assistant runtime — and what keeps `tests/test_no_movement.py` true and
-  passing now that task 4 has wired one up: the coordinator constructs it with
-  `command_log.CommandLog` in that slot, and a real
-  `hass.services.async_call` still appears nowhere in the package. It also
+  Assistant runtime. Since phase 3 task 5 the coordinator binds that argument
+  to the real service call, so what stops a command short of a motor is
+  `dry_run` alone: `_execute` returns before the caller while it is on, and it
+  is read live off `entry.options` (default `True`) rather than cached, so
+  turning it off or on takes effect without a reload. It also
   takes an optional `observer(kind, fields)`, fired from the one funnel every
   log line goes through, which may neither block a sequence nor raise into one.
   Its Home Assistant imports are
@@ -460,18 +468,18 @@ corresponding section:
   integration is a real config entry: it loads and validates a config
   file, builds a coordinator that subscribes to live state and evaluates
   the engine, and exposes a diagnostic sensor that compares its decision
-  against the still-live old matrix in real time. It moves nothing.
-  `tests/test_no_movement.py` enforces this with two independent checks —
-  an AST walk for any `<...>.services.async_call(...)` call shape, and a
-  cruder grep-style check for the bare substring `"async_call"` anywhere
-  under `custom_components/cover_logic/` — over every `.py` file in the
-  package. That file's own docstring says explicitly: **this guard is
-  temporary on purpose.** Phase 3 is what gives the integration hands (an
-  executor that actually issues cover commands), and the same docstring
-  instructs whoever lands phase 3 to `git rm tests/test_no_movement.py` in
-  that commit — not to carve an exception into the check for the new,
-  correct code.
-- **Phase 3 — execution. Tasks 1, 2a, 2b, 3 and 4 landed; still moves nothing.**
+  against the still-live old matrix in real time. It moved nothing, and while
+  that phase lasted `tests/test_no_movement.py` enforced it with two
+  independent checks over every `.py` file in the package — an AST walk for any
+  `<...>.services.async_call(...)` call shape, and a cruder grep-style check
+  for the bare substring `"async_call"`. That guard was temporary on purpose
+  and is **gone**, deleted in commit `9ade2a8` together with
+  `tests/ha/test_wiring.py::test_no_service_call_reaches_home_assistant_even_with_dry_run_off`
+  — a boundary commit containing nothing else, exactly as the file's own
+  docstring instructed. Do not look for it, and do not re-add it: what replaces
+  it is `dry_run` plus the three counting tests described under phase 3.
+- **Phase 3 — execution. Tasks 1, 2a, 2b, 3, 4 and 5 landed. It can move
+  covers now; `dry_run` defaults to `True`, so a fresh install still does not.**
   `planner.py`
   (§2) turns a decided `Action` into a described sequence of commands, and
   is tested over the whole (capability × current position × current tilt ×
@@ -494,20 +502,26 @@ corresponding section:
   `Deferral` `guards.py` cannot wait out itself; the sensor gained `dry_run`,
   `pending` and `last_command` alongside the unchanged `matica_diff`; and
   `coordinator._directional_guard_blinds` closed the gap where a guard judged
-  against a cover's own position had nothing subscribed to it. **It still
-  moves nothing**, and the reason is now an object rather than an omission:
-  the runner's injected service caller is `command_log.CommandLog`, a module
-  with no `homeassistant` import at all, so **no module in this repository
-  issues a Home Assistant service call anywhere** — even with `dry_run`
-  switched off, which is precisely how
-  `tests/ha/test_wiring.py::test_no_service_call_reaches_home_assistant_even_with_dry_run_off`
-  checks it. `tests/test_no_movement.py` is still in the repo, untouched,
-  still passing, and now covers `planner.py`, `guards.py`, `runner.py`,
-  `deferrals.py` and `command_log.py` too — it also caught a real hit during
-  task 4, on the *name* `async_call_later`, which is why `coordinator.py`
-  schedules its recheck with `async_track_point_in_utc_time` instead.
-  Task 5 connects that last wire and deletes the guard, in its own commit,
-  together with the wiring test named above.
+  against a cover's own position had nothing subscribed to it. Through task 4
+  it still moved nothing, and the reason was an object rather than an omission:
+  the runner's injected service caller was `command_log.CommandLog`.
+  **Task 5 connected that wire.** `coordinator._build_runner` now binds the
+  runner's `CoverCall` to `hass.services.async_call(COVER_DOMAIN, service,
+  data, blocking=True)` — one entity per call, `blocking` for the three reasons
+  in `docs/rationale.md` ("Why the service call blocks"). `CommandLog` stays,
+  as the runner's `observer` and as the writer of `dispatched`, which now means
+  "Home Assistant accepted this call" instead of "this call stopped here". The
+  phase-2 guards were deleted first, in their own commit (`9ade2a8`), so the
+  boundary between "moves nothing" and "moves things" is visible in the
+  history. **What holds the hands now is one option, not an absence:**
+  `dry_run` (`entry.options`, `const.DEFAULT_DRY_RUN = True`, its own
+  options-flow "Execution" screen, read live so it needs no reload). Three
+  tests at the end of `tests/ha/test_wiring.py` count that at
+  `hass.services.async_call` itself: zero calls with it on (and the command
+  still recorded as `would_call`), exactly one prescribed call with it off
+  (service, payload, `blocking`, recorded as `called` and then `dispatched`),
+  and a service raising `HomeAssistantError` stopping one blind's sequence
+  without wedging its queue or its neighbour's.
   **There is no oracle for this phase.** The migration gate compares
   *decisions*, not execution; a planner tested against a model of a blind is
   not tested against a motor, so tilt timing and arrival behaviour are
@@ -515,9 +529,7 @@ corresponding section:
   interlocks rewritten as one ordered list can be *watched*, not proved.
   `runner.py` is no different: a queue proved correct against a recording
   caller is not proved against a motor, which is what the `dry_run` day is
-  for. `tests/test_no_movement.py` is deleted in its own commit once a real
-  service caller is wired up — that commit is the visible boundary between
-  "moves nothing" and "moves things", and it has not happened yet.
+  for — and that day is now the only thing between this code and the house.
 - **Phase 4 — UI: configuration through Home Assistant config-entry
   subentries. Complete, deployed, and live on the house.** Configuration
   now lives as six subentry types (`blind`, `zone`, `value`, `condition`,
@@ -574,8 +586,8 @@ Two interpreters, on purpose:
   already has, with no `homeassistant` package installed at all. As of
   this writing, run from this checkout (which sits inside the Home
   Assistant host's `/config`, so `tests/parity` finds `matica.py` and runs
-  — see §5): **767 passed, 13 skipped**. The 13 skips are the thirteen
-  `tests/ha/*` modules, each behind its own module-level
+  — see §5): **751 passed, 14 skipped** (phase 3 task 5). The 14 skips are the
+  fourteen `tests/ha/*` modules, each behind its own module-level
   `pytest.importorskip("homeassistant")` — nothing under `homeassistant`
   is installed for this interpreter. On a checkout that is not this host,
   expect `tests/parity`'s 3 tests to skip too.
@@ -583,7 +595,7 @@ Two interpreters, on purpose:
   tests/ -q`. `homeassistant==2026.8.0` itself requires Python ≥3.14.2;
   this venv exists so `tests/ha/` (everything behind
   `pytest.importorskip("homeassistant")`) actually runs instead of being
-  skipped. As of this writing, same checkout: **1066 passed**, no skips —
+  skipped. As of this writing, same checkout: **1060 passed**, no skips —
   `tests/ha/*` runs because `homeassistant` is installed in `.venv`, and
   `tests/parity` runs for the same host-adjacency reason as above.
   **This venv's `homeassistant==2026.8.0` is one version behind the house
@@ -593,8 +605,7 @@ Two interpreters, on purpose:
   accident while touching `pyproject.toml` or the venv.
 
 Both must be run, and both must stay green — they are not redundant with
-each other. `tests/test_purity.py` and `tests/test_no_movement.py` collect
-and pass under both. CI (`.github/workflows/test.yml`) runs the matrix
+each other. `tests/test_purity.py` collects and passes under both. CI (`.github/workflows/test.yml`) runs the matrix
 `["3.12", "3.13", "3.14"]` against `tests/ --ignore=tests/parity`
 (`tests/parity` cannot run in CI — see §5), plus a `ruff check .` /
 `ruff format --check .` lint job, plus a `hassfest` job (using

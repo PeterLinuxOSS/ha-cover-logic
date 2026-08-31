@@ -16,17 +16,18 @@ Home Assistant instance and nothing leaves it.
 
 ## Status
 
-**It decides. It does not yet move anything.**
+**It decides, and it can now move blinds — but not until you say so.**
 
 The decision engine, the configuration UI, validation, the diagnostic sensor,
 the command planner, the safety interlocks and the execution queue are all
-built and tested. What is deliberately still missing is the last wire: no code
-path in this repository calls a Home Assistant service. `tests/test_no_movement.py`
-enforces that — it fails the build if any module in the package so much as
-contains the string `async_call`.
+built and tested, and the executor is now wired to real `cover.*` services.
 
-So today you can install it alongside whatever already controls your blinds,
-watch what it *would* do, and compare. That is the intended way to start.
+One option stands between the two: **`dry_run`, which is on by default.** While
+it is on, every command is decided, planned, queued and logged — and nothing is
+sent. So a fresh install still moves nothing. You install it alongside whatever
+already controls your blinds, watch what it *would* do, compare, and turn
+`dry_run` off (Configure → **Execution**) when the log stops surprising you.
+That is the intended way to start.
 
 The author's own house has been running it in that shadow mode since August 2026,
 with 122 configuration entries, checked against the 367-line Jinja template it is
