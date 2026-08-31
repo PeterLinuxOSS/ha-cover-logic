@@ -99,6 +99,17 @@ test:
   argument) and no storage — the elapsed seconds do restart with Home
   Assistant, deliberately, because every consequence of that is *later*, never
   sooner.
+- `readiness.py` — `assess(config, world) -> Readiness`: which of the entities
+  the config reads `world` cannot answer for (absent from the snapshot,
+  `unknown`, `unavailable`, or an attribute with no value — one verdict for all
+  four), and, per blind, which of those *its own* decision depends on. Read off
+  the same `World` the decision was made from, never a second read of
+  `hass.states`. The coordinator uses it to gate **dispatch only**: the decision
+  is still computed, stored and published. It is a veto rather than a wait, and
+  per blind rather than per house — both with a cost, both argued in
+  `docs/rationale.md` — and it exists because of 2026-08-31 at 11:45:35, when
+  every input was still unrestored and the engine decided "open" for all ten
+  blinds. See that module's docstring for the log.
 - `command_log.py` — `CommandLog`, a bounded ring of what the executor did or
   deliberately did not do (`would_call`/`called`/`suppressed`/`withheld`/
   `dispatched`, spelled once in `const.py`). Three doors in, all of them
@@ -132,8 +143,10 @@ test:
   all — narrow on purpose, so the layer that decides does not end up listening
   to the layer that moves), **coalesces state-change-driven evaluation behind a
   settle window** (`const.EVAL_SETTLE_SECONDS`, 2 s, restarted by every new
-  change and capped by `EVAL_SETTLE_MAX_SECONDS`; startup and the deferral
-  recheck timer are deliberately outside it), and holds the last-known-good
+  change and capped by `EVAL_SETTLE_MAX_SECONDS`; the deferral recheck timer is
+  deliberately outside it, **startup no longer is** -- see `docs/rationale.md`,
+  "Why startup is no longer exempt from the settle window"), and holds the
+  last-known-good
   `Decision` even through a failing evaluation. The settle window is not a
   performance knob: the house writes one transition as several state changes a
   second apart (`svitanie` switches the night flag off and *then* resets the
@@ -142,7 +155,10 @@ test:
   the occupied bedroom. See that constant's comment for the timeline and
   `tests/ha/test_settle.py` for the reproduction. The guards are inside the same
   `try` as the engine: an interlock that cannot be honoured means dispatch
-  nothing, never fall back to the unguarded decision. It owns the entry's
+  nothing, never fall back to the unguarded decision. `readiness.assess` runs in
+  that same `try`, on that same snapshot, and `_apply` -- the one funnel both
+  dispatch groups go through -- drops any blind it reports as blocked, recording
+  a `withheld` entry once per change of reason. It owns the entry's
   `CommandLog`, `DeferralRegistry` and `CoverRunner`, arms the deferral
   recheck timer, records guard suppressions once per change of reason rather
   than once per recompute, and never dispatches an `Action(KEEP, KEEP)` — a
@@ -154,8 +170,9 @@ test:
   `docs/rationale.md` — "Why the service call blocks".
 - `sensor.py` — `sensor.cover_logic_mode`, a diagnostic entity: mode,
   per-blind targets, trace, a live diff against the old matrix
-  (`matica_diff`, which stays while that matrix still runs the house), and the
-  executor's own state — `dry_run`, `pending` (`deferred`: which blind, which
+  (`matica_diff`, which stays while that matrix still runs the house),
+  `readiness` (the verdict plus a truncated list of the entities behind it), and
+  the executor's own state — `dry_run`, `pending` (`deferred`: which blind, which
   guard, how long it has waited, what happens on timeout; `queued`: what is
   mid-sequence and what waits behind it) and `last_command`.
 - `config_flow.py` — the setup flow: a menu of four ways to start (set up
@@ -231,7 +248,7 @@ test:
 `model.py`, `world.py`, `conditions.py`, `config_schema.py`,
 `config_store.py`, `conformance.py`, `engine.py`, `guards.py`,
 `validation.py`, `legacy.py`, `starter_config.py`, `planner.py`,
-`deferrals.py` and `command_log.py` and fails
+`deferrals.py`, `command_log.py` and `readiness.py` and fails
 if any of them imports anything
 starting with `homeassistant`. The last two are execution-layer rather than
 decision core — they are on the list because they genuinely need nothing from
@@ -522,6 +539,18 @@ corresponding section:
   (service, payload, `blocking`, recorded as `called` and then `dispatched`),
   and a service raising `HomeAssistantError` stopping one blind's sequence
   without wedging its queue or its neighbour's.
+  **The readiness gate closed the first defect the live house found.** On
+  2026-08-31, half a second after setup, every entity the configuration reads
+  was still unrestored, mode resolution fell through to the catch-all, and the
+  engine decided `position: 100` for all ten blinds; `dry_run` was the only
+  thing between that and the house, and four minutes later, with it off, the
+  house opened. `readiness.py` (§2) is the fix: a decision derived from missing
+  inputs is still computed and published, and nothing is dispatched for the
+  blinds whose own inputs are missing. Startup lost its settle-window exemption
+  in the same change, and `runner._log_fields` stopped logging a live command at
+  `DEBUG` — that day's log held 1468 `[dry_run]` lines and not one `[live]` line
+  while blinds moved. `tests/ha/test_readiness_gate.py` reproduces the minute
+  with `dry_run` off and counts zero calls at `hass.services.async_call`.
   **There is no oracle for this phase.** The migration gate compares
   *decisions*, not execution; a planner tested against a model of a blind is
   not tested against a motor, so tilt timing and arrival behaviour are
@@ -586,8 +615,8 @@ Two interpreters, on purpose:
   already has, with no `homeassistant` package installed at all. As of
   this writing, run from this checkout (which sits inside the Home
   Assistant host's `/config`, so `tests/parity` finds `matica.py` and runs
-  — see §5): **751 passed, 14 skipped** (phase 3 task 5). The 14 skips are the
-  fourteen `tests/ha/*` modules, each behind its own module-level
+  — see §5): **774 passed, 15 skipped** (phase 3, the readiness gate). The 15
+  skips are the fifteen `tests/ha/*` modules, each behind its own module-level
   `pytest.importorskip("homeassistant")` — nothing under `homeassistant`
   is installed for this interpreter. On a checkout that is not this host,
   expect `tests/parity`'s 3 tests to skip too.
@@ -595,7 +624,7 @@ Two interpreters, on purpose:
   tests/ -q`. `homeassistant==2026.8.0` itself requires Python ≥3.14.2;
   this venv exists so `tests/ha/` (everything behind
   `pytest.importorskip("homeassistant")`) actually runs instead of being
-  skipped. As of this writing, same checkout: **1060 passed**, no skips —
+  skipped. As of this writing, same checkout: **1095 passed**, no skips —
   `tests/ha/*` runs because `homeassistant` is installed in `.venv`, and
   `tests/parity` runs for the same host-adjacency reason as above.
   **This venv's `homeassistant==2026.8.0` is one version behind the house
