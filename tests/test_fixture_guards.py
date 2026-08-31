@@ -261,15 +261,39 @@ def test_wind_does_not_fire_below_every_threshold(config):
     assert len(result.outcomes) == 10  # counter: it was asked about all ten
 
 
-def test_a_dead_wind_sensor_opens_the_house_rather_than_disarming_the_guard(config):
-    """`default: 999` -- the same polarity the matrix's own `vietor_ok` uses.
-    An interlock switched off by an unplugged sensor is the hazard, not the
-    safe direction -- and the Netatmo anemometer's battery has been flat
-    before, so this is not a hypothetical.
+def test_a_dead_wind_sensor_is_no_information_not_a_gale(config):
+    """The earlier version of this test asserted the opposite, and the live
+    house paid for it on 2026-08-31: both Netatmo sensors are flat, `default:
+    999` read as "always a gale", and the wind guard forced all ten blinds
+    open on every evaluation. See docs/rationale.md, 2026-08-31.
+
+    The instinct behind 999 was sound -- an interlock must not be switched off
+    by an unplugged sensor. The consequence was not weighed: an interlock
+    permanently *on* is not a safe direction either, it is the house held open
+    in a heatwave with nothing able to correct it.
     """
     states = dict(CALM)
     del states["sensor.netatmo_veterny_senzor_rychlost_vetra"]
+    del states["sensor.netatmo_veterny_senzor_sila_narazov"]
     w = World(states=states, attributes=CALM_ATTRS, now=NOW)
+    result = run(config, w, closing(config), at(config))
+
+    assert fired_on(result, WIND) == set()
+    assert len(result.outcomes) == 10  # counter: it was asked about all ten
+
+
+def test_the_live_forecast_still_carries_the_wind_guard_alone(config):
+    """The other half, and the half that makes the test above safe to keep:
+    with both anemometers dead, a forecast above the trigger threshold must
+    still fire the guard on every blind. Otherwise "no information" would have
+    quietly disarmed the one interlock that must work when all else is broken.
+    """
+    states = dict(CALM)
+    del states["sensor.netatmo_veterny_senzor_rychlost_vetra"]
+    del states["sensor.netatmo_veterny_senzor_sila_narazov"]
+    attrs = dict(CALM_ATTRS)
+    attrs[("weather.forecast_home", "wind_speed")] = 42
+    w = World(states=states, attributes=attrs, now=NOW)
     result = run(config, w, closing(config), at(config))
 
     assert fired_on(result, WIND) == set(config.blinds)
