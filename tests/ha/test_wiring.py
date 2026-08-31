@@ -212,56 +212,6 @@ def _services(coordinator, kind=COMMAND_WOULD_CALL):
 
 
 # ---------------------------------------------------------------------------
-# The wire that is deliberately left unconnected.
-# ---------------------------------------------------------------------------
-
-
-def test_no_service_call_reaches_home_assistant_even_with_dry_run_off(
-    hass_factory, runtime_entry, monkeypatch
-):
-    """The last wire is an object, not a switch. DELETED WITH `test_no_movement.py`.
-
-    `dry_run` is switched **off** here on purpose: with it on, the runner never
-    reaches its service caller at all and this test would pass without proving
-    anything. Off, every command really is dispatched -- and lands in the
-    `CommandLog`, which is where `cover_logic` currently ends.
-    """
-
-    async def _run():
-        hass = hass_factory()
-        try:
-            # Patched on the class: `ServiceRegistry` has `__slots__`, so the
-            # instance attribute cannot be replaced -- and the class is what
-            # every spelling of the call (`hass.services.async_call`,
-            # `self.hass.services.async_call`, an aliased receiver) goes
-            # through anyway.
-            called = []
-
-            async def _record(_self, *args, **kwargs):
-                called.append((args, kwargs))
-
-            monkeypatch.setattr("homeassistant.core.ServiceRegistry.async_call", _record)
-
-            _seed(hass, zavri="on")
-            coordinator = CoverLogicCoordinator(hass, config(), runtime_entry({OPT_DRY_RUN: False}))
-            await coordinator.async_setup()
-            await _settle(coordinator)
-
-            # Counter: the executor really did get all the way to dispatching.
-            dispatched = _kinds(coordinator, COMMAND_DISPATCHED)
-            assert dispatched, coordinator.commands.recent
-            assert dispatched[0]["service"].startswith("cover.")
-            assert dispatched[0]["reached_home_assistant"] is False
-
-            assert called == []
-
-            await coordinator.async_unload()
-        finally:
-            await hass.async_stop(force=True)
-
-    asyncio.run(_run())
-
-
 # ---------------------------------------------------------------------------
 # coordinator -> runner.
 # ---------------------------------------------------------------------------
