@@ -24,17 +24,13 @@ already paid for:
 **Why the service call is injected.** `CoverRunner` is handed an awaitable
 `call_cover(service, data)` rather than reaching for `hass.services` itself.
 That is the seam that lets the queue arbitration, the cancellation rules and
-the whole translation table be tested without a Home Assistant runtime at all,
-and it is why this module can land while `tests/test_no_movement.py` -- the
-phase-2 guard asserting this integration still has no hands -- is still in the
-repository and still true: nothing in this package constructs a runner with a
-real service caller. Since task 4 the coordinator does construct one, with
-`command_log.CommandLog` in that slot: a pure module with no `homeassistant`
-import at all, which records what would have gone out and issues nothing. So
-the whole path -- guards, queue, planner, translation -- runs on the real house
-with exactly one wire left unconnected, and that wire is an object, not a flag.
-Connecting it is task 5, and deleting that guard is the same commit. This is
-not an exception carved into the guard; it is the guard still being accurate.
+the whole translation table be tested without a Home Assistant runtime at all.
+Since phase 3 task 5 the coordinator binds it to the real thing
+(`hass.services.async_call`, blocking -- see `docs/rationale.md`), so this
+module now genuinely has hands. What holds them is `dry_run`, read live off the
+entry's options on every sequence and defaulting to `True`: below, `_execute`
+returns before the caller whenever it is on, so a fresh install describes and
+moves nothing until someone turns that option off.
 
 `observer` is the other end of the same idea: an optional, synchronous
 `(kind, fields)` callback fired from the one funnel every line here goes
