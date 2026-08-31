@@ -16,10 +16,11 @@ so the diagnostic sensor always has something to show; a failing evaluation
 also dispatches nothing at all, because a `Guarded` that could not be computed
 is not a `Guarded` whose guards can be trusted.
 
-**Nothing here moves a cover.** The runner is constructed with
-`command_log.CommandLog` as its service caller, which records what would have
-gone out and issues nothing -- see `_build_runner` for why that specific object
-and not a lambda, a flag or a `dry_run` default.
+**This is the module that gives the executor its hands.** Since phase 3 task 5
+`_build_runner` binds the runner's service caller to `hass.services.async_call`
+-- the only such call in this package -- so what stands between a decision and
+a motor is the `dry_run` option alone. It defaults to `True`, which is why a
+fresh install still moves nothing until someone turns it off.
 
 This module imports `homeassistant` unconditionally at module level, the same
 choice `ha_world.py` makes and for the same reason (see that module's own
@@ -59,7 +60,7 @@ from .engine import Decision, evaluate
 from .guards import Guarded, guard_blinds, review, screen
 from .ha_world import build_world
 from .model import KEEP, Action, Config
-from .runner import CoverRunner, Priority, current_position
+from .runner import COVER_DOMAIN, CoverRunner, Priority, current_position
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -134,24 +135,25 @@ class CoverLogicCoordinator:
         self._withheld: dict[str, str] = {}
 
     def _build_runner(self) -> CoverRunner:
-        """The executor, with its service caller bound to this entry's `CommandLog`.
+        """The executor, with its service caller bound to real `cover.*` services.
 
-        **This is the one wire task 4 deliberately leaves unconnected**, and
-        binding it to an object rather than to a flag is what makes that
-        checkable rather than trusted. `CoverRunner` takes its service caller
-        as a constructor argument; here it is given `command_log.CommandLog`,
-        a pure module with no `homeassistant` import of any kind, so there is
-        nothing in the object graph that *could* reach `hass.services` even
-        with `dry_run` switched off. `tests/test_no_movement.py` still passes
-        over the whole package unchanged, and it is passing because it is
-        accurate, not because an exception was carved into it.
+        This is the wire phase 3 task 5 connects: the runner's `CoverCall` is
+        `hass.services.async_call`, one entity per call. `dry_run` (default
+        `True`) is what still stops a command short of it -- the runner returns
+        before reaching this function -- so a fresh install moves nothing until
+        someone turns that option off.
 
-        The same object is also the runner's `observer`, which is how a dry run
-        is visible at all: in dry run the service caller is never reached (the
-        runner stops before it, by design), so a log bound only to the caller
-        would stay empty for exactly the day it exists for.
+        `CommandLog` stays as the runner's `observer` and as the recorder of
+        what actually went out; it is no longer the caller.
         """
-        return CoverRunner(self.hass, self.entry, self.commands, observer=self.commands.observe)
+
+        async def _call_cover(service: str, data: dict[str, Any]) -> None:
+            """Issue one `cover.*` call and record it once Home Assistant accepts it."""
+            # `blocking=True` -- see `docs/rationale.md`, "Why the service call blocks".
+            await self.hass.services.async_call(COVER_DOMAIN, service, dict(data), blocking=True)
+            self.commands.dispatched(service, data)
+
+        return CoverRunner(self.hass, self.entry, _call_cover, observer=self.commands.observe)
 
     @property
     def dry_run(self) -> bool:
@@ -291,11 +293,10 @@ class CoverLogicCoordinator:
         early, or refusing to re-arm) keeps one code path: at the cap the
         deadline simply stops moving.
 
-        Nothing here uses the shorter Home Assistant helper that takes a delay
-        instead of a point in time -- its *name* contains the substring
-        `tests/test_no_movement.py` refuses, and the answer to that guard
-        firing is to satisfy it, not to carve a hole in it. `_reschedule` says
-        the same thing about the same helper.
+        A point in time rather than the shorter delay-taking helper: the two are
+        equivalent here, and this shape was chosen when the phase-2 no-movement
+        guard (since deleted) refused that helper's *name*. `_reschedule` uses
+        the same call for the same reason.
         """
         if not self._active:
             return
@@ -492,11 +493,9 @@ class CoverLogicCoordinator:
         whatever is closest -- a guard's `recheck_every` or the deadline it is
         counting down to -- and that answer changes on every evaluation.
 
-        (`async_track_point_in_utc_time` rather than the shorter helper that
-        takes a delay: that one's *name* contains the substring
-        `tests/test_no_movement.py`'s grep-style backstop refuses, and the
-        right response to a temporary guard firing is to satisfy it, not to
-        carve a hole in it. This is the equivalent call.)
+        (`async_track_point_in_utc_time` rather than the shorter delay-taking
+        helper, which is the equivalent call: see `_schedule_settle` for why
+        this package settled on this one.)
         """
         if self._unsub_recheck is not None:
             self._unsub_recheck()

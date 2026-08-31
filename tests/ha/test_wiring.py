@@ -8,13 +8,12 @@ which is the failure this project has shipped three times.
 
 Two things are asserted here that are asserted nowhere else:
 
-- **Nothing reaches Home Assistant, even with `dry_run` off.** The runner's
-  service caller is bound to `command_log.CommandLog`, an object with no
-  `homeassistant` import at all, so the last wire is unconnected as a fact
-  about the object graph rather than as a switch. `test_no_service_call_...`
-  proves it by making `hass.services.async_call` record and finding nothing.
-  **That test dies with `tests/test_no_movement.py` in task 5**, in the same
-  commit -- it is the same promise, checked from the other end.
+- **What `dry_run` is worth, counted at `hass.services.async_call`.** Since
+  phase 3 task 5 the runner's service caller is the real one, so "it moves
+  nothing" is no longer a fact about the object graph -- it is one option, and
+  the three tests in the last section of this file are what make it checkable:
+  zero calls with the brake on, exactly one prescribed call with it off, and a
+  refused call that stops one blind without wedging its queue.
 - **A deferral survives a restart.** Not by being persisted, but by being a
   derived fact plus a timer: `test_a_restart_re_arms_a_pending_deferral` tears
   the coordinator down mid-wait, builds a fresh one, and lets the deadline pass
@@ -31,8 +30,12 @@ import pytest
 
 pytest.importorskip("homeassistant")
 
+from homeassistant.core import ServiceRegistry
+from homeassistant.exceptions import HomeAssistantError
+
 from cover_logic.config_schema import load_config
 from cover_logic.const import (
+    COMMAND_CALLED,
     COMMAND_DISPATCHED,
     COMMAND_SUPPRESSED,
     COMMAND_WITHHELD,
@@ -212,56 +215,6 @@ def _services(coordinator, kind=COMMAND_WOULD_CALL):
 
 
 # ---------------------------------------------------------------------------
-# The wire that is deliberately left unconnected.
-# ---------------------------------------------------------------------------
-
-
-def test_no_service_call_reaches_home_assistant_even_with_dry_run_off(
-    hass_factory, runtime_entry, monkeypatch
-):
-    """The last wire is an object, not a switch. DELETED WITH `test_no_movement.py`.
-
-    `dry_run` is switched **off** here on purpose: with it on, the runner never
-    reaches its service caller at all and this test would pass without proving
-    anything. Off, every command really is dispatched -- and lands in the
-    `CommandLog`, which is where `cover_logic` currently ends.
-    """
-
-    async def _run():
-        hass = hass_factory()
-        try:
-            # Patched on the class: `ServiceRegistry` has `__slots__`, so the
-            # instance attribute cannot be replaced -- and the class is what
-            # every spelling of the call (`hass.services.async_call`,
-            # `self.hass.services.async_call`, an aliased receiver) goes
-            # through anyway.
-            called = []
-
-            async def _record(_self, *args, **kwargs):
-                called.append((args, kwargs))
-
-            monkeypatch.setattr("homeassistant.core.ServiceRegistry.async_call", _record)
-
-            _seed(hass, zavri="on")
-            coordinator = CoverLogicCoordinator(hass, config(), runtime_entry({OPT_DRY_RUN: False}))
-            await coordinator.async_setup()
-            await _settle(coordinator)
-
-            # Counter: the executor really did get all the way to dispatching.
-            dispatched = _kinds(coordinator, COMMAND_DISPATCHED)
-            assert dispatched, coordinator.commands.recent
-            assert dispatched[0]["service"].startswith("cover.")
-            assert dispatched[0]["reached_home_assistant"] is False
-
-            assert called == []
-
-            await coordinator.async_unload()
-        finally:
-            await hass.async_stop(force=True)
-
-    asyncio.run(_run())
-
-
 # ---------------------------------------------------------------------------
 # coordinator -> runner.
 # ---------------------------------------------------------------------------
@@ -798,6 +751,258 @@ def test_dry_run_is_read_live_off_the_entry(hass_factory, runtime_entry):
 
             entry.options[OPT_DRY_RUN] = False
             assert coordinator.dry_run is False
+
+            await coordinator.async_unload()
+        finally:
+            await hass.async_stop(force=True)
+
+    asyncio.run(_run())
+
+
+# ---------------------------------------------------------------------------
+# The service call itself, counted at `hass.services.async_call`.
+#
+# This is the surface phase 3 task 5 created, and the surface the deleted
+# phase-2 guards used to cover from the other side ("nothing in the package can
+# call a service"). What replaces them is not a ban but a count.
+# ---------------------------------------------------------------------------
+
+
+# One blind, one moving axis, a mid-range target: the whole decision is exactly
+# one service call, and it is `set_cover_position` -- the only translation whose
+# payload carries a second key besides the entity.
+ONE_CALL = """
+blinds:
+  - entity: cover.a
+    travel_time: 0.2
+zones:
+  za:
+    members: [cover.a]
+conditions:
+  zavri:
+    condition: state
+    entity_id: input_boolean.zavri
+    state: "on"
+modes:
+  - id: bezny
+rules:
+  bezny.za:
+    - if: !ref zavri
+      then: {position: 40, tilt: keep}
+    - then: {position: keep, tilt: keep}
+"""
+
+# Two blinds that both move. `BASE`'s zone `zb` deliberately never does, and
+# "one blind's failure stops one blind" needs a second blind to be true about.
+BOTH_MOVE = """
+blinds:
+  - entity: cover.a
+    travel_time: 0.2
+  - entity: cover.b
+    travel_time: 0.2
+zones:
+  za:
+    members: [cover.a]
+  zb:
+    members: [cover.b]
+conditions:
+  zavri:
+    condition: state
+    entity_id: input_boolean.zavri
+    state: "on"
+modes:
+  - id: bezny
+rules:
+  bezny.za:
+    - if: !ref zavri
+      then: {position: 0, tilt: 0}
+    - then: {position: keep, tilt: keep}
+  bezny.zb:
+    - if: !ref zavri
+      then: {position: 40, tilt: keep}
+    - then: {position: keep, tilt: keep}
+"""
+
+
+def _standalone(text):
+    """Parse a config of its own (not `BASE` + a guard), refusing anything invalid."""
+    parsed = load_config(text)
+    assert [p for p in validate(parsed) if p.severity == ERROR] == []
+    return parsed
+
+
+def _spy_on_services(monkeypatch, *, failing=frozenset()):
+    """Record every `hass.services.async_call`; refuse the ones aimed at `failing`.
+
+    Patched on the class, not the instance: `ServiceRegistry` has `__slots__`.
+    Nothing else in these tests calls a service, so the returned list is this
+    integration's entire output -- which is what lets a test assert *zero*.
+    """
+    calls = []
+
+    async def _record(_self, domain, service, service_data=None, blocking=False, **_kwargs):
+        data = dict(service_data or {})
+        calls.append({"domain": domain, "service": service, "data": data, "blocking": blocking})
+        if data.get("entity_id") in failing:
+            msg = "the cover refused"
+            raise HomeAssistantError(msg)
+
+    monkeypatch.setattr(ServiceRegistry, "async_call", _record)
+    return calls
+
+
+def _services_for(calls, entity):
+    """Just the service names of `calls` aimed at one entity, in order."""
+    return [call["service"] for call in calls if call["data"].get("entity_id") == entity]
+
+
+async def _retrigger(hass, coordinator):
+    """Make the same decision happen again: the rule's condition off, then on."""
+    hass.states.async_set("input_boolean.zavri", "off")
+    await _settle(coordinator)
+    hass.states.async_set("input_boolean.zavri", "on")
+    await _settle(coordinator)
+
+
+def test_dry_run_calls_no_service_at_all_and_still_records_the_command(
+    hass_factory, runtime_entry, monkeypatch
+):
+    """The brake, from both sides: zero service calls, and the command still logged.
+
+    The zero is the assertion; the rest of the test is what stops it being
+    vacuous. A coordinator that decided nothing, planned nothing or crashed
+    would also make zero calls, so the decision, the `would_call` line and its
+    payload are all asserted here too -- and the counter at the end flips the
+    option and watches the identical decision reach the identical spy.
+    """
+
+    async def _run():
+        hass = hass_factory()
+        calls = _spy_on_services(monkeypatch)
+        try:
+            _seed(hass, zavri="on")
+            entry = runtime_entry()
+            coordinator = CoverLogicCoordinator(hass, _standalone(ONE_CALL), entry)
+            await coordinator.async_setup()
+            await _settle(coordinator)
+
+            assert coordinator.dry_run is True
+            assert calls == []
+
+            # Counters: it really did decide, plan and log this command.
+            assert coordinator.decision.targets[BLIND] == Action(40, KEEP)
+            would = _services(coordinator, COMMAND_WOULD_CALL)
+            assert [entry_["would_call"] for entry_ in would] == ["cover.set_cover_position"]
+            assert would[0]["data"] == "{position:40}"
+            # Neither of the two kinds that only exist once a call goes out.
+            assert _kinds(coordinator, COMMAND_CALLED) == []
+            assert _kinds(coordinator, COMMAND_DISPATCHED) == []
+
+            # The counter that matters: same spy, same coordinator, same
+            # decision, brake off. Without it a spy that can never record
+            # anything would satisfy every line above.
+            entry.options[OPT_DRY_RUN] = False
+            await _retrigger(hass, coordinator)
+            assert _services_for(calls, BLIND) == ["set_cover_position"]
+
+            await coordinator.async_unload()
+        finally:
+            await hass.async_stop(force=True)
+
+    asyncio.run(_run())
+
+
+def test_with_dry_run_off_one_command_makes_exactly_one_prescribed_call(
+    hass_factory, runtime_entry, monkeypatch
+):
+    """One command, one call, and the whole payload the translation table prescribes.
+
+    `len(calls) == 1` is the load-bearing number: a runner that re-sent a
+    command, or one that named both blinds in a single call, is exactly what
+    `runner.py`'s per-blind cancellation cannot survive.
+    """
+
+    async def _run():
+        hass = hass_factory()
+        calls = _spy_on_services(monkeypatch)
+        try:
+            _seed(hass, zavri="on")
+            coordinator = CoverLogicCoordinator(
+                hass, _standalone(ONE_CALL), runtime_entry({OPT_DRY_RUN: False})
+            )
+            await coordinator.async_setup()
+            await _settle(coordinator)
+
+            assert len(calls) == 1
+            assert calls[0] == {
+                "domain": "cover",
+                "service": "set_cover_position",
+                "data": {"entity_id": BLIND, "position": 40},
+                "blocking": True,
+            }
+            # One entity per call, never a list, and at most one key beside it.
+            assert isinstance(calls[0]["data"]["entity_id"], str)
+            assert set(calls[0]["data"]) == {"entity_id", "position"}
+
+            called = _services(coordinator, COMMAND_CALLED)
+            assert [entry_["called"] for entry_ in called] == ["cover.set_cover_position"]
+            assert _kinds(coordinator, COMMAND_WOULD_CALL) == []
+
+            # `dispatched` is written after the call returned, so it is the
+            # record of acceptance rather than of the attempt.
+            dispatched = _kinds(coordinator, COMMAND_DISPATCHED)
+            assert [entry_["service"] for entry_ in dispatched] == ["cover.set_cover_position"]
+            assert dispatched[0]["blind"] == BLIND
+            assert dispatched[0]["position"] == 40
+            assert dispatched[0]["reached_home_assistant"] is True
+
+            await coordinator.async_unload()
+        finally:
+            await hass.async_stop(force=True)
+
+    asyncio.run(_run())
+
+
+def test_a_refused_service_stops_that_blind_only_and_wedges_no_queue(
+    hass_factory, runtime_entry, monkeypatch
+):
+    """`runner._execute`'s `HomeAssistantError` promise, asserted from outside.
+
+    Three things, and the third is the one a passing test could most easily
+    fake: the failing blind's sequence stops where the refusal happened, every
+    other blind's queue runs on, and the failing blind's own slot is released --
+    so the next decision for it is executed rather than sitting behind a
+    sequence that never ended.
+    """
+
+    async def _run():
+        hass = hass_factory()
+        failing = {BLIND}
+        calls = _spy_on_services(monkeypatch, failing=failing)
+        try:
+            _seed(hass, zavri="on")
+            coordinator = CoverLogicCoordinator(
+                hass, _standalone(BOTH_MOVE), runtime_entry({OPT_DRY_RUN: False})
+            )
+            await coordinator.async_setup()
+            await _settle(coordinator)
+
+            # Stopped at the refusal: the tilt command behind it never went out.
+            assert _services_for(calls, BLIND) == ["close_cover"]
+            # The other blind's queue never noticed -- queues are per blind.
+            assert _services_for(calls, OTHER) == ["set_cover_position"]
+            # Nothing left holding either slot, running or waiting.
+            assert coordinator.runner.in_flight == {}
+
+            # Not wedged: with the cover answering again, the same blind's next
+            # decision runs to the end of its sequence, tilt included.
+            failing.clear()
+            await _retrigger(hass, coordinator)
+            assert _services_for(calls, BLIND) == [
+                "close_cover",
+                "close_cover",
+                "close_cover_tilt",
+            ]
 
             await coordinator.async_unload()
         finally:

@@ -1,15 +1,14 @@
-"""`CommandLog`: the executor's five states, and the one it can never reach.
+"""`CommandLog`: the executor's five states, and the record it keeps of each.
 
-The interesting assertion in this file is the negative one. `CommandLog` is
-what `coordinator.py` binds `CoverRunner`'s service caller to, so "the whole
-path is wired and nothing moves" rests on this class being unable to issue a
-service call -- not on a switch, not on a default, and not on anyone's care.
+The interesting assertion in this file is still the negative one. This class is
+the record of what the hands did, and it is deliberately unable to be the hands
+itself: no Home Assistant import, no service call, nothing that could move a
+blind while pretending to describe one.
 `test_this_module_cannot_reach_home_assistant` is that guarantee, checked
 against the source rather than against the author's intention.
 """
 
 import ast
-import asyncio
 import inspect
 from pathlib import Path
 
@@ -55,10 +54,10 @@ def test_this_module_cannot_reach_home_assistant():
     assert not [name for name in imported if name.startswith("homeassistant")]
 
 
-def test_calling_it_records_instead_of_issuing():
-    """The `CoverCall` seam: awaitable, returns `None`, and reaches nothing."""
+def test_a_dispatched_call_is_recorded_with_its_whole_payload():
+    """What `coordinator._build_runner`'s service caller writes once a call is accepted."""
     log = _log()
-    asyncio.run(log("set_cover_position", {"entity_id": "cover.a", "position": 34}))
+    log.dispatched("set_cover_position", {"entity_id": "cover.a", "position": 34})
 
     assert log.last == {
         "kind": COMMAND_DISPATCHED,
@@ -66,7 +65,7 @@ def test_calling_it_records_instead_of_issuing():
         "blind": "cover.a",
         "service": "cover.set_cover_position",
         "position": 34,
-        "reached_home_assistant": False,
+        "reached_home_assistant": True,
     }
 
 

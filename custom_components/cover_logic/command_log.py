@@ -20,10 +20,10 @@ most valuable thing a dry-run day produces:
 - `withheld` -- a guard suppressed the whole action before the runner ever saw
   it. Recorded by the coordinator, not the runner, because the runner never
   learns about a decision that was taken away from it.
-- `dispatched` -- the runner handed a command to its injected service caller.
-  In this phase that caller is *this object*, so a `dispatched` entry is the
-  one place a reader can see how far a live command actually travelled: to the
-  end of `cover_logic`, and no further.
+- `dispatched` -- the command reached `hass.services.async_call` and returned
+  without raising. Written *after* the call, by the coordinator's own service
+  caller, which is what makes it the difference between "issued" and "issued
+  and accepted": the runner's `called` line is written before the attempt.
 
 **This module has no clock and no Home Assistant import.** The timestamp is
 supplied by an injected `clock`, so a test states the time instead of racing
@@ -81,16 +81,11 @@ def _plain(value: Any) -> Any:
 class CommandLog:
     """A bounded ring of the executor's most recent actions and non-actions.
 
-    Two doors in, on purpose:
-
-    - `__call__` is the `runner.CoverCall` seam -- the thing `CoverRunner` is
-      constructed with. Binding the runner's service caller to *this* is what
-      makes "the whole path is wired and nothing moves" a fact about the object
-      graph rather than about a switch someone could flip: this class contains
-      no Home Assistant import at all, so there is nothing here that *could*
-      issue a service call.
-    - `observe`/`withheld` are the reporting doors, from `runner._log_fields`
-      and from the coordinator respectively.
+    Three doors in, and all three only report: `observe` (from
+    `runner._log_fields`), `withheld` (from the coordinator's guard handling)
+    and `dispatched` (from the coordinator's service caller, once a call has
+    actually gone out). This class issues nothing and has no Home Assistant
+    import at all -- it is the record of the hands, never the hands.
     """
 
     def __init__(
@@ -100,15 +95,11 @@ class CommandLog:
         self._entries: deque[dict[str, Any]] = deque(maxlen=depth)
         self._clock = clock if clock is not None else _utc_now_iso
 
-    async def __call__(self, service: str, data: Mapping[str, Any]) -> None:
-        """Stand in for the `cover.*` service call the runner would make.
+    def dispatched(self, service: str, data: Mapping[str, Any]) -> None:
+        """Record one `cover.*` call that reached Home Assistant and returned.
 
-        Awaitable and returning `None`, exactly like the real caller would be,
-        so the runner's own error handling and interleaving are exercised
-        against the same shape they will meet in production.
-
-        It records that the runner got as far as *dispatching* -- which only
-        happens outside dry run -- and issues nothing. See the class docstring.
+        Called after the service call, never before: a `dispatched` entry means
+        accepted, where the runner's own `called` line means only attempted.
         """
         entity = data.get("entity_id")
         payload = {key: value for key, value in data.items() if key != "entity_id"}
@@ -118,10 +109,8 @@ class CommandLog:
                 "blind": entity,
                 "service": f"cover.{service}",
                 **payload,
-                # Spelled out rather than implied: a reader of this attribute
-                # must not have to know which task wired the runner up to be
-                # sure the command stopped here.
-                "reached_home_assistant": False,
+                # Stated, not implied: this is where a reader sees a command leave the integration.
+                "reached_home_assistant": True,
             },
         )
 

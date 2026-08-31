@@ -8,10 +8,13 @@ one-line summary first, a short body only where needed) without losing the
 debugging time once. Every place this content moved from carries a short
 pointer back to its section here.
 
-Nothing below is new: each section is the original comment or docstring text,
-moved rather than rewritten. Where a decision's reasoning previously lived
-only in a test's comment (not in the production module itself), that is
-noted in the section.
+Most of what is below is not new: each section was the original comment or
+docstring text, moved rather than rewritten. Where a decision's reasoning
+previously lived only in a test's comment (not in the production module
+itself), that is noted in the section. Sections written after 2026-08-31 are
+new prose, written here in the first place -- a comment in this repository is
+one sentence long, so anything longer belongs in this file with a pointer above
+the code.
 
 ## `world.py`
 
@@ -643,6 +646,41 @@ a standing configuration error, so `validation._check_blinds` reports it once,
 statically, and `subentry_flow`'s own `travel_time` selector will not offer a
 non-positive value in the first place. `plan()` does not second-guess the
 number it is handed.
+
+## `coordinator.py`
+
+### Why the service call blocks
+
+`_build_runner` calls `hass.services.async_call(..., blocking=True)`. Three
+things depend on it, and none of them is style.
+
+**A sequence is an order, and `blocking=False` does not keep one.** A plan is
+`SetPosition` -> `WaitForPosition` -> `Settle` -> `SetTilt`, and every step
+after the first is only meaningful once the previous one has actually been
+handed to the cover integration. Without blocking, `async_call` returns as soon
+as the call is queued on the bus, so the arrival wait can start before the
+motor has been told to move -- and these motors discard a tilt that lands
+during travel (`planner.py`'s whole reason for existing). The wait would still
+expire eventually, so the failure is not a crash: it is a blind that ends its
+run with untouched slats, which is the 2026-08-21 incident.
+
+**`HomeAssistantError` only propagates when the call blocks.** `runner._execute`
+catches it, stops that one blind's sequence, and names every command that will
+now never be issued (`_log_abandoned`). With `blocking=False` the exception is
+raised inside Home Assistant's own task instead, that `except` clause becomes
+dead code, and a cover that refused a command looks in the log exactly like one
+that accepted it. `ServiceNotFound` is a `HomeAssistantError` too, so a
+misconfigured entity takes the same, already-tested path.
+
+**The cost is bounded by design.** Blocking makes the runner's task wait for the
+service to finish -- but there is one task per blind (`_BlindQueue`), so this
+serialises exactly what the runner already serialises deliberately, and nothing
+wider. A house-wide wait is the thing per-blind queues exist to prevent, and
+blocking here does not create one. Home Assistant's own script engine blocks on
+a service call in a sequence for the same reason.
+
+`return_response` stays at its default: a `cover.*` service returns nothing,
+and asking for a response from a service that has none is an error.
 
 ## `model.py`
 
