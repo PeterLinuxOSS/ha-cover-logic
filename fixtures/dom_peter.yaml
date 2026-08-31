@@ -147,16 +147,20 @@ conditions:
   # a to PRAHY SPÚŠŤANIA (40/55/35), nie prahy upokojenia (40/55/30), ktoré
   # drží `vietor_ok` vyššie pre maticu. Nemiešať: keby poistka používala
   # nižší prah predpovede, prestala by platiť skôr, než sa vietor upokojí.
-  # `default: 999` = odpojený senzor sa tvári ako víchor, rovnako ako v
-  # `vietor_ok` — poistku nesmie vypnúť mŕtvy senzor.
+  # `default: 0`, not 999 -- see docs/rationale.md, 2026-08-31. Both Netatmo
+  # sensors are dead (battery at 0%), so `default: 999` meant "always a gale"
+  # and the wind guard forced the whole house open, permanently. The old
+  # `Wind cover protection` survives it only because it uses TRIGGERS: a dead
+  # sensor never crosses a threshold. A condition has no such luxury, so here
+  # a dead sensor is "no information" and the live forecast carries the guard.
   vietor_silny:
     condition: or
     conditions:
-      - {condition: numeric_state, default: 999, above: 40,
+      - {condition: numeric_state, default: 0, above: 40,
          entity_id: sensor.netatmo_veterny_senzor_rychlost_vetra}
-      - {condition: numeric_state, default: 999, above: 55,
+      - {condition: numeric_state, default: 0, above: 55,
          entity_id: sensor.netatmo_veterny_senzor_sila_narazov}
-      - {condition: numeric_state, default: 999, above: 35,
+      - {condition: numeric_state, default: 0, above: 35,
          entity_id: weather.forecast_home, attribute: wind_speed}
 
   # Dvere pre poistku: pýtame sa „je ZATVORENÉ?", nie „je otvorené?".
