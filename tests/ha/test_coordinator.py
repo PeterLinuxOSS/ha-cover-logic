@@ -4,10 +4,14 @@ Imports Home Assistant, so this module only collects under the Python 3.14
 venv (`.venv/bin/python -m pytest`) -- see `test_ha_world.py`'s own note.
 
 Uses `hass_factory` (a real, minimal `HomeAssistant`) rather than `FakeHass`:
-`async_track_state_change_event` and `Debouncer` both need genuine bus
-dispatch and a genuine event loop timer, not a re-implementation of either --
-see `hass_factory`'s own docstring in `tests/ha/conftest.py` for the full
-reasoning.
+`async_track_state_change_event` and `async_track_point_in_utc_time` both need
+genuine bus dispatch and a genuine event loop timer, not a re-implementation of
+either -- see `hass_factory`'s own docstring in `tests/ha/conftest.py` for the
+full reasoning.
+
+The settle window these tests wait out is `const.EVAL_SETTLE_SECONDS`, and
+`tests/ha/test_settle.py` is where its length and its restart-on-change shape
+are actually asserted; here it is only a delay to wait past.
 """
 
 import asyncio
@@ -18,17 +22,14 @@ pytest.importorskip("homeassistant")
 
 from homeassistant.core import EVENT_STATE_CHANGED
 
-from cover_logic.coordinator import (
-    DEBOUNCE_COOLDOWN,
-    CoverLogicCoordinator,
-    evaluate as real_evaluate,
-)
+from cover_logic.const import EVAL_SETTLE_SECONDS
+from cover_logic.coordinator import CoverLogicCoordinator, evaluate as real_evaluate
 from cover_logic.engine import EngineError
 
-# Comfortably more than one debounce window: enough for a pending call to
+# Comfortably more than one settle window: enough for a pending evaluation to
 # have fired if it was going to, or -- in the negative tests -- long enough
 # that its *absence* is a real assertion, not a race against the clock.
-_WAIT = DEBOUNCE_COOLDOWN + 0.2
+_WAIT = EVAL_SETTLE_SECONDS + 0.2
 
 
 def _counting_evaluate(monkeypatch):
@@ -159,7 +160,7 @@ def test_non_engine_error_is_also_caught_and_recorded(
 
     A typo'd condition type raises `ValueError` from the evaluator, and a broken
     user template raises out of Jinja on purpose. Catching only `EngineError`
-    would let those escape into the debouncer's callback: `last_error` would
+    would let those escape into the settle timer's callback: `last_error` would
     stay unset and the sensor would keep showing a stale answer with nothing
     indicating a problem.
     """
@@ -192,7 +193,7 @@ def test_non_engine_error_is_also_caught_and_recorded(
     asyncio.run(_run())
 
 
-def test_unload_removes_subscription_and_cancels_pending_debounce(
+def test_unload_removes_subscription_and_cancels_pending_settle(
     config, hass_factory, runtime_entry, monkeypatch
 ):
     """Unload drops the bus listener and a call already scheduled never fires."""
@@ -210,9 +211,8 @@ def test_unload_removes_subscription_and_cancels_pending_debounce(
             during = hass.bus.async_listeners().get(EVENT_STATE_CHANGED, 0)
             assert during > before
 
-            # Schedule a debounced call, then unload before its cooldown
-            # elapses -- requirement: a pending debounce must not survive
-            # unload.
+            # Start a settle window, then unload before it elapses --
+            # requirement: a pending settle must not survive unload.
             hass.states.async_set("input_boolean.a", "on")
             await coordinator.async_unload()
             await asyncio.sleep(_WAIT)
