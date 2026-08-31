@@ -100,9 +100,15 @@ test:
   Assistant, deliberately, because every consequence of that is *later*, never
   sooner.
 - `readiness.py` — `assess(config, world) -> Readiness`: which of the entities
-  the config reads `world` cannot answer for (absent from the snapshot,
-  `unknown`, `unavailable`, or an attribute with no value — one verdict for all
-  four), and, per blind, which of those *its own* decision depends on. Read off
+  the config reads *neither* `world` nor the config itself can answer for
+  (absent from the snapshot, `unknown` or `unavailable` — one verdict for all
+  three — and read by a node that stated no `default:`), and, per blind, which
+  of those *its own* decision depends on. A read a node defaults is not a fault,
+  and neither is an absent attribute on a readable entity: both were the
+  configuration answering a question the gate re-asked, and both blocked the
+  live house permanently on 2026-08-31 (`docs/rationale.md` — "Why a stated
+  `default:` is not a readiness fault"). Whether a read is defaulted comes from
+  `config_schema.node_reads`/`Read`, never re-derived here. Read off
   the same `World` the decision was made from, never a second read of
   `hass.states`. The coordinator uses it to gate **dispatch only**: the decision
   is still computed, stored and published. It is a veto rather than a wait, and
@@ -551,6 +557,13 @@ corresponding section:
   `DEBUG` — that day's log held 1468 `[dry_run]` lines and not one `[live]` line
   while blinds moved. `tests/ha/test_readiness_gate.py` reproduces the minute
   with `dry_run` off and counts zero calls at `hass.services.async_call`.
+  **That gate then blocked the house permanently**, on three entities the
+  configuration had already answered for — two anemometers read only with
+  `default: 0`, and an `arm_mode` attribute Alarmo publishes only while armed. A
+  read is a fault only where the config has no answer for it: `config_schema.Read`
+  carries whether a node defaults a read, and an absent attribute on a readable
+  entity is a value. An unrestored world still blocks all ten blinds, because
+  every mode condition in this house states no default.
   **There is no oracle for this phase.** The migration gate compares
   *decisions*, not execution; a planner tested against a model of a blind is
   not tested against a motor, so tilt timing and arrival behaviour are
@@ -615,7 +628,7 @@ Two interpreters, on purpose:
   already has, with no `homeassistant` package installed at all. As of
   this writing, run from this checkout (which sits inside the Home
   Assistant host's `/config`, so `tests/parity` finds `matica.py` and runs
-  — see §5): **774 passed, 15 skipped** (phase 3, the readiness gate). The 15
+  — see §5): **781 passed, 15 skipped** (phase 3, the readiness gate). The 15
   skips are the fifteen `tests/ha/*` modules, each behind its own module-level
   `pytest.importorskip("homeassistant")` — nothing under `homeassistant`
   is installed for this interpreter. On a checkout that is not this host,
@@ -624,7 +637,7 @@ Two interpreters, on purpose:
   tests/ -q`. `homeassistant==2026.8.0` itself requires Python ≥3.14.2;
   this venv exists so `tests/ha/` (everything behind
   `pytest.importorskip("homeassistant")`) actually runs instead of being
-  skipped. As of this writing, same checkout: **1095 passed**, no skips —
+  skipped. As of this writing, same checkout: **1102 passed**, no skips —
   `tests/ha/*` runs because `homeassistant` is installed in `.venv`, and
   `tests/parity` runs for the same host-adjacency reason as above.
   **This venv's `homeassistant==2026.8.0` is one version behind the house

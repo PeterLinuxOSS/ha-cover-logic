@@ -6,6 +6,11 @@ satisfied for free by an implementation that blocks everything, always. So each
 "is blocked" is paired with an "and this one is not", and each "nothing is
 missing" is paired with the same world minus one entity.
 
+Since 2026-08-31 the same is true in the other direction: every "this is not a
+fault" is paired with a read the configuration does *not* answer, in the same
+world and usually on the same entity, because an implementation that simply
+stopped vetoing would satisfy the exemptions on its own.
+
 The gate itself -- nothing reaches the runner -- is `tests/ha/
 test_readiness_gate.py`. This module is only about the verdict.
 """
@@ -147,7 +152,14 @@ def test_an_empty_state_string_is_not_unready() -> None:
 
 
 def test_a_missing_attribute_is_unready_under_its_entity_s_own_name() -> None:
-    """An attribute read that has no value blocks, and is reported as the entity id."""
+    """An attribute read of an unreadable *entity* blocks, reported as the entity id.
+
+    The fault an attribute read can carry is its entity's: `('cover.a',
+    'current_position')` is reported as `cover.a`, because that is the name a
+    person goes and looks at. The counter is the entity being readable while the
+    attribute is absent -- see
+    `test_an_absent_attribute_on_a_readable_entity_is_not_a_fault`.
+    """
     text = """
 blinds:
   - entity: cover.a
@@ -156,11 +168,10 @@ zones:
     members: [cover.a]
 conditions:
   poloha:
-    condition: numeric_state
+    condition: state
     entity_id: cover.a
     attribute: current_position
-    above: 50
-    default: 0
+    state: 100
 modes:
   - id: den
 rules:
@@ -171,10 +182,147 @@ rules:
 """
     cfg = config(text)
     assert assess(cfg, world()).missing == ("cover.a",)
-    # Counter: with the attribute present, nothing is blocked -- so the line
-    # above is about the attribute and not about `cover.a` being absent.
-    present = world(attributes={("cover.a", "current_position"): 100})
+    assert assess(cfg, world({"cover.a": "unavailable"})).missing == ("cover.a",)
+    # Counter: a readable entity, and the attribute read stops being a fault --
+    # so the two lines above are about `cover.a` and not about every read.
+    present = world({"cover.a": "open"}, {("cover.a", "current_position"): 100})
     assert assess(cfg, present).blocked == {}
+
+
+# ---------------------------------------------------------------------------
+# What the configuration already answers -- the second measured incident.
+# ---------------------------------------------------------------------------
+
+# One dead sensor read twice: once by a condition that states a `default:` and
+# once by one that does not. The shape is the live house's (`vietor_silny` reads
+# two flat-battery anemometers with `default: 0`), and it is deliberately the
+# same entity in both, so an implementation that judges per *entity* instead of
+# per *read* cannot pass both halves of any test below.
+DEFAULTED = """
+blinds:
+  - entity: cover.a
+  - entity: cover.b
+zones:
+  za:
+    members: [cover.a]
+  zb:
+    members: [cover.b]
+conditions:
+  vietor:
+    condition: numeric_state
+    entity_id: sensor.wind
+    above: 40
+    default: 0
+  vietor_stav:
+    condition: state
+    entity_id: sensor.wind
+    state: "on"
+modes:
+  - id: den
+rules:
+  den.za:
+    - if: !ref vietor
+      then: {position: 100}
+    - then: {position: keep, tilt: keep}
+  den.zb:
+    - if: !ref vietor_stav
+      then: {position: 100}
+    - then: {position: keep, tilt: keep}
+"""
+
+
+# The same house minus the undefaulted reader: every read of `sensor.wind`
+# states a default, which is the live `vietor_ok`/`vietor_silny` situation.
+ONLY_DEFAULTED = """
+blinds:
+  - entity: cover.a
+zones:
+  za:
+    members: [cover.a]
+conditions:
+  vietor:
+    condition: numeric_state
+    entity_id: sensor.wind
+    above: 40
+    default: 0
+modes:
+  - id: den
+rules:
+  den.za:
+    - if: !ref vietor
+      then: {position: 100}
+    - then: {position: keep, tilt: keep}
+"""
+
+
+def test_a_defaulted_read_of_a_dead_sensor_is_not_a_fault() -> None:
+    """`default:` is the author answering; re-asking vetoed this house forever.
+
+    Both anemometers have been flat for months, both are read only with an
+    explicit `default:`, and on 2026-08-31 the gate blocked all ten blinds on
+    them permanently. The counter is in the same world and the same entity:
+    `zb` reads `sensor.wind` with no default and is still blocked, which is what
+    a "skip every read" implementation fails.
+    """
+    cfg = config(DEFAULTED)
+    verdict = assess(cfg, world({"sensor.wind": "unavailable"}))
+    assert verdict.blocked_by("cover.a") == ()
+    assert verdict.blocked_by("cover.b") == ("sensor.wind",)
+
+
+def test_a_defaulted_read_does_not_report_the_entity_as_missing() -> None:
+    """The whole-config view must agree with the per-blind one, or the sensor lies.
+
+    `missing` drives `ready`, which is what the coordinator logs and the
+    diagnostic shows; a defaulted-only entity in there is a house reported
+    unready with nothing to fix. Counter: the undefaulted read of the same
+    entity is what puts it back.
+    """
+    cfg = config(ONLY_DEFAULTED)
+    assert "sensor.wind" in {
+        read[0] if isinstance(read, tuple) else read for read in referenced_entities(cfg)
+    }  # counter: the entity really is read, so `ready` is not true by omission
+    assert assess(cfg, world({"sensor.wind": "unavailable"})).ready is True
+    # And with the undefaulted reader back, the same world is not ready.
+    assert assess(config(DEFAULTED), world({"sensor.wind": "unavailable"})).ready is False
+
+
+def test_an_absent_attribute_on_a_readable_entity_is_not_a_fault() -> None:
+    """Alarmo drops `arm_mode` while disarmed -- the absence *is* the answer.
+
+    Home Assistant has no "attribute unavailable" marker, so an integration
+    omitting an attribute means something by it. The counter is the same read
+    with the entity itself `unavailable`: then there genuinely is nothing to
+    read, and it must still block.
+    """
+    text = """
+blinds:
+  - entity: cover.a
+zones:
+  za:
+    members: [cover.a]
+conditions:
+  vacation:
+    condition: state
+    entity_id: alarm_control_panel.alarmo
+    attribute: arm_mode
+    state: armed_vacation
+modes:
+  - id: dovolenka
+    when: !ref vacation
+  - id: den
+rules:
+  den.za:
+    - then: {position: keep, tilt: keep}
+  dovolenka.za:
+    - then: {position: 0}
+"""
+    cfg = config(text)
+    readable = world({"alarm_control_panel.alarmo": "disarmed"})
+    assert assess(cfg, readable).missing == ()
+    assert assess(cfg, readable).blocked == {}
+    dead = world({"alarm_control_panel.alarmo": "unavailable"})
+    assert assess(cfg, dead).blocked_by("cover.a") == ("alarm_control_panel.alarmo",)
 
 
 # ---------------------------------------------------------------------------
@@ -419,6 +567,15 @@ def test_a_dispatchable_blind_s_reason_says_nothing_rather_than_lying() -> None:
 # The live house.
 # ---------------------------------------------------------------------------
 
+# Every entity the real fixture reads only through a condition that states a
+# `default:`: two anemometers whose battery has been flat for months, and the
+# forecast they hand over to (`vietor_ok`, `vietor_silny`).
+DEFAULTED_IN_THE_HOUSE = {
+    "sensor.netatmo_veterny_senzor_rychlost_vetra",
+    "sensor.netatmo_veterny_senzor_sila_narazov",
+    "weather.forecast_home",
+}
+
 
 def test_the_real_house_blocks_every_blind_on_an_empty_world(fixtures_dir) -> None:
     """The bedroom case, stated against the configuration actually running.
@@ -432,6 +589,13 @@ def test_the_real_house_blocks_every_blind_on_an_empty_world(fixtures_dir) -> No
     assert set(verdict.blocked) == set(cfg.blinds)
     assert len(cfg.blinds) == 10
     assert verdict.ready is False
+    # The regression that caused the second incident, stated on the real
+    # configuration: exempting a defaulted read must not exempt the mode
+    # conditions, which state no default and are what block all ten here. The
+    # counter is the line below -- the three defaulted entities are exempt on
+    # this same world, so the ten above are not blocked by "everything blocks".
+    assert set(verdict.missing).isdisjoint(DEFAULTED_IN_THE_HOUSE)
+    assert "input_boolean.cover_down" in verdict.missing
 
 
 def test_the_real_house_blocks_nobody_when_every_input_is_readable(fixtures_dir) -> None:
@@ -442,6 +606,37 @@ def test_the_real_house_blocks_nobody_when_every_input_is_readable(fixtures_dir)
     """
     cfg = load_config_file(fixtures_dir / "dom_peter.yaml")
     verdict = assess(cfg, healthy_world(cfg))
+    assert verdict.blocked == {}
+    assert verdict.ready is True
+
+
+def test_the_real_house_is_ready_on_the_world_that_blocked_it_forever(fixtures_dir) -> None:
+    """The measured live world of 2026-08-31, entity for entity.
+
+    `ready=False` with `['alarm_control_panel.alarmo', two anemometers]` was the
+    live verdict, and it could never lift: the batteries are flat and Alarmo
+    publishes `arm_mode` only while armed. Both faults are reproduced here --
+    the two sensors `unavailable`, `arm_mode` absent with the panel readable at
+    `disarmed` -- and the three asserts before the verdict are the counter: they
+    prove this world really carries them, so `ready is True` is not passing on a
+    world that was quietly healthy.
+    """
+    cfg = load_config_file(fixtures_dir / "dom_peter.yaml")
+    dead = {
+        "sensor.netatmo_veterny_senzor_rychlost_vetra",
+        "sensor.netatmo_veterny_senzor_sila_narazov",
+    }
+    base = healthy_world(cfg, unavailable=dead)
+    states = {**base.states, "alarm_control_panel.alarmo": "disarmed"}
+    attributes = {key: value for key, value in base.attributes.items() if key[1] != "arm_mode"}
+    live = world(states, attributes)
+
+    assert {live.state(entity) for entity in dead} == {"unavailable"}
+    assert live.attribute("alarm_control_panel.alarmo", "arm_mode") is None
+    assert ("alarm_control_panel.alarmo", "arm_mode") in referenced_entities(cfg)
+
+    verdict = assess(cfg, live)
+    assert verdict.missing == ()
     assert verdict.blocked == {}
     assert verdict.ready is True
 

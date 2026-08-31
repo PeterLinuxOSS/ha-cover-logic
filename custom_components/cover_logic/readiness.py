@@ -30,6 +30,22 @@ on 2026-08-06, during which the old system silently did nothing -- its
 is that same interlock, with two differences: it is derived from the config
 rather than hand-written per script, and it is not silent.
 
+## A read the configuration already answers is not a fault
+
+Measured on the same house on 2026-08-31, this time by the gate itself: `assess`
+reported `ready=False` with three names, permanently, so nothing could ever be
+dispatched. Both causes were the configuration answering a question this module
+then re-asked -- two dead anemometers read only by conditions carrying an
+explicit `default:`, and `alarm_control_panel.alarmo`'s `arm_mode` attribute,
+which Alarmo populates only while armed and whose absence *is* the answer "not
+armed". So a read is a fault only where the configuration has no answer for it:
+a node's `default:` exempts every entity that node reads, and an absent
+attribute on a readable entity is a value rather than a fault. What still blocks
+is an entity Home Assistant itself cannot answer for -- absent, `unknown` or
+`unavailable` -- read by a node that stated no default, which is every mode
+condition in this house and therefore the whole of the incident above. See
+`docs/rationale.md` -- "Why a stated `default:` is not a readiness fault".
+
 Read from the same `World` the decision was made from, never from
 `hass.states` again. A second read of the state machine happens at a second
 instant, and then "was the world ready" and "what did the world say" can
@@ -56,7 +72,7 @@ No `homeassistant` import and no clock: it is in `tests/test_purity.py`'s
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from .config_schema import node_entities, referenced_entities, walk_condition_nodes
+from .config_schema import Read, node_reads, referenced_reads, walk_condition_nodes
 from .const import (
     COND_REF,
     READINESS_MAX_NAMED,
@@ -75,11 +91,11 @@ class Readiness:
     """Which referenced entities are not readable, and which blinds that blocks.
 
     `missing` is the whole-config answer required of this gate: every entity
-    `config_schema.referenced_entities` names whose state is absent, `unknown`
-    or `unavailable`. `blocked` is the per-blind attribution the dispatcher
-    actually gates on -- a blind maps to the subset of `missing` that its own
-    decision reads, and a blind absent from `blocked` is one whose inputs are
-    all present.
+    `config_schema.referenced_reads` names, undefaulted, whose state is absent,
+    `unknown` or `unavailable`. `blocked` is the per-blind attribution the
+    dispatcher actually gates on -- a blind maps to the subset of `missing` that
+    its own decision reads, and a blind absent from `blocked` is one whose
+    inputs are all present or all answered.
 
     The two are deliberately not the same question. An unready entity read only
     by a named condition nothing references blocks nobody, and must still be
@@ -143,11 +159,11 @@ def assess(config: Config, world: World) -> Readiness:
     have gone wrong upstream.
     """
     owner = resolve_ownership(config)
-    shared = _mode_entities(config)
+    shared = _mode_reads(config)
     blocked: dict[str, tuple[str, ...]] = {}
 
     for entity, zone_id in owner.items():
-        reads = shared | _zone_entities(config, zone_id) | _guard_entities(config, entity)
+        reads = shared | _zone_reads(config, zone_id) | _guard_reads(config, entity)
         unready = _unready(reads, world)
         if unready:
             blocked[entity] = tuple(sorted(unready))
@@ -155,34 +171,41 @@ def assess(config: Config, world: World) -> Readiness:
     # Everything the config reads, not only what some blind reads: an unready
     # entity behind a named condition nothing references is still a real fault,
     # and would otherwise stay invisible until the day something referenced it.
-    missing = _unready(referenced_entities(config), world)
+    missing = _unready(referenced_reads(config), world)
     return Readiness(missing=tuple(sorted(missing)), blocked=blocked)
 
 
-def _unready(reads: set[str | tuple[str, str]], world: World) -> set[str]:
-    """The entity ids among `reads` that `world` cannot answer for.
+def _unready(reads: set[Read], world: World) -> set[str]:
+    """The entity ids among `reads` that neither `world` nor the config can answer for.
 
-    Three faults, one verdict, because acting on any of them is the same
-    mistake: the entity is not in the snapshot at all (`ha_world.build_world`
-    leaves a missing entity out rather than inventing a state for it), its state
-    is the literal `unknown`/`unavailable` Home Assistant reports, or the
-    attribute asked for is not there. An attribute read is reported under its
-    entity's own id -- the name a person has to go and look at is the entity's,
-    not `('sun.sun', 'azimuth')`.
+    Two faults, one verdict, because acting on either is the same mistake: the
+    entity is not in the snapshot at all (`ha_world.build_world` leaves a
+    missing entity out rather than inventing a state for it), or its state is
+    the literal `unknown`/`unavailable` Home Assistant reports. An attribute
+    read reports its *entity's* fault, under the entity's own id -- the name a
+    person has to go and look at is `sun.sun`, not `('sun.sun', 'azimuth')`.
+
+    Two things are deliberately not faults, and both were measured vetoing this
+    house forever on 2026-08-31. A `Read` its own node defaults is skipped
+    outright: `default:` is the author saying "this may be missing, use this",
+    and re-asking overrides an explicit answer. And an attribute with no value
+    on a readable entity is a value, not a fault -- Home Assistant has no
+    "attribute unavailable" marker, so an integration omits an attribute to
+    *mean* something (`alarm_control_panel.alarmo` drops `arm_mode` while
+    disarmed), and every attribute read in this dialect is total when it is
+    absent: `state` compares, `numeric_state` must carry a `default`, and
+    `sun_hits_target` falls back in `conditions._sun_hits_target`.
     """
     out: set[str] = set()
     for read in reads:
-        if isinstance(read, tuple):
-            entity_id, attribute = read
-            if world.attribute(entity_id, attribute) is None:
-                out.add(entity_id)
+        if read.defaulted:
             continue
-        if world.state(read) in UNREADY_STATES:
-            out.add(read)
+        if world.state(read.entity) in UNREADY_STATES:
+            out.add(read.entity)
     return out
 
 
-def _mode_entities(config: Config) -> set[str | tuple[str, str]]:
+def _mode_reads(config: Config) -> set[Read]:
     """What mode resolution reads -- shared by every blind, because mode is global.
 
     A missing entity in any mode's `when` is what turned the measured incident
@@ -191,13 +214,13 @@ def _mode_entities(config: Config) -> set[str | tuple[str, str]]:
     mode's `when` counts, not just the ones before the one that matched, since
     which one matched is exactly what cannot be trusted here.
     """
-    out: set[str | tuple[str, str]] = set()
+    out: set[Read] = set()
     for mode in config.modes:
-        out |= _condition_entities(config, mode.when)
+        out |= _condition_reads(config, mode.when)
     return out
 
 
-def _zone_entities(config: Config, zone_id: str) -> set[str | tuple[str, str]]:
+def _zone_reads(config: Config, zone_id: str) -> set[Read]:
     """What the rules that can decide `zone_id` read, across every mode.
 
     A rule filed under the default-zone key (`const.RULE_DEFAULT_ZONE`) can
@@ -205,18 +228,18 @@ def _zone_entities(config: Config, zone_id: str) -> set[str | tuple[str, str]]:
     falls through to it, and a readiness rule that missed it would let a blind
     be commanded from a rule whose own input was unreadable.
     """
-    out: set[str | tuple[str, str]] = set()
+    out: set[Read] = set()
     for key, rules in config.rules.items():
         _, _, zone = key.partition(".")
         if zone not in (zone_id, RULE_DEFAULT_ZONE):
             continue
         for rule in rules:
-            out |= _condition_entities(config, rule.when)
-            out |= _action_entities(rule.then)
+            out |= _condition_reads(config, rule.when)
+            out |= _action_reads(rule.then)
     return out
 
 
-def _guard_entities(config: Config, entity: str) -> set[str | tuple[str, str]]:
+def _guard_reads(config: Config, entity: str) -> set[Read]:
     """What the guards that target `entity` read -- `guard_blinds`, not `guard.targets`.
 
     Guards are in here for a sharper reason than the rules are. A `state`
@@ -229,45 +252,48 @@ def _guard_entities(config: Config, entity: str) -> set[str | tuple[str, str]]:
     keeps having one answer: a bare `targets` read would miss that no targets
     at all means every blind, and that a zone id stands for its members.
     """
-    out: set[str | tuple[str, str]] = set()
+    out: set[Read] = set()
     for guard in config.guards:
         if entity not in guard_blinds(config, guard):
             continue
-        out |= _condition_entities(config, guard.when)
+        out |= _condition_reads(config, guard.when)
         if guard.then is not None:
-            out |= _action_entities(guard.then)
+            out |= _action_reads(guard.then)
     return out
 
 
-def _condition_entities(
+def _condition_reads(
     config: Config, node: dict | list | None, _seen: frozenset[str] = frozenset()
-) -> set[str | tuple[str, str]]:
-    """Every entity a condition subtree reads, following `!ref` into `config.conditions`.
+) -> set[Read]:
+    """Every read a condition subtree performs, following `!ref` into `config.conditions`.
 
     Refs are followed because the whole point is per-blind attribution:
-    `referenced_entities` collects every named condition whether anything
+    `referenced_reads` collects every named condition whether anything
     references it or not, which is right for "what to subscribe to" and far too
     wide for "what does *this* blind depend on". `_seen` breaks a circular
     reference the same way `conditions.evaluate_condition` does -- by refusing
     to re-enter a name, not by trusting the config to be acyclic.
     """
-    out: set[str | tuple[str, str]] = set()
+    out: set[Read] = set()
     for child in walk_condition_nodes(node):
-        out |= node_entities(child)
+        out |= node_reads(child)
         if child.get("condition") != COND_REF:
             continue
         name = child.get("name")
         if name in config.conditions and name not in _seen:
-            out |= _condition_entities(config, config.conditions[name], _seen | {name})
+            out |= _condition_reads(config, config.conditions[name], _seen | {name})
     return out
 
 
-def _action_entities(action: Action) -> set[str | tuple[str, str]]:
-    """The helper entities an action's axes read at evaluation time.
+def _action_reads(action: Action) -> set[Read]:
+    """The helper entities an action's axes read at evaluation time, never defaulted.
 
     A `Ref` axis falls back to its own `default` when the helper is unreadable
     (`engine._resolve_value`), which is a designed fallback and not an error --
     but on a half-loaded world it means "send the default position", and 34 %
-    sent to ten blinds is still the house moving on a world nobody saw.
+    sent to ten blinds is still the house moving on a world nobody saw. That is
+    why a `values:` default, unlike a condition's, does not answer this
+    question: see `docs/rationale.md` -- "Why a `values:` default is not an
+    answer".
     """
-    return {axis.entity for axis in (action.position, action.tilt) if isinstance(axis, Ref)}
+    return {Read(axis.entity) for axis in (action.position, action.tilt) if isinstance(axis, Ref)}

@@ -5,10 +5,12 @@ import pytest
 from cover_logic.conditions import evaluate_condition
 from cover_logic.config_schema import (
     ConfigError,
+    Read,
     dump_config,
     dump_config_file,
     load_config,
     load_config_file,
+    node_reads,
     referenced_entities,
 )
 from cover_logic.model import KEEP, UNSET, Action, Ref
@@ -443,6 +445,49 @@ def test_referenced_entities_on_minimal_config_has_no_attribute_tuples():
         "input_boolean.cover_down",
         "input_number.kvety_pozicia_zaluzie",
     }
+
+
+def test_node_reads_marks_only_the_reads_of_a_node_that_states_a_default():
+    """`readiness.py` gates on this flag, so the flag is the tested thing.
+
+    Both halves matter: a `numeric_state` (which this dialect *requires* a
+    `default` on) answers its own read, and the `state` condition beside it does
+    not. A `node_reads` that returned one blanket value would pass one of these
+    two asserts and fail the other.
+    """
+    defaulted = {
+        "condition": "numeric_state",
+        "entity_id": "sensor.wind",
+        "above": 40,
+        "default": 0,
+    }
+    plain = {"condition": "state", "entity_id": "sensor.wind", "state": "on"}
+    assert node_reads(defaulted) == {Read("sensor.wind", None, True)}
+    assert node_reads(plain) == {Read("sensor.wind", None, False)}
+    # The two are different reads of one entity, which is what lets the
+    # undefaulted one still report a fault -- and `key` projects both onto the
+    # single id `referenced_entities` reports.
+    assert len(node_reads(defaulted) | node_reads(plain)) == 2
+    assert {read.key for read in node_reads(defaulted) | node_reads(plain)} == {"sensor.wind"}
+
+
+def test_a_defaulted_attribute_read_keeps_its_attribute_in_the_subscription_shape():
+    """The flag must not change what the coordinator subscribes to.
+
+    A default says what a missing value means; it says nothing about whether the
+    read is a state or an attribute, and `referenced_entities` is what
+    `coordinator` subscribes on. Counter: the undefaulted twin projects
+    identically.
+    """
+    node = {
+        "condition": "numeric_state",
+        "entity_id": "weather.forecast_home",
+        "attribute": "wind_speed",
+        "above": 35,
+        "default": 0,
+    }
+    assert node_reads(node) == {Read("weather.forecast_home", "wind_speed", True)}
+    assert {read.key for read in node_reads(node)} == {("weather.forecast_home", "wind_speed")}
 
 
 # --- dump_config / dump_config_file: the write side (task 5) ---------------

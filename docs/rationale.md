@@ -810,12 +810,84 @@ answers about two different worlds -- the entire class of race `world.py` exists
 to remove. It also keeps the module in `tests/test_purity.py`'s `PURE_MODULES`,
 so a convenience `hass` import has to argue with a failing test first.
 
-The three faults it treats identically are worth stating: an entity missing from
+The two faults it treats identically are worth stating: an entity missing from
 the snapshot (`ha_world.build_world` omits an entity Home Assistant has never
-had, rather than inventing a state for it), an entity reporting Home Assistant's
-own `unknown`/`unavailable`, and an attribute read with no value. Acting on any
-of them is the same mistake. `""`, `"off"` and `"0"` are not on that list: they
-are answers.
+had, rather than inventing a state for it) and an entity reporting Home
+Assistant's own `unknown`/`unavailable`. Acting on either is the same mistake.
+`""`, `"off"` and `"0"` are not on that list: they are answers. Neither is an
+absent attribute, nor anything a condition defaults — the two sections below.
+
+### Why a stated `default:` is not a readiness fault
+
+The gate shipped judging every read the same way, and on 2026-08-31 that blocked
+the live house permanently: `ready=False`, three names, none of which could ever
+come back. Two were the Netatmo anemometers, flat for months, and the third is
+in the section below.
+
+Those two sensors are read only by `vietor_ok` and `vietor_silny`, and both
+conditions write an explicit `default:` — the whole reason this dialect
+*requires* one on `numeric_state` (see "Why `numeric_state` requires an explicit
+`default`") is that the config author is the only person who knows which side is
+safe for that rule. `vietor_silny`'s `default: 0` is a decision with its own
+paragraph in the fixture: a dead sensor means "no information", the live forecast
+carries the guard. A gate that vetoes on it is overriding an answer the
+configuration already gave, in the direction of never acting again.
+
+So the rule is: **a read is a readiness fault only where the configuration has
+no answer for it.** A node's `default:` exempts every entity that node reads,
+per read and not per entity — `config_schema.Read` carries the flag, so the same
+sensor read once with a default and once without still reports the undefaulted
+fault. What remains a fault is unchanged and is what the original incident was
+made of: every mode condition in this house is a `state` condition with no
+default, so an unrestored world still blocks all ten blinds.
+
+The flag is reported by `config_schema.node_reads`, next to the entity ids it
+already owned, rather than computed in `readiness.py`. "What does this condition
+read" has one owner (`MODELS.md` §9), and "does it tolerate that read being
+missing" is the same question about the same node — asking it in the consumer is
+how the two drift apart. `referenced_entities` became a projection of
+`referenced_reads` for the same reason: subscribing to an entity and judging
+whether it was readable must not be able to disagree about what the config reads.
+
+### Why an absent attribute is a value and not a fault
+
+The third permanently-missing name was `alarm_control_panel.alarmo`, whose state
+was `disarmed` and perfectly readable. The fixture also reads its `arm_mode`
+attribute — Alarmo publishes that only while armed, so while disarmed it is
+`None`, and that `None` is precisely the answer "not armed on vacation".
+
+Home Assistant has no "this attribute is unavailable" marker. An integration
+omitting an attribute is *saying* something by it, which is the opposite of the
+`unknown`/`unavailable` case, where Home Assistant is saying it has nothing to
+say. And every attribute read in this dialect is total when the attribute is
+absent: `state` compares (absent ≠ `armed_vacation`, and that is a definite
+`False`), `numeric_state` must carry a `default`, and `sun_hits_target` falls
+back inside `conditions._sun_hits_target`.
+
+So an attribute read reports its *entity's* fault and only that: absent from the
+snapshot, `unknown`, or `unavailable`, exactly as a state read does, and still
+under the entity's own id because that is the name a person goes and looks at.
+This is deliberately stronger than "unless a default covers it" — the alarmo
+node carries no default and cannot: `condition: state` has no such key, and the
+fixture is the live configuration, not somewhere to add one to satisfy a gate.
+It is also *safer* than the narrower rule: keeping the check at entity level
+means a condition that reads only an attribute of an entity Home Assistant has
+never restored still blocks, which is the startup incident's own shape.
+
+The boundary is worth writing down: a future condition type that reads an
+attribute and *needs* it — one that raises, or misbehaves, on `None` — would not
+be covered by this gate. The three above do not, and adding a fourth means
+deciding what its absent attribute means, in that condition, rather than here.
+
+### Why a `values:` default is not an answer
+
+`values:` also requires a `default`, and a `Ref` axis genuinely falls back to it
+(`engine._resolve_value`). It is still not counted as an answer, and the
+asymmetry with a condition's `default:` is the point: a defaulted *condition*
+resolves to a boolean and can perfectly well decide "do nothing", while a
+defaulted *`Ref` axis* resolves to a position and is therefore always a command.
+"Send 34 % to ten blinds because the helper had not restored yet" is the
+movement this gate exists to stop, not a way of avoiding one.
 
 ### Why the gate sits in `_apply` and not before the engine
 
