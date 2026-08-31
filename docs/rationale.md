@@ -682,6 +682,157 @@ a service call in a sequence for the same reason.
 `return_response` stays at its default: a `cover.*` service returns nothing,
 and asking for a response from a service that has none is an error.
 
+### Why startup is no longer exempt from the settle window
+
+The settle window landed with one exemption, written into `async_setup`'s own
+docstring: "the window exists to keep a state change from being read
+mid-transition, and there is no transition at startup -- only a world that
+already is what it is."
+
+That sentence is false, and the live house proved it on 2026-08-31. Startup is
+the *largest* burst of state writes the house ever has: Home Assistant restores
+hundreds of entities over several seconds, and the world half a second into
+that restore is one that never existed. `cover_logic` was set up at 11:45:34.995
+and evaluated at 11:45:35.0xx, before a single one of the entities it reads had
+a value. Mode resolution fell through to the `bezny_den` catch-all and every one
+of the ten blinds got `SetPosition(100)`.
+
+The exemption's stated benefits were real but small, and both are now paid:
+
+- **The diagnostic sensor is unavailable for one window after every reload.**
+  `sensor.cover_logic_mode` reports `available` only once a `Decision` exists,
+  so for `EVAL_SETTLE_SECONDS` after a reload there is nothing to show. Two
+  seconds of a blank diagnostic against a house-wide movement on a world nobody
+  saw is not a close trade.
+- **A pending deferral's recheck timer is armed one window later.** This costs
+  nothing real, for the reason `deferrals.py` already states about a restart
+  resetting its elapsed seconds: every consequence of a deferral being
+  re-derived late is *later*, never sooner. A guard releases at worst one window
+  after it could have; no interlock releases early.
+
+Removing the exemption is not the fix on its own -- it makes the bad decision
+*late* rather than *unactionable*, and a restore slower than the window would
+produce the identical decision two seconds later. The fix is the readiness gate
+below. But an exemption whose justification was wrong does not get to stay on
+the strength of a justification nobody rechecked.
+
+### Why a live command logs at INFO
+
+`runner._log_fields` used to pick its level from `sequence.dry_run`: `INFO` for
+a dry run, `DEBUG` when live. The reasoning was that a dry-run day's whole
+product is those lines, while the same volume in normal operation would be
+noise.
+
+Measured on the live house on 2026-08-31: **1468 log lines, every one of them
+`cover_logic[dry_run]`, and not a single `cover_logic[live]` line** -- while
+blinds moved and the runner logged an `ERROR` for a `SetPosition` a cover
+refused. A suppressed command was visible; a real one was not. On the day this
+integration runs the house, that log is the only record of what the house was
+told to do, and it recorded everything except that.
+
+The volume argument was also simply wrong. A live sequence writes the same
+handful of lines a dry-run sequence writes -- one per command, and only when a
+command exists -- so nothing was being saved by hiding the live ones. Both are
+`INFO` now, and the `dry_run`/`live` prefix `_format_line` puts on every line is
+what tells them apart, which is what it was always for.
+
+`_log_timeout` keeps its own asymmetry (`DEBUG` in a dry run, `WARNING` live)
+and it is correct in the way this one was not: a dry run's arrival waits
+*always* expire, because nothing is moving, so at `WARNING` they would drown out
+the real ones.
+
+## `readiness.py`
+
+### Why readiness is a veto and not a wait
+
+`assess` answers "were the inputs behind this decision readable", and the
+coordinator uses the answer to withhold dispatch. It never waits, and it never
+eventually proceeds anyway. Three reasons, and the third is the one that
+settles it.
+
+**A wait needs a deadline, and there is no safe value for it.** The only two
+things a timeout can do at the end are act on the decision or abandon it.
+Acting on a decision derived from missing inputs is the defect being fixed --
+waiting two minutes first does not make it a different decision. Abandoning is
+what a veto already does, immediately, without a number nobody can justify.
+
+**This project already has a wait primitive, and it is written down per
+guard.** `guards.py`'s `defer` policy carries `max_wait`, `on_timeout` and
+`recheck_every`, chosen by whoever wrote the interlock, for exactly the cases
+where waiting is the right answer. A second, hidden wait with a hard-coded
+deadline inside the dispatcher would be the same concept implemented twice --
+with the worse ergonomics, since nobody could see it in the configuration.
+
+**Every consequence of not moving is later, never sooner.** The same argument
+`deferrals.py` makes about a restart. The old system's answer to
+`sensor.zaluzie_cielovy_stav` being `unavailable` was also to do nothing -- see
+`script.zaluzie_uplatnit`'s opening `wait_template`, and the house's own
+`CLAUDE.md` entry for 2026-08-06, when it did nothing for four minutes. What
+this gate adds is not the withholding; it is that the withholding says so, in
+the log at `WARNING` and on the sensor's `readiness` attribute.
+
+### Why the veto is per blind and not per house
+
+The obvious objection to a veto is duration: an entity dead for a day would
+block every command for a day, and a house that never moves is a worse failure
+than a house that moves wrongly once. Per-blind attribution is the answer to
+that objection, not a refinement of it.
+
+A blind is blocked by the entities *its own* decision reads: every mode's
+`when` (shared -- mode is a house-wide fact, and it is what fell through to the
+catch-all in the measured incident), the rules that can decide its zone
+including the default-zone list, the guards that target it, and the helper
+entities its candidate actions read. A dead kitchen sensor therefore blocks the
+kitchen zone and nothing else; a dead mode input blocks all ten blinds, which is
+correct rather than unfortunate.
+
+The bedroom case still holds unconditionally, and that is the property that
+matters: on a world where nothing has been restored, *every* entity is
+unreadable, so every blind is blocked and nothing moves. Per-blind scoping only
+ever narrows the veto when the world is partly healthy -- it can never widen
+what a fully unreadable world blocks.
+
+**Scoping to the resolved mode was considered and rejected.** It would be
+tighter still: only the matched mode's rules can actually fire, so only their
+inputs matter. But the resolved mode is derived from the very inputs whose
+presence is in question, so on the one world this gate exists for it is the
+untrustworthy value being used to decide how much to trust everything else.
+`assess` therefore takes no `Decision` at all and unions every mode's rules for
+the blind's zone -- broader, and independent of anything that could have gone
+wrong upstream.
+
+### Why readiness is read off the `World` and not off `hass.states`
+
+`assess(config, world)` is pure and reads the same snapshot the decision was
+made from. Reading `hass.states` again would be a second read at a second
+instant, and then "was the world readable" and "what did the world say" are
+answers about two different worlds -- the entire class of race `world.py` exists
+to remove. It also keeps the module in `tests/test_purity.py`'s `PURE_MODULES`,
+so a convenience `hass` import has to argue with a failing test first.
+
+The three faults it treats identically are worth stating: an entity missing from
+the snapshot (`ha_world.build_world` omits an entity Home Assistant has never
+had, rather than inventing a state for it), an entity reporting Home Assistant's
+own `unknown`/`unavailable`, and an attribute read with no value. Acting on any
+of them is the same mistake. `""`, `"off"` and `"0"` are not on that list: they
+are answers.
+
+### Why the gate sits in `_apply` and not before the engine
+
+Dispatch is gated; evaluation is not. The decision is still computed, still
+stored on the coordinator and still published to the diagnostic sensor, because
+a diagnostic that goes blank when something is wrong is the opposite of useful
+-- "it decided open and moved nothing, and here is which entity is missing" is
+an answer, and "the sensor is unavailable" is not.
+
+`coordinator._apply` is the one funnel every command goes through, both the
+ordinary `Priority.SCHEDULED` decision and a `Priority.GUARD` deferral whose
+deadline just expired. Putting the check anywhere else means putting it twice,
+and the copy that gets forgotten is the `GUARD` one -- the highest-priority
+path, and the one whose whole point is that a later recompute cannot overtake
+it. A guard running out of patience is not a reason to trust the decision it was
+holding back.
+
 ## `model.py`
 
 ### Why `Config` is frozen without `slots` (unresolved)

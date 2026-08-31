@@ -464,7 +464,7 @@ def test_a_deferred_blind_waits_and_says_which_guard_is_holding_it(hass_factory,
             coordinator = CoverLogicCoordinator(hass, config(DEFER_GUARD), runtime_entry())
             recorded = _spy_on_apply(coordinator)
             await coordinator.async_setup()
-            await asyncio.sleep(0)
+            await _settle(coordinator)
 
             assert coordinator.decision.targets[BLIND] == Action(0, 0)  # counter
             assert recorded == []
@@ -491,6 +491,7 @@ def test_a_released_guard_lets_the_action_through(hass_factory, runtime_entry):
             _seed(hass, door="on", zavri="on")
             coordinator = CoverLogicCoordinator(hass, config(DEFER_GUARD), runtime_entry())
             await coordinator.async_setup()
+            await _settle(coordinator)
             assert coordinator.pending["deferred"]  # counter: it really waited
 
             hass.states.async_set("binary_sensor.dvere", "off")
@@ -588,11 +589,13 @@ def test_a_restart_re_arms_a_pending_deferral(hass_factory, runtime_entry):
 
             before = CoverLogicCoordinator(hass, config(DEFER_GUARD), entry)
             await before.async_setup()
+            await _settle(before)
             assert BLIND in before.pending["deferred"]  # counter: it was waiting
             await before.async_unload()
 
             after = CoverLogicCoordinator(hass, config(DEFER_GUARD), entry)
             await after.async_setup()
+            await _settle(after)
             # Nothing has been issued by the new coordinator: the blind is
             # held back again, by the same guard, on a brand-new clock.
             assert _kinds(after, COMMAND_WOULD_CALL) == []
@@ -621,6 +624,7 @@ def test_unload_disarms_the_recheck_timer(hass_factory, runtime_entry):
             _seed(hass, door="on", zavri="on")
             coordinator = CoverLogicCoordinator(hass, config(DEFER_GUARD), runtime_entry())
             await coordinator.async_setup()
+            await _settle(coordinator)
             assert coordinator._unsub_recheck is not None  # noqa: SLF001  (counter)
 
             await coordinator.async_unload()
@@ -713,9 +717,9 @@ def test_the_sensor_shows_the_executors_state_and_keeps_matica_diff(hass_factory
             # longer than this guard's own `max_wait: 1` -- the deferral would
             # have timed out and `last_command` would be the timeout's
             # `would_call` instead of the suppression under test here. The
-            # startup evaluation is awaited by `async_setup` itself, so there
-            # is nothing to wait for beyond the runner going idle.
-            await coordinator.runner.async_wait_idle()
+            # startup evaluation goes through the settle window like any
+            # other, so both it and the runner have to be waited out.
+            await _settle(coordinator)
 
             sensor = CoverLogicModeSensor(coordinator, "entry1")
             sensor.hass = hass

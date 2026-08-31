@@ -932,9 +932,8 @@ class CoverRunner:
     ) -> None:
         """One line per command: what would be called (dry run) or was (live).
 
-        `INFO` in a dry run, `DEBUG` live. A dry-run day's whole output is
-        these lines, so it must be readable without turning debug logging on;
-        in normal operation the same volume would be noise.
+        Both at `INFO` -- see `_log_fields` for the day a live dispatch was
+        invisible in the log while a suppressed one was not.
         """
         fields = _command_fields(
             sequence.id,
@@ -971,9 +970,19 @@ class CoverRunner:
         The observer is called after the log, and its failure is not allowed to
         become the sequence's failure: something that merely watches must never
         be able to stop a blind mid-movement.
+
+        **`INFO` whether or not this is a dry run.** It used to be `DEBUG` when
+        live, on the reasoning that a dry run's output is its whole product
+        while the same volume in normal operation would be noise. That was
+        backwards, and measurably: on 2026-08-31 the live house wrote 1468
+        `cover_logic[dry_run]` lines and not one `cover_logic[live]` line, while
+        blinds moved and the runner logged an `ERROR` for a `SetPosition` that
+        failed -- a suppressed command was visible and a real one was not. The
+        volume is also the same either way (one line per command, and only when
+        a command exists), so nothing was being saved. See `docs/rationale.md`
+        -- "Why a live command logs at INFO".
         """
-        level = logging.INFO if sequence.dry_run else logging.DEBUG
-        _LOGGER.log(level, "%s", _format_line(sequence.dry_run, fields))
+        _LOGGER.info("%s", _format_line(sequence.dry_run, fields))
         if self._observer is None:
             return
         try:

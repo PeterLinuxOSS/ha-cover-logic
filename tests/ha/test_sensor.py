@@ -25,6 +25,7 @@ from homeassistant.helpers.entity import EntityCategory
 
 from cover_logic.engine import Decision
 from cover_logic.model import KEEP, Action
+from cover_logic.readiness import Readiness
 from cover_logic.sensor import (
     LEGACY_MATRIX_ENTITY,
     LEGACY_TEPLOTNA_OCHRANA_ENTITY,
@@ -60,14 +61,18 @@ class FakeCoordinator:
         dry_run=True,
         pending=None,
         last_command=None,
+        readiness=None,
     ):
-        """Store the six attributes `CoverLogicModeSensor` reads."""
+        """Store the seven attributes `CoverLogicModeSensor` reads."""
         self.decision = decision
         self.last_error = last_error
         self.last_success = last_success
         self.dry_run = dry_run
         self.pending = pending if pending is not None else {"deferred": {}, "queued": {}}
         self.last_command = last_command
+        # `None` is the real coordinator's own value before the first
+        # evaluation, so it is the honest default here too.
+        self.readiness = readiness
         self.listeners = []
 
     def add_listener(self, listener):
@@ -93,8 +98,17 @@ DECISION = Decision(
 )
 
 
-def _sensor(decision=DECISION, *, last_error=None, last_success=None, hass=None, entry_id="entry1"):
-    sensor = CoverLogicModeSensor(FakeCoordinator(decision, last_error, last_success), entry_id)
+def _sensor(
+    decision=DECISION,
+    *,
+    last_error=None,
+    last_success=None,
+    hass=None,
+    entry_id="entry1",
+    readiness=None,
+):
+    coordinator = FakeCoordinator(decision, last_error, last_success, readiness=readiness)
+    sensor = CoverLogicModeSensor(coordinator, entry_id)
     sensor.hass = hass
     return sensor
 
@@ -153,6 +167,27 @@ def test_last_error_and_last_success_are_exposed():
 
 def test_last_success_is_none_before_first_evaluation():
     assert _sensor(last_success=None).extra_state_attributes["last_success"] is None
+
+
+def test_readiness_is_exposed_as_the_verdict_plus_who_caused_it():
+    """A sensible decision next to a house that did not move has to be explainable.
+
+    Without this attribute a readiness withholding reads as a bug in the
+    executor: the sensor would show a perfectly good decision next to a house
+    that did not move.
+    """
+    readiness = Readiness(missing=("input_boolean.a",), blocked={"cover.a": ("input_boolean.a",)})
+    attrs = _sensor(readiness=readiness).extra_state_attributes["readiness"]
+    assert attrs["ready"] is False
+    assert attrs["missing"] == ["input_boolean.a"]
+    assert attrs["blocked"] == {"cover.a": ["input_boolean.a"]}
+
+
+def test_readiness_is_none_before_the_first_evaluation():
+    """The counter: `None` is "never asked", not "nothing is missing"."""
+    assert _sensor().extra_state_attributes["readiness"] is None
+    ready = Readiness(missing=(), blocked={})
+    assert _sensor(readiness=ready).extra_state_attributes["readiness"]["ready"] is True
 
 
 # --- matica_diff: the point of this task ------------------------------------

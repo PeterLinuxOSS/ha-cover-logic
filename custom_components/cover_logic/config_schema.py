@@ -5,7 +5,7 @@ There is exactly one representation of the rules, so config and tests can never
 drift apart.
 """
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -758,21 +758,37 @@ def referenced_entities(config: Config) -> set[str | tuple[str, str]]:
     condition dialect is.
     """
     out: set[str | tuple[str, str]] = set()
+    for node in all_condition_nodes(config):
+        out |= node_entities(node)
+    for ref in config.values.values():
+        out.add(ref.entity)
+    return out
+
+
+def node_entities(node: Mapping[str, Any]) -> set[str | tuple[str, str]]:
+    """What one condition node reads, in `referenced_entities`' own two shapes.
+
+    Split out of `referenced_entities` so `readiness.py` can ask the same
+    question about *one* subtree (which entities does this blind's own decision
+    read) without a second implementation of "which entities does a condition
+    node read" -- the drift `MODELS.md` §9 records this project already being
+    bitten by once with the rule-grouping sort.
+
+    Reads nothing recursively: a nested `conditions:` list is `walk_condition_nodes`'
+    job and a `!ref` is the caller's, since only a caller holding the `Config`
+    can resolve a name to a body.
+    """
+    out: set[str | tuple[str, str]] = set()
 
     def add(entity: str, attribute: str | None = None) -> None:
         out.add(entity if attribute is None else (entity, attribute))
 
-    for node in all_condition_nodes(config):
-        kind = node.get("condition")
-        if kind in ("state", "numeric_state"):
-            entity = node.get("entity_id")
-            if entity is not None:
-                add(entity, node.get("attribute"))
-        elif kind == COND_SUN_HITS_TARGET:
-            add(node.get("sun_entity", SUN_ENTITY))
-            add(node.get("azimuth_entity", DEFAULT_AZIMUTH_ENTITY), node.get("azimuth_attribute"))
-
-    for ref in config.values.values():
-        add(ref.entity)
-
+    kind = node.get("condition")
+    if kind in ("state", "numeric_state"):
+        entity = node.get("entity_id")
+        if entity is not None:
+            add(entity, node.get("attribute"))
+    elif kind == COND_SUN_HITS_TARGET:
+        add(node.get("sun_entity", SUN_ENTITY))
+        add(node.get("azimuth_entity", DEFAULT_AZIMUTH_ENTITY), node.get("azimuth_attribute"))
     return out

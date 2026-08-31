@@ -194,6 +194,7 @@ def test_svitanie_is_evaluated_on_the_settled_world(hass_factory, runtime_entry,
             _seed(hass)
             coordinator = CoverLogicCoordinator(hass, config(), runtime_entry())
             await coordinator.async_setup()
+            await asyncio.sleep(EVAL_SETTLE_SECONDS + 0.5)
             assert coordinator.decision.mode == "noc"  # counter: the night, before svitanie
             seen.clear()
 
@@ -408,13 +409,18 @@ def test_the_cap_is_wider_than_the_window() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_startup_evaluates_without_waiting_for_the_window(hass_factory, runtime_entry, monkeypatch):
-    """`async_setup` evaluates inline: `decision` is populated when it returns.
+def test_startup_is_not_exempt_from_the_window(hass_factory, runtime_entry, monkeypatch):
+    """`async_setup` arms the window; it does not evaluate inline.
 
-    The settle window is about *state-change-driven* evaluation. Routing the
-    first evaluation through it would leave the diagnostic sensor blank for two
-    seconds after every reload, and -- worse -- leave a pending deferral's
-    recheck timer unarmed for that long.
+    This test used to assert the exact opposite, and the exemption's stated
+    reason -- "there is no transition at startup, only a world that already is
+    what it is" -- was false: startup is the largest burst of state writes the
+    house ever has. On 2026-08-31 at 11:45:35 the first evaluation ran 0.5 s
+    after setup, on a world where nothing had been restored, and decided "open"
+    for all ten blinds. What that costs is one window's delay before the
+    diagnostic sensor has anything to show; see `coordinator.async_setup`'s
+    docstring, and `tests/ha/test_readiness_gate.py` for the gate that makes
+    such a decision unactionable rather than merely late.
     """
     seen = _counting_evaluate(monkeypatch)
 
@@ -425,6 +431,11 @@ def test_startup_evaluates_without_waiting_for_the_window(hass_factory, runtime_
             coordinator = CoverLogicCoordinator(hass, config(), runtime_entry())
             await coordinator.async_setup()
 
+            assert seen == []
+            assert coordinator.decision is None
+
+            # Counter: it is armed, not skipped -- one window later it has run.
+            await asyncio.sleep(EVAL_SETTLE_SECONDS + 0.5)
             assert len(seen) == 1
             assert coordinator.decision is not None
 
@@ -450,6 +461,10 @@ def test_the_recheck_timer_is_not_delayed_by_the_window(hass_factory, runtime_en
             _seed(hass, cover_down="off", room_active="on")
             coordinator = CoverLogicCoordinator(hass, config(DEFER_GUARD), runtime_entry())
             await coordinator.async_setup()
+            # The first evaluation is what arms the deferral, and it now waits
+            # out the settle window like any other -- so the deadline is
+            # counted from here, not from `async_setup`.
+            await asyncio.sleep(EVAL_SETTLE_SECONDS + 0.3)
             assert _would_call(coordinator) == []  # counter: held back by the guard
 
             # `max_wait` plus a slack strictly smaller than one settle window:

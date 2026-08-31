@@ -46,7 +46,13 @@ def _counting_evaluate(monkeypatch):
 
 
 def test_initial_evaluation_happens_at_startup(config, hass_factory, runtime_entry, monkeypatch):
-    """`decision` is populated by `async_setup` itself, before any state change."""
+    """`decision` is populated one settle window after `async_setup`, with no state change.
+
+    Startup used to be exempt from the window and is not any more (see
+    `coordinator.async_setup`), so the wait is the change here -- the property
+    that matters is unchanged: the first evaluation happens on its own, without
+    anything having to move.
+    """
     calls = _counting_evaluate(monkeypatch)
 
     async def _run():
@@ -54,6 +60,7 @@ def test_initial_evaluation_happens_at_startup(config, hass_factory, runtime_ent
         try:
             coordinator = CoverLogicCoordinator(hass, config, runtime_entry())
             await coordinator.async_setup()
+            await asyncio.sleep(_WAIT)
 
             assert len(calls) == 1
             assert coordinator.decision is not None
@@ -77,6 +84,7 @@ def test_unrelated_entity_triggers_no_evaluation(config, hass_factory, runtime_e
         try:
             coordinator = CoverLogicCoordinator(hass, config, runtime_entry())
             await coordinator.async_setup()
+            await asyncio.sleep(_WAIT)
             calls.clear()  # drop the startup evaluation counted above
 
             hass.states.async_set("sensor.unrelated", "should_not_trigger_anything")
@@ -126,6 +134,7 @@ def test_evaluation_error_keeps_previous_decision_and_is_recorded(
         try:
             coordinator = CoverLogicCoordinator(hass, config, runtime_entry())
             await coordinator.async_setup()
+            await asyncio.sleep(_WAIT)
             previous = coordinator.decision
             assert previous is not None
 
@@ -170,6 +179,7 @@ def test_non_engine_error_is_also_caught_and_recorded(
         try:
             coordinator = CoverLogicCoordinator(hass, config, runtime_entry())
             await coordinator.async_setup()
+            await asyncio.sleep(_WAIT)
             previous = coordinator.decision
             assert previous is not None
 
