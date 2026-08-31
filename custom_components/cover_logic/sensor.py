@@ -153,6 +153,11 @@ class CoverLogicModeSensor(SensorEntity):
           happened, and this is about what has not happened yet.
         - `last_command` -- the newest thing the executor did or deliberately
           did not do, `withheld` guard suppressions included.
+        - `readiness` -- whether the inputs behind this decision could be read
+          at all, and which blinds a missing one is currently stopping. `None`
+          only before the first evaluation. This is the answer to "it decided
+          something sensible-looking and moved nothing"; without it that reads
+          as a bug in the executor.
 
         `matica_diff` stays, unchanged. While the old Jinja matrix is still the
         system actually running the house, both views are wanted -- the
@@ -171,6 +176,7 @@ class CoverLogicModeSensor(SensorEntity):
         matica_mode, matica_diff = self._compare_matrix(decision)
 
         last_success = self._coordinator.last_success
+        readiness = self._coordinator.readiness
         return {
             "targets": targets,
             "trace": trace,
@@ -179,6 +185,7 @@ class CoverLogicModeSensor(SensorEntity):
             "dry_run": self._coordinator.dry_run,
             "pending": self._coordinator.pending,
             "last_command": self._coordinator.last_command,
+            "readiness": readiness.as_attributes() if readiness is not None else None,
             "matica_mode": matica_mode,
             "matica_diff": matica_diff,
         }

@@ -87,6 +87,31 @@ EVAL_SETTLE_SECONDS = 2.0
 # relative to anything the house actually does.
 EVAL_SETTLE_MAX_SECONDS = 10.0
 
+# ---------------------------------------------------------------------------
+# Readiness: what makes an input unreadable, and how many names a diagnostic
+# may carry. See `readiness.py`'s module docstring for the measured minute
+# these exist for.
+#
+# `unknown` and `unavailable` are Home Assistant's own two spellings of "there
+# is an entity here but it cannot tell you anything", and a referenced entity
+# absent from the `World` snapshot altogether is the third shape of the same
+# fault -- `ha_world.build_world` leaves a missing entity out rather than
+# inventing a state for it, so `World.state` answers `None`. All three are in
+# here together because acting on any of them is the identical mistake.
+UNREADY_STATES = frozenset({None, "unknown", "unavailable"})
+
+# How many entity names a readiness reason or attribute may name before it
+# says "+N more". Ten is a diagnostic a person reads; a hundred is noise, and
+# an unbounded state attribute is one a big enough house could use to take the
+# diagnostic entity down at write time.
+READINESS_MAX_NAMED = 10
+
+# How a readiness withholding announces itself in `CommandLog` and in the log.
+# A guard withholding carries its own `policy`/`guard` fields and this one
+# carries neither -- no guard fired -- so the prefix is what tells the two
+# apart, and it is shared rather than spelled once here and once in a test.
+READINESS_REASON_PREFIX = "world not ready"
+
 # Built-in condition types beyond the Home Assistant native set.
 COND_EVENT_TARGETS_ZONE = "event_targets_zone"
 COND_REF = "ref"

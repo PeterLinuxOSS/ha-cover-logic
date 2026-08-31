@@ -16,6 +16,13 @@ so the diagnostic sensor always has something to show; a failing evaluation
 also dispatches nothing at all, because a `Guarded` that could not be computed
 is not a `Guarded` whose guards can be trusted.
 
+`readiness.assess` runs on the same snapshot and gates dispatch alone: a blind
+whose own inputs are missing, `unknown` or `unavailable` is still decided,
+still published and still on the sensor, but nothing is issued for it. See
+`readiness.py` for the measured minute that bought this. Startup is no longer
+exempt from the settle window either -- `async_setup` arms it like any state
+change does, and its own docstring states what that costs.
+
 **This is the module that gives the executor its hands.** Since phase 3 task 5
 `_build_runner` binds the runner's service caller to `hass.services.async_call`
 -- the only such call in this package -- so what stands between a decision and
@@ -60,6 +67,7 @@ from .engine import Decision, evaluate
 from .guards import Guarded, guard_blinds, review, screen
 from .ha_world import build_world
 from .model import KEEP, Action, Config
+from .readiness import Readiness, assess
 from .runner import COVER_DOMAIN, CoverRunner, Priority, current_position
 
 if TYPE_CHECKING:
@@ -109,6 +117,10 @@ class CoverLogicCoordinator:
         self.entry = entry
         self.decision: Decision | None = None
         self.guarded: Guarded | None = None
+        # The last computed verdict on whether the inputs were readable at all.
+        # `None` only before the first evaluation; a `Readiness` with an empty
+        # `blocked` is "everything readable", which is not the same thing.
+        self.readiness: Readiness | None = None
         self.last_error: str | None = None
         self.last_success: dt.datetime | None = None
         self.commands = CommandLog()
@@ -133,6 +145,13 @@ class CoverLogicCoordinator:
         # every time the weather updates and `last_command` degenerates into a
         # clock.
         self._withheld: dict[str, str] = {}
+        # The same once-per-change-of-reason bookkeeping for readiness
+        # withholdings. A separate map from `_withheld` on purpose: the two
+        # answer different questions ("a guard said no" vs. "the inputs could
+        # not be read") and a blind can legitimately be in both, so one shared
+        # slot would let each overwrite the other's dedupe key and re-record
+        # every recompute.
+        self._unready: dict[str, str] = {}
 
     def _build_runner(self) -> CoverRunner:
         """The executor, with its service caller bound to real `cover.*` services.
@@ -187,20 +206,33 @@ class CoverLogicCoordinator:
         }
 
     async def async_setup(self) -> None:
-        """Subscribe to the config's referenced entities and run the first evaluation.
+        """Subscribe to the config's referenced entities and arm the first evaluation.
 
-        Subscribing before the first evaluation (rather than after) would
+        Subscribing before arming the evaluation (rather than after) would
         leave a window where a real state change is missed because nothing is
-        listening yet; evaluating here, synchronously, closes that window and
-        also satisfies the separate requirement that `decision` be populated
-        at startup rather than only after the first subsequent state change.
+        listening yet.
 
-        The first evaluation is awaited here, *not* put through the settle
-        window: the window exists to keep a state change from being read
-        mid-transition, and there is no transition at startup -- only a world
-        that already is what it is. Deferring it would leave the diagnostic
-        sensor blank and a pending deferral's recheck timer unarmed for the
-        length of the window after every single reload.
+        **Startup goes through the settle window like every other evaluation.**
+        It used to be the one exemption -- "there is no transition at startup,
+        only a world that already is what it is" -- and that sentence was
+        exactly wrong: startup is the largest burst of state writes the house
+        ever has, and the world half a second into it is one that never
+        existed. On 2026-08-31 at 11:45:35, 0.5 s after setup, every input this
+        config reads was still missing and the engine decided "open" for all
+        ten blinds (`readiness.py`'s docstring has the log). The window is not
+        the whole fix -- readiness is, and it is what makes the decision
+        unactionable rather than merely late -- but an exemption whose stated
+        reason was false does not get to stay.
+
+        **What that costs, plainly:** the first evaluation now lands one settle
+        window later, so for `EVAL_SETTLE_SECONDS` after every reload the
+        diagnostic sensor is unavailable and a pending deferral's recheck timer
+        is unarmed. Two seconds of a blank diagnostic against a house-wide
+        movement on a world nobody saw is not a close trade, and the deferral
+        half costs nothing real: every consequence of a deferral being
+        re-derived two seconds late is *later*, never sooner, which is the same
+        argument `deferrals.py` already makes about a restart resetting its
+        elapsed seconds.
         """
         self._active = True
 
@@ -210,7 +242,7 @@ class CoverLogicCoordinator:
                 self.hass, entity_ids, self._handle_state_change
             )
 
-        await self._async_evaluate()
+        self._schedule_settle()
 
     async def async_unload(self) -> None:
         """Remove the state-change subscription and cancel any pending settle.
@@ -353,6 +385,12 @@ class CoverLogicCoordinator:
         """
         world = build_world(self.hass, self.config)
         try:
+            # From this same snapshot, never a second read of `hass.states`:
+            # otherwise "was the world readable" and "what did the world say"
+            # are answers about two different instants. Inside the `try` for
+            # the same reason the guards are -- a readiness verdict that could
+            # not be computed must dispatch nothing, not dispatch everything.
+            readiness = assess(self.config, world)
             screening = screen(self.config, world)
             decision = evaluate(self.config, world)
             guarded = review(self.config, world, decision, self._positions(), screening)
@@ -364,13 +402,14 @@ class CoverLogicCoordinator:
 
         self.decision = decision
         self.guarded = guarded
+        self.readiness = readiness
         self.last_error = None
         self.last_success = dt_util.utcnow()
 
         now = self.last_success.timestamp()
         elapsed = self.deferrals.sync(guarded, decision, now)
         self._reschedule(self.deferrals.next_recheck(now))
-        await self._execute(guarded, elapsed, decision.mode)
+        await self._execute(guarded, elapsed, decision.mode, readiness)
 
         # Last, not first: the sensor reads `last_command` and `pending`, and a
         # listener fired before the executor ran would show the previous
@@ -394,8 +433,15 @@ class CoverLogicCoordinator:
             entity: current_position(self.hass.states.get(entity)) for entity in self.config.blinds
         }
 
-    async def _execute(self, guarded: Guarded, elapsed: Elapsed, mode: str) -> None:
+    async def _execute(
+        self, guarded: Guarded, elapsed: Elapsed, mode: str, readiness: Readiness
+    ) -> None:
         """Hand this evaluation's answers to the runner, in priority order.
+
+        `readiness` is carried down to `_apply` rather than consulted here, so
+        the gate sits on the one funnel both dispatch groups go through. A
+        second check next to a second call site is a second thing to forget,
+        and the thing forgotten would be the one that moves a house.
 
         Three groups, in this order and never merged:
 
@@ -432,13 +478,35 @@ class CoverLogicCoordinator:
                 entity,
             )
 
-        await self._apply(elapsed.proceed, Priority.GUARD, SOURCE_GUARD_TIMEOUT, mode)
-        await self._apply(guarded.actions, Priority.SCHEDULED, SOURCE_RECOMPUTE, mode)
+        # Drop the dedupe slots of blinds that are readable again, so the next
+        # outage is recorded instead of being mistaken for the same one.
+        self._unready = {
+            entity: reason
+            for entity, reason in self._unready.items()
+            if readiness.blocked_by(entity)
+        }
+
+        await self._apply(elapsed.proceed, Priority.GUARD, SOURCE_GUARD_TIMEOUT, mode, readiness)
+        await self._apply(guarded.actions, Priority.SCHEDULED, SOURCE_RECOMPUTE, mode, readiness)
 
     async def _apply(
-        self, actions: Mapping[str, Action], priority: Priority, source: str, mode: str
+        self,
+        actions: Mapping[str, Action],
+        priority: Priority,
+        source: str,
+        mode: str,
+        readiness: Readiness,
     ) -> None:
         """Ask the runner for each of `actions`, skipping the ones that ask for nothing.
+
+        **The readiness gate is here, and it is here rather than earlier for one
+        reason: this is the only place a command can reach the runner.** A blind
+        whose own inputs could not be read is recorded and dropped -- including
+        a `Priority.GUARD` deferral whose deadline just expired, because "the
+        interlock ran out of patience" is not a reason to trust the decision it
+        was holding back. The decision itself is untouched and still published;
+        see `readiness.py` for why this is a veto rather than a wait, and why
+        the veto is per blind.
 
         An `Action(KEEP, KEEP)` is not dispatched. It is a complete, meaningful
         decision -- "leave both axes alone", which is how the engine spells both
@@ -464,12 +532,32 @@ class CoverLogicCoordinator:
                 continue
             if action.position is KEEP and action.tilt is KEEP:
                 continue
+            # After the no-op check on purpose: a blind that was going to be
+            # asked for nothing was not withheld from anything.
+            if readiness.blocked_by(entity):
+                self._record_unready(entity, readiness)
+                continue
             try:
                 await self.runner.async_apply(
                     blind, action, priority=priority, source=source, mode=mode
                 )
             except Exception:
                 _LOGGER.exception("cover_logic: could not queue %s for %s", entity, source)
+
+    def _record_unready(self, entity: str, readiness: Readiness) -> None:
+        """Say once, loudly, that `entity` was not commanded because its inputs were not readable.
+
+        `WARNING`, not `DEBUG`: the four silent minutes of 2026-08-06 are the
+        thing this whole gate exists not to repeat. Deduped per change of
+        reason, the same way a standing guard suppression is -- an outage that
+        lasts an hour must not turn `last_command` into a clock.
+        """
+        reason = readiness.reason(entity)
+        if self._unready.get(entity) == reason:
+            return
+        self._unready[entity] = reason
+        _LOGGER.warning("cover_logic: %s not commanded -- %s", entity, reason)
+        self.commands.withheld(entity, reason)
 
     def _reschedule(self, seconds: float | None) -> None:
         """Arm (or disarm) the periodic re-examination a pending `defer` needs.
