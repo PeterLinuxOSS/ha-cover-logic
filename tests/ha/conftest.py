@@ -263,6 +263,33 @@ class FakeSetupHass:
         self.services = FakeServiceRegistry()
         self.states = FakeStateMachine({})
 
+    @property
+    def loop(self):
+        """The running loop -- `async_track_point_in_utc_time` calls `loop.call_at` on it.
+
+        Needed since `CoverLogicCoordinator.async_setup` stopped evaluating
+        inline and started arming the settle window like any other evaluation
+        (see that method's docstring). A property rather than an attribute
+        because these tests build the fake outside `asyncio.run(...)` and there
+        is no loop to capture yet at that point.
+        """
+        return asyncio.get_running_loop()
+
+    def async_run_hass_job(self, job, *args):
+        """Run a `HassJob`'s target -- the one thing a fired timer asks of `hass`.
+
+        Deliberately not a reimplementation of `HomeAssistant.async_run_hass_job`'s
+        job-type dispatch: the coordinator's only timer callbacks are coroutine
+        functions, so the coroutine is turned into a task and nothing else is
+        guessed at. Anything richer belongs on `hass_factory`'s real
+        `HomeAssistant`, which is what `test_coordinator.py` and friends use
+        precisely because they care how timers behave.
+        """
+        result = job.target(*args)
+        if asyncio.iscoroutine(result):
+            return asyncio.get_running_loop().create_task(result)
+        return None
+
     async def async_add_executor_job(self, target, *args):
         """Genuinely run `target` off the current thread, like the real one does.
 
