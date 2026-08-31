@@ -6,6 +6,7 @@ drift apart.
 """
 
 from collections.abc import Callable, Iterator, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -732,12 +733,42 @@ def all_condition_nodes(config: Config) -> Iterator[dict]:
             yield from walk_condition_nodes(guard.when)
 
 
+@dataclass(frozen=True, slots=True)
+class Read:
+    """One entity or attribute read, and whether the reading node answers it itself.
+
+    `defaulted` is why this type exists rather than a bare id: a condition that
+    writes `default:` has already said what a missing value means, so a reader
+    asking "was this readable" must not treat it as a fault. `readiness.py` is
+    that reader; see `docs/rationale.md` -- "Why a stated `default:` is not a
+    readiness fault".
+    """
+
+    entity: str
+    attribute: str | None = None
+    defaulted: bool = False
+
+    @property
+    def key(self) -> str | tuple[str, str]:
+        """This read as `referenced_entities` reports it: an id, or `(id, attribute)`."""
+        return self.entity if self.attribute is None else (self.entity, self.attribute)
+
+
 def referenced_entities(config: Config) -> set[str | tuple[str, str]]:
     """Every entity `config` reads, for subscribing a coordinator to exactly that set.
 
     A plain `entity_id` string means a state read; an `(entity_id, attribute)`
     tuple means an attribute read -- mirroring how `conditions.py` reads each
     one (`World.state` vs. `World.attribute`/`World.number(..., attribute=)`).
+    A projection of `referenced_reads` and never a second walk: subscribing to
+    an entity and judging whether it was readable must not be able to disagree
+    about what the config reads.
+    """
+    return {read.key for read in referenced_reads(config)}
+
+
+def referenced_reads(config: Config) -> set[Read]:
+    """Every read `config` performs, each carrying whether its own node defaults it.
 
     Covers:
     - every `state` / `numeric_state` condition reached by `all_condition_nodes`
@@ -756,32 +787,43 @@ def referenced_entities(config: Config) -> set[str | tuple[str, str]]:
     references -- Jinja templates are an intentional escape hatch (see
     `conditions._template`) and are not enumerable the way the structured
     condition dialect is.
+
+    A `values:` helper is reported undefaulted even though `values:` requires a
+    `default` -- that fallback resolves to a *position*, so acting on it is the
+    house moving on a world nobody read, which is the opposite of an answer that
+    avoids a movement. See `docs/rationale.md` -- "Why a `values:` default is
+    not an answer".
     """
-    out: set[str | tuple[str, str]] = set()
+    out: set[Read] = set()
     for node in all_condition_nodes(config):
-        out |= node_entities(node)
+        out |= node_reads(node)
     for ref in config.values.values():
-        out.add(ref.entity)
+        out.add(Read(ref.entity))
     return out
 
 
-def node_entities(node: Mapping[str, Any]) -> set[str | tuple[str, str]]:
-    """What one condition node reads, in `referenced_entities`' own two shapes.
+def node_reads(node: Mapping[str, Any]) -> set[Read]:
+    """What one condition node reads, and whether the node itself defaults each read.
 
-    Split out of `referenced_entities` so `readiness.py` can ask the same
-    question about *one* subtree (which entities does this blind's own decision
-    read) without a second implementation of "which entities does a condition
-    node read" -- the drift `MODELS.md` §9 records this project already being
-    bitten by once with the rule-grouping sort.
+    Split out of `referenced_reads` so `readiness.py` can ask the same question
+    about *one* subtree (which entities does this blind's own decision read)
+    without a second implementation of "which entities does a condition node
+    read" -- the drift `MODELS.md` §9 records this project already being bitten
+    by once with the rule-grouping sort. The `defaulted` flag is here for the
+    same reason: `readiness.py` must not re-derive from a node whether that node
+    tolerates a missing value.
 
     Reads nothing recursively: a nested `conditions:` list is `walk_condition_nodes`'
     job and a `!ref` is the caller's, since only a caller holding the `Config`
     can resolve a name to a body.
     """
-    out: set[str | tuple[str, str]] = set()
+    out: set[Read] = set()
+    # One flag per node, not per read: `default:` is the node's own statement of
+    # what a missing value means, and it covers every entity that node reads.
+    defaulted = "default" in node
 
     def add(entity: str, attribute: str | None = None) -> None:
-        out.add(entity if attribute is None else (entity, attribute))
+        out.add(Read(entity, attribute, defaulted))
 
     kind = node.get("condition")
     if kind in ("state", "numeric_state"):
