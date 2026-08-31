@@ -1,9 +1,10 @@
 """Watch state, run the whole decision path, and hand the result to the executor.
 
 The seam between "the house changed" and "the house was told what to do".
-Subscribes to exactly the entities the configuration reads, coalesces bursts of
-change into one evaluation, and then runs the full path in the one order that
-is allowed to exist:
+Subscribes to exactly the entities the configuration reads, waits for the house
+to stop writing (the settle window -- see `_schedule_settle`, and
+`const.EVAL_SETTLE_SECONDS` for the morning that made it necessary), and then
+runs the full path in the one order that is allowed to exist:
 
     screen()  ->  evaluate()  ->  review()  ->  CoverRunner.async_apply()
 
@@ -37,7 +38,6 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.core import Event, HomeAssistant, callback
-from homeassistant.helpers.debounce import Debouncer
 from homeassistant.helpers.event import (
     EventStateChangedData,
     async_track_point_in_utc_time,
@@ -47,7 +47,13 @@ import homeassistant.util.dt as dt_util
 
 from .command_log import CommandLog
 from .config_schema import referenced_entities
-from .const import DEFAULT_DRY_RUN, GUARD_ANY, OPT_DRY_RUN
+from .const import (
+    DEFAULT_DRY_RUN,
+    EVAL_SETTLE_MAX_SECONDS,
+    EVAL_SETTLE_SECONDS,
+    GUARD_ANY,
+    OPT_DRY_RUN,
+)
 from .deferrals import DeferralRegistry, Elapsed
 from .engine import Decision, evaluate
 from .guards import Guarded, guard_blinds, review, screen
@@ -67,19 +73,11 @@ _LOGGER = logging.getLogger(__name__)
 SOURCE_RECOMPUTE = "coordinator"
 SOURCE_GUARD_TIMEOUT = "guard-timeout"
 
-# Debounce window between the last watched state change and the evaluation it
-# triggers.
-#
-# Two bursts this has to absorb, neither of which is "the weather updates
-# every ~10 minutes" -- that cadence is far wider than any window chosen here
-# could matter for, so window length is not tuned against it. What it is
-# tuned against: a Home Assistant startup state restore, or a bulk automation
-# write, that touches several watched entities in the same handful of
-# event-loop ticks, each as its own `state_changed` event. 0.5s comfortably
-# spans that (such a burst lands within tens of milliseconds of itself in
-# practice) while still being short enough that a diagnostic sensor updating
-# after it reads, to a person, as instantaneous.
-DEBOUNCE_COOLDOWN = 0.5
+# The settle window and its cap live in `const.py`, with the measured timeline
+# that fixes their values -- they are read here as module globals rather than
+# copied into an instance attribute so a test can shrink them (the *shape* of
+# the timer is what most of `tests/ha/test_settle.py` is about, not its
+# length).
 
 
 class CoverLogicCoordinator:
@@ -117,7 +115,16 @@ class CoverLogicCoordinator:
         self.runner = self._build_runner()
         self._unsub_state_change: Callable[[], None] | None = None
         self._unsub_recheck: Callable[[], None] | None = None
-        self._debouncer: Debouncer | None = None
+        self._unsub_settle: Callable[[], None] | None = None
+        # When the burst currently being settled must be evaluated regardless
+        # of further changes; `None` when no burst is in flight. See
+        # `_schedule_settle`.
+        self._settle_cap: dt.datetime | None = None
+        # Whether this coordinator is between `async_setup` and `async_unload`.
+        # A timer that fires after unload, or a state change arriving before
+        # setup, must not evaluate against a config entry that is on its way
+        # out.
+        self._active = False
         self._listeners: list[Callable[[], None]] = []
         # The last reason each blind's action was withheld by a guard, so a
         # standing suppression is recorded once instead of on every recompute.
@@ -185,14 +192,15 @@ class CoverLogicCoordinator:
         listening yet; evaluating here, synchronously, closes that window and
         also satisfies the separate requirement that `decision` be populated
         at startup rather than only after the first subsequent state change.
+
+        The first evaluation is awaited here, *not* put through the settle
+        window: the window exists to keep a state change from being read
+        mid-transition, and there is no transition at startup -- only a world
+        that already is what it is. Deferring it would leave the diagnostic
+        sensor blank and a pending deferral's recheck timer unarmed for the
+        length of the window after every single reload.
         """
-        self._debouncer = Debouncer(
-            self.hass,
-            _LOGGER,
-            cooldown=DEBOUNCE_COOLDOWN,
-            immediate=False,
-            function=self._async_evaluate,
-        )
+        self._active = True
 
         entity_ids = sorted(_entity_ids(self.config))
         if entity_ids:
@@ -203,11 +211,11 @@ class CoverLogicCoordinator:
         await self._async_evaluate()
 
     async def async_unload(self) -> None:
-        """Remove the state-change subscription and cancel any pending debounce.
+        """Remove the state-change subscription and cancel any pending settle.
 
         A leaked subscription or timer outlives the config entry that owns
         it -- concretely, a reload while editing the config would otherwise
-        leave the old subscription (and a possibly-pending debounce call)
+        leave the old subscription (and a possibly-pending settle timer)
         alive alongside the new one, doubling up on evaluations against
         whichever `Config` object it captured.
 
@@ -217,15 +225,17 @@ class CoverLogicCoordinator:
         its slats untouched and there is no successor left to hand them to.
         Subscriptions come first so nothing new arrives while it drains.
         """
+        self._active = False
         if self._unsub_state_change is not None:
             self._unsub_state_change()
             self._unsub_state_change = None
         if self._unsub_recheck is not None:
             self._unsub_recheck()
             self._unsub_recheck = None
-        if self._debouncer is not None:
-            self._debouncer.async_shutdown()
-            self._debouncer = None
+        if self._unsub_settle is not None:
+            self._unsub_settle()
+            self._unsub_settle = None
+        self._settle_cap = None
         await self.runner.async_shutdown()
 
     def add_listener(self, listener: Callable[[], None]) -> Callable[[], None]:
@@ -252,19 +262,68 @@ class CoverLogicCoordinator:
 
     @callback
     def _handle_state_change(self, event: Event[EventStateChangedData]) -> None:
-        """Schedule a debounced evaluation; never evaluate inline here.
+        """Start (or restart) the settle window; never evaluate inline here.
 
         `event` itself is not read -- `_async_evaluate` always takes a fresh
         `World` snapshot of every referenced entity, not just the one that
         changed, so there is nothing this handler needs from it beyond "some
-        watched entity changed, evaluate soon". `self._debouncer` is only
-        `None` before `async_setup` has run or after `async_unload` has --
-        neither state has a live subscription that could call this, but the
-        guard keeps that invariant from being silently load-bearing.
+        watched entity changed, evaluate once the house has stopped writing".
         """
-        if self._debouncer is None:
+        self._schedule_settle()
+
+    @callback
+    def _schedule_settle(self) -> None:
+        """Arm the settle window, moving its deadline if one is already pending.
+
+        **Restart-on-change, not a fixed window from the first change**, and
+        that distinction is the whole fix. `svitanie` writes several entities
+        in sequence about one transition -- measured at ~1 s apart, see
+        `const.EVAL_SETTLE_SECONDS` -- and the world in between those writes is
+        one that never really existed. A fixed window opened by the first write
+        evaluates inside the sequence and then again after it; a window that
+        moves with every new change evaluates once, after the *last* write.
+
+        Bounded, because restart-on-change is starvable: `_settle_cap` is set
+        from the *first* change of a burst and never moved, so an entity that
+        changes faster than the window can delay the evaluation by at most
+        `EVAL_SETTLE_MAX_SECONDS` rather than for as long as it keeps
+        flapping. Clamping the new deadline to the cap (rather than firing
+        early, or refusing to re-arm) keeps one code path: at the cap the
+        deadline simply stops moving.
+
+        Nothing here uses the shorter Home Assistant helper that takes a delay
+        instead of a point in time -- its *name* contains the substring
+        `tests/test_no_movement.py` refuses, and the answer to that guard
+        firing is to satisfy it, not to carve a hole in it. `_reschedule` says
+        the same thing about the same helper.
+        """
+        if not self._active:
             return
-        self._debouncer.async_schedule_call()
+        now = dt_util.utcnow()
+        if self._unsub_settle is None:
+            self._settle_cap = now + dt.timedelta(seconds=EVAL_SETTLE_MAX_SECONDS)
+        else:
+            self._unsub_settle()
+            self._unsub_settle = None
+        when = now + dt.timedelta(seconds=EVAL_SETTLE_SECONDS)
+        if self._settle_cap is not None and when > self._settle_cap:
+            when = self._settle_cap
+        self._unsub_settle = async_track_point_in_utc_time(self.hass, self._handle_settled, when)
+
+    async def _handle_settled(self, _now: dt.datetime) -> None:
+        """The house stopped writing (or hit the cap): evaluate now.
+
+        A coroutine rather than a `@callback`, which
+        `async_track_point_in_utc_time` handles by running it as a task -- the
+        alternative is a synchronous callback that creates that task itself,
+        which is the same thing with one more place to forget the `_active`
+        check.
+        """
+        self._unsub_settle = None
+        self._settle_cap = None
+        if not self._active:
+            return
+        await self._async_evaluate()
 
     async def _async_evaluate(self) -> None:
         """Snapshot the world once, run the whole path, and execute the result.
@@ -281,8 +340,8 @@ class CoverLogicCoordinator:
         invariants: a typo'd condition type raises `ValueError`, and a broken
         user template raises out of Jinja by design, because evaluating it as
         False could mean leaving the house open during a heatwave. Catching only
-        `EngineError` would let those escape into the debouncer's callback,
-        where `last_error` is never set and the sensor keeps showing a stale
+        `EngineError` would let those escape into the settle timer's own
+        callback, where `last_error` is never set and the sensor keeps showing a stale
         answer with no sign that anything is wrong.
 
         The guards are inside the same `try` as the engine, and deliberately so:
@@ -447,18 +506,27 @@ class CoverLogicCoordinator:
         when = dt_util.utcnow() + dt.timedelta(seconds=seconds)
         self._unsub_recheck = async_track_point_in_utc_time(self.hass, self._handle_recheck, when)
 
-    @callback
-    def _handle_recheck(self, _now: dt.datetime) -> None:
-        """The recheck timer fired: evaluate again, through the same debouncer.
+    async def _handle_recheck(self, _now: dt.datetime) -> None:
+        """The recheck timer fired: evaluate now, not one settle window later.
 
-        Through the debouncer rather than straight into `_async_evaluate`, so a
-        recheck landing in the middle of a burst of state changes coalesces
-        with them instead of racing them.
+        The settle window is about *state-change-driven* evaluation. This timer
+        is the opposite case: it fires precisely because nothing is changing,
+        and it is counting down a guard's own deadline. Adding the window to it
+        would add that window to every deadline in the house, silently and
+        always in the direction of "the interlock released later than it said".
+
+        The one exception is a burst already in flight: then this returns and
+        lets the pending settle do the evaluation, because a `defer` released
+        against a half-applied world is the very defect the window exists for
+        -- and the wait is bounded, since that settle fires within
+        `EVAL_SETTLE_SECONDS` (`EVAL_SETTLE_MAX_SECONDS` at the outside) and
+        `_async_evaluate` re-arms this timer from whatever it finds. No wakeup
+        is lost by returning here.
         """
         self._unsub_recheck = None
-        if self._debouncer is None:
+        if not self._active or self._unsub_settle is not None:
             return
-        self._debouncer.async_schedule_call()
+        await self._async_evaluate()
 
 
 def _entity_ids(config: Config) -> set[str]:
@@ -497,7 +565,8 @@ def _directional_guard_blinds(config: Config) -> set[str]:
     movement would feed back as a recompute several times a second during a
     55-second travel. Only blinds a directional guard could actually judge are
     watched, which is none at all on a configuration with no directional
-    guards, and the debouncer plus the planner's dead band bound what is left.
+    guards, and the settle window plus the planner's dead band bound what is
+    left.
 
     An `input`-stage guard can never name a direction (`validation`'s
     `guard_input_direction`), so this only ever collects `output`-stage guards'

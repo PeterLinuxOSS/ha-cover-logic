@@ -21,8 +21,8 @@ Two things are asserted here that are asserted nowhere else:
   without touching a single watched entity.
 
 Uses `hass_factory` (a real, minimal `HomeAssistant`) for the reason
-`test_coordinator.py` gives: `async_track_state_change_event`, `Debouncer` and
-`async_call_later` all need genuine bus dispatch and genuine loop timers.
+`test_coordinator.py` gives: `async_track_state_change_event` and the settle
+and recheck timers all need genuine bus dispatch and genuine loop timers.
 """
 
 import asyncio
@@ -37,20 +37,16 @@ from cover_logic.const import (
     COMMAND_SUPPRESSED,
     COMMAND_WITHHELD,
     COMMAND_WOULD_CALL,
+    EVAL_SETTLE_SECONDS,
     OPT_DRY_RUN,
 )
-from cover_logic.coordinator import (
-    DEBOUNCE_COOLDOWN,
-    SOURCE_GUARD_TIMEOUT,
-    CoverLogicCoordinator,
-    _entity_ids,
-)
+from cover_logic.coordinator import SOURCE_GUARD_TIMEOUT, CoverLogicCoordinator, _entity_ids
 from cover_logic.guards import GuardError
 from cover_logic.model import KEEP, Action
 from cover_logic.sensor import CoverLogicModeSensor
 from cover_logic.validation import ERROR, validate
 
-_WAIT = DEBOUNCE_COOLDOWN + 0.3
+_WAIT = EVAL_SETTLE_SECONDS + 0.3
 
 BLIND = "cover.a"
 OTHER = "cover.b"
@@ -171,7 +167,7 @@ def _seed(hass, *, door="off", zavri="off", position=100):
 
 
 async def _settle(coordinator):
-    """Let the debounce, the evaluation and every queued sequence finish."""
+    """Let the settle window, the evaluation and every queued sequence finish."""
     await asyncio.sleep(_WAIT)
     await coordinator.runner.async_wait_idle()
 
@@ -760,7 +756,13 @@ def test_the_sensor_shows_the_executors_state_and_keeps_matica_diff(hass_factory
             _seed(hass, door="on", zavri="on")
             coordinator = CoverLogicCoordinator(hass, config(DEFER_GUARD), runtime_entry())
             await coordinator.async_setup()
-            await _settle(coordinator)
+            # Not `_settle()`: that sleeps one settle window (2s), which is
+            # longer than this guard's own `max_wait: 1` -- the deferral would
+            # have timed out and `last_command` would be the timeout's
+            # `would_call` instead of the suppression under test here. The
+            # startup evaluation is awaited by `async_setup` itself, so there
+            # is nothing to wait for beyond the runner going idle.
+            await coordinator.runner.async_wait_idle()
 
             sensor = CoverLogicModeSensor(coordinator, "entry1")
             sensor.hass = hass

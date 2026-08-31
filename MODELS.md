@@ -128,8 +128,17 @@ test:
   closing`/`opening` reads a position no condition mentions, and
   `referenced_entities(fixtures/dom_peter.yaml)` contains no `cover.*` entry at
   all — narrow on purpose, so the layer that decides does not end up listening
-  to the layer that moves), debounces bursts, and holds the last-known-good
-  `Decision` even through a failing evaluation. The guards are inside the same
+  to the layer that moves), **coalesces state-change-driven evaluation behind a
+  settle window** (`const.EVAL_SETTLE_SECONDS`, 2 s, restarted by every new
+  change and capped by `EVAL_SETTLE_MAX_SECONDS`; startup and the deferral
+  recheck timer are deliberately outside it), and holds the last-known-good
+  `Decision` even through a failing evaluation. The settle window is not a
+  performance knob: the house writes one transition as several state changes a
+  second apart (`svitanie` switches the night flag off and *then* resets the
+  per-room flags), and evaluating between them reads a world that never
+  existed — measured doing exactly that on 2026-08-31, deciding `tilt: 100` for
+  the occupied bedroom. See that constant's comment for the timeline and
+  `tests/ha/test_settle.py` for the reproduction. The guards are inside the same
   `try` as the engine: an interlock that cannot be honoured means dispatch
   nothing, never fall back to the unguarded decision. It owns the entry's
   `CommandLog`, `DeferralRegistry` and `CoverRunner`, arms the deferral

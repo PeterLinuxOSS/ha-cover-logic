@@ -33,6 +33,60 @@ CONFIG_ENTRY_VERSION = 2
 OPT_DRY_RUN = "dry_run"
 DEFAULT_DRY_RUN = True
 
+# ---------------------------------------------------------------------------
+# The settle window: how long `coordinator.py` waits after the *last* watched
+# state change before it evaluates.
+#
+# **This is not a performance knob. It is the fix for a measured defect.** On
+# 2026-08-31, on the live house (local times, from the log and from state
+# history):
+#
+#     05:34:25   input_boolean.cover_down             on -> off  (fires `svitanie`)
+#     05:34:26   cover_logic evaluated                -> spalna: tilt 100
+#     05:34:27   input_boolean.zaluzie_aktivna_spalna on -> off  (`svitanie` resets it)
+#
+# `svitanie` (`automation.zaluzie_prepocet_a_uplatnenie`, trigger id
+# `svitanie`) switches the night flag off and *then* resets the per-room "this
+# room is in use" flags -- two writes about one transition, a second apart. A
+# coordinator that re-evaluates on the first of them reads a world that never
+# really existed: night over, bedroom still in use. It decided `tilt: 100` for
+# `spalna`, i.e. open the parents' slats while they were asleep. Harmless only
+# because that morning was a `dry_run` day.
+#
+# Two seconds because that is what every automation in the house already uses
+# on this same event -- `svitanie`'s own trigger carries `for: {seconds: 2}`,
+# and the house's `CLAUDE.md` states the rule: "Dve automatizácie na tej istej
+# udalosti = preteky. Ak jedna mení stav, ktorý druhá číta, daj druhej krátky
+# `for:` (2 s stačí)." Matching that number rather than inventing one keeps the
+# old system and the new one absorbing the same bursts; a value below the
+# measured 1s gap would not fix the defect at all.
+#
+# `coordinator.py` restarts this window on every new change rather than
+# batching a fixed window from the first one: `svitanie` writes several
+# entities in sequence and the whole point is to evaluate after the *last* of
+# them, whenever that lands.
+#
+# Not to be confused with `planner.SETTLE_SECONDS`, which is also two seconds
+# and is a fact about the motors (a tilt command sent during travel is
+# discarded). Two unrelated waits; deliberately not shared.
+EVAL_SETTLE_SECONDS = 2.0
+# The cap on that restarting window, measured from the *first* change of a
+# burst. Restart-on-change is starvable: an entity that changes faster than the
+# window is never quiet, so without a cap a single flapping sensor makes the
+# integration deaf for as long as it flaps -- and this house has had exactly
+# that (a Hue occupancy sensor with `occupancy_timeout=0`, `CLAUDE.md`'s
+# "Kreslo senzor cuká").
+#
+# 10 s = five windows. It has to be comfortably wider than any real burst, or
+# it would fire in the middle of one and reintroduce the defect above: the
+# widest measured burst is `svitanie`'s own ~2 s, and a Home Assistant startup
+# state restore lands within tens of milliseconds of itself. It also has to be
+# short enough that nothing waits noticeably longer than it does today -- 10 s
+# is well under the ~10-minute weather recompute cadence and well under one
+# blind's ~55 s travel, so an evaluation forced out at the cap is never late
+# relative to anything the house actually does.
+EVAL_SETTLE_MAX_SECONDS = 10.0
+
 # Built-in condition types beyond the Home Assistant native set.
 COND_EVENT_TARGETS_ZONE = "event_targets_zone"
 COND_REF = "ref"

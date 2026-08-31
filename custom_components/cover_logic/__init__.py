@@ -328,7 +328,7 @@ async def async_unload_entry(hass: "HomeAssistant", entry: "CoverLogicConfigEntr
     before touching the coordinator at all, matching Home Assistant's own
     convention that an unload returning `False` leaves the entry's state
     untouched for a retry. Only once platforms are confirmed gone are the
-    coordinator's own subscription and any pending debounce torn down via
+    coordinator's own subscription and any pending settle torn down via
     `CoverLogicCoordinator.async_unload`. This exists so a config entry reload
     -- unload, then set up again -- re-reads the file both times and starts a
     fresh coordinator each time; see `async_setup_entry`'s docstring for why

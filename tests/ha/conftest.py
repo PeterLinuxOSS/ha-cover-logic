@@ -357,7 +357,7 @@ def hass_factory(tmp_path):
     """Factory for a real, minimal `homeassistant.core.HomeAssistant`.
 
     `test_coordinator.py` needs `async_track_state_change_event` and
-    `homeassistant.helpers.debounce.Debouncer` to genuinely dispatch events
+    `async_track_point_in_utc_time` to genuinely dispatch events
     and schedule timers -- both reach into `hass.bus`, `hass.data` and
     `hass.loop` deeply enough (keyed listener bookkeeping, `HassJob`
     dispatch, `loop.call_later`) that a `FakeHass` covering just `.states`,
@@ -377,8 +377,8 @@ def hass_factory(tmp_path):
     project's established async-test shape, e.g. `test_init.py`). The loop
     that ends up bound to `hass.loop` must be the same loop used for the
     rest of that test -- a `HomeAssistant` built in one `asyncio.run(...)`
-    call and used from a different one fails opaquely (the Debouncer's
-    `loop.call_later` binds the now-closed original loop) -- so a caller
+    call and used from a different one fails opaquely (a scheduled
+    timer's `loop.call_at` binds the now-closed original loop) -- so a caller
     must construct, use and call `await hass.async_stop(force=True)` on the
     instance all inside one `asyncio.run(...)` body. `force=True` is needed
     because `hass.state` never leaves `CoreState.not_running` here (nothing
