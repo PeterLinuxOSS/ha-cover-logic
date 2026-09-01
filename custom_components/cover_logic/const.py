@@ -75,10 +75,24 @@ DEFAULT_DRY_RUN = True
 # motors (a tilt command sent during travel is discarded). Two unrelated waits;
 # deliberately not shared.
 #
-# The longest `for:` on any trigger of the house automation that writes what
-# this integration reads: 5 s, on `kvety`
-# (`input_number.kvety_pozicia_zaluzie`). The 30 s and 5 min triggers are not
-# in this class -- they write long after their event, so nothing races.
+# The longest `for:` this window is *required* to outlast: 5 s, on `kvety`
+# (`input_number.kvety_pozicia_zaluzie`).
+#
+# It is not the longest such `for:` in the house, and an earlier version of
+# this comment wrongly said it was. There are 10 s, 30 s, 120 s, 300 s and
+# 600 s triggers on automations that write what this integration reads, and
+# they are in the same class -- one event wakes the automation's `for:` and
+# this window together. They are survivable for a different reason: their
+# intermediate world (event visible, room flag not yet written) resolves to
+# `position: keep, tilt: keep`, so nothing moves and the real decision happens
+# on the next evaluation. `tests/parity/test_settle_bound.py` inventories all
+# of them with a reason each, and fails when a new one appears.
+#
+# `svitanie` is the exception whose survival depends on this number rather
+# than on the rules: its 2 s delay must stay under the window, and on
+# 2026-09-01 it did not -- both were 2 s, the evaluation and the first flag
+# write landed on the same second, and the bedroom slats went to 100 while
+# people slept.
 SETTLE_MUST_OUTLAST_SECONDS = 5.0
 # Strictly longer than that, plus room for the writing automation's own run
 # time; still far under one blind's ~55 s travel, so nothing waits noticeably.
