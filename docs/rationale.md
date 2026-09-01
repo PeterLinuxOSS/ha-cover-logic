@@ -25,6 +25,54 @@ caller mutating the dict it passed in. This module exists to guarantee that
 one evaluation sees one consistent state, so that guarantee is enforced here
 rather than left to callers.
 
+## The `je_noc` condition
+
+### Why night is derived but the brake stays a helper
+
+`input_boolean.cover_down` was two unrelated things sharing one entity: the
+automation's "it is night now", and the user's own **"close everything, now"**
+— reachable by voice, and the highest-priority override in the whole matrix.
+Deriving the whole thing would have put the integration in competition with
+the person for their own emergency brake. So `je_noc` is an OR of the two: the
+sky, computed here, and the helper, which stays exactly as it was.
+
+That split is the point, and `test_the_manual_brake_still_forces_night_in_broad_daylight`
+exists to keep it: if `noc` ever starts depending on the sky alone, the user
+has lost the brake.
+
+**The two directions do not use the same sensor.** Measured over 14 days:
+the flag goes on at 19:26-19:32 — sunset to the minute, with lux still at
+2100-2400, so the sunset trigger wins the evening — and off at 05:26-05:34,
+which is 11-20 minutes *before* sunrise, on the lux threshold. In the dawn
+window both the set and the reset condition hold at once, so the old flag is
+genuinely history-dependent there: at dusk that same combination means night,
+at dawn it means day. No AND/OR of conditions can express "whichever fired
+most recently".
+
+What resolves it without a latch is that the reset is *predictable in time*:
+sunrise−15min reproduces it. Replaying the same 14 days:
+
+| morning boundary | disagreement | risky minutes | longest risky run |
+|---|---|---|---|
+| sunrise−10min | 0.88 % | 24 | 3 min |
+| **sunrise−15min** | **0.58 %** | **28** | **3 min** |
+| sunrise−20min | 0.37 % | 40 | 8 min |
+| sunrise−25min | 0.49 % | 84 | 13 min |
+
+−20min has the lowest total and was **not** chosen. The two error directions
+are not symmetric: saying "night" when the old flag said otherwise makes every
+zone `keep`, so nothing moves, while saying "day" too early lets the mode
+change before the house is meant to wake. Only the second can move a blind.
+−15min keeps that direction capped at three minutes; −20min lets it reach
+eight for a lower headline number.
+
+**The lux clause is absent here, and that is measured, not assumed.** Adding
+it changed the result by nothing at all (0.58 % either way), because the
+evening is decided by sunset and the morning by a threshold that
+sunrise−15min already reproduces. This is the opposite finding to `vecer`
+above, where dropping lux would have cost four overcast evenings — which is
+why each flag got its own replay rather than one conclusion applied to both.
+
 ## The `vecer` condition
 
 ### Why `vecer` reads the sky, and what the gate stops proving

@@ -7,8 +7,9 @@ import pytest
 from cover_logic.config_schema import load_config_file
 from cover_logic.const import RULE_DEFAULT_ZONE
 from cover_logic.engine import evaluate
+from cover_logic.model import KEEP
 from cover_logic.validation import validate
-from cover_logic.world import Event, World
+from cover_logic.world import Event, SunTimes, World
 
 NOW = dt.datetime(2026, 8, 19, 13, 0)
 
@@ -105,3 +106,59 @@ def test_every_blind_gets_an_action_in_every_mode(config):
         world = World(states={**CALM, **overrides}, attributes={}, now=NOW, event=Event())
         decision = evaluate(config, world)
         assert set(decision.targets) == set(config.blinds)
+
+
+# One ordinary day for this house: sunrise 05:50, sunset 19:26. Stated, never
+# computed, so these tests never depend on the astronomy they check against.
+DAY = dt.date(2026, 9, 1)
+SKY = SunTimes(sunrise=dt.datetime(2026, 9, 1, 5, 50), sunset=dt.datetime(2026, 9, 1, 19, 26))
+
+
+def _at(hour, minute=0, **overrides):
+    return World(
+        states={**CALM, **overrides},
+        attributes={},
+        now=dt.datetime(2026, 9, 1, hour, minute),
+        event=Event(),
+        sun=SKY,
+    )
+
+
+@pytest.mark.parametrize(
+    ("hour", "minute", "expected"),
+    [
+        (13, 0, "bezny_den"),  # midday
+        (19, 25, "bezny_den"),  # a minute before sunset
+        (19, 27, "noc"),  # a minute after it
+        (2, 0, "noc"),  # middle of the night
+        (5, 34, "noc"),  # sunrise-16min: still night
+        (5, 36, "bezny_den"),  # sunrise-14min: night is over
+    ],
+)
+def test_night_is_derived_from_the_sky_not_from_the_helper(config, hour, minute, expected):
+    """`cover_down` is `off` throughout `CALM`, so only the sky can say `noc`.
+
+    The morning boundary is 15 minutes before sunrise, and that offset is
+    measured rather than chosen: the helper this replaces went off 11-20 min
+    ahead of sunrise, on a lux threshold. See `docs/rationale.md`.
+    """
+    assert evaluate(config, _at(hour, minute)).mode == expected
+
+
+def test_the_manual_brake_still_forces_night_in_broad_daylight(config):
+    """The half of `cover_down` that stays a helper: a command, not a state.
+
+    Pinned separately from the derived half because the whole point of
+    splitting them is that the person can always win -- if this ever starts
+    depending on the sky, the user has lost their emergency brake.
+    """
+    assert evaluate(config, _at(13, 0)).mode == "bezny_den"
+    assert evaluate(config, _at(13, 0, **{"input_boolean.cover_down": "on"})).mode == "noc"
+
+
+def test_night_leaves_every_blind_alone(config):
+    """`noc` means nothing moves -- the brake would be useless otherwise."""
+    decision = evaluate(config, _at(2, 0))
+    assert all(
+        action.position is KEEP and action.tilt is KEEP for action in decision.targets.values()
+    )
