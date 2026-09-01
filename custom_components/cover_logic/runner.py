@@ -60,6 +60,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from enum import IntEnum
 import logging
+import time
 from typing import TYPE_CHECKING, Any
 import uuid
 
@@ -443,6 +444,22 @@ def _axis_value(value: int | None) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _now() -> float:
+    """The one clock this module reads, and it is monotonic on purpose.
+
+    An age that can go backwards when the host's wall clock is corrected is
+    worse than no age at all, and `time` keeps this module importable without
+    Home Assistant (see the module docstring). One function rather than three
+    call sites so a test can move time without touching the `time` module.
+    """
+    return time.monotonic()
+
+
+def _age(seconds: float) -> str:
+    """A duration for the queue view: `12s`, a string like every other field there."""
+    return f"{int(max(0.0, seconds))}s"
+
+
 @dataclass
 class _Request:
     """One asked-for movement. Not a `Plan` -- see the module docstring."""
@@ -543,6 +560,10 @@ class _Sequence:
         self.dry_run = dry_run
         self.plan = Plan()
         self.index = 0
+        # The one owner of "has `_run` computed this sequence's plan yet?". An
+        # empty `plan` cannot answer it: no commands is also a complete plan.
+        self.planned = False
+        self.started = _now()
         self.cancelled = asyncio.Event()
         self.task: asyncio.Task[None] | None = None
 
@@ -567,8 +588,12 @@ def _grace_for(sequence: _Sequence) -> float:
     returns immediately. Deriving 0.0 from its empty plan instead would abandon
     every sequence that had not started yet, which is the opposite of the rule
     this whole method exists to keep.
+
+    Asks `sequence.planned`, not `sequence.plan.commands`: "not planned yet" and
+    "planned, and there is nothing to do" are two different states, and reading
+    them off the same emptiness is the defect `in_flight` was reported for.
     """
-    if not sequence.plan.commands:
+    if not sequence.planned:
         return SHUTDOWN_GRACE_CAP
     return _remaining_seconds(sequence.plan, sequence.index)
 
@@ -580,6 +605,9 @@ class _BlindQueue:
         """Start empty."""
         self.running: _Sequence | None = None
         self.pending: _Request | None = None
+        # When the current occupant took the slot -- reset by every overwrite,
+        # which is why it lives on the slot and not on the request.
+        self.pending_since = 0.0
 
 
 class CoverRunner:
@@ -618,17 +646,25 @@ class CoverRunner:
         is answerable from the diagnostic sensor during the dry-run day, which
         is the one question the log genuinely cannot answer: a log says what
         already happened, and a queue is about what has not happened yet.
+
+        A sequence is listed only once it has a plan with at least one command
+        in it, and every entry carries its `age` -- see `docs/rationale.md`,
+        "Why `in_flight` only lists a sequence that has commands".
         """
+        now = _now()
         out: dict[str, dict[str, str]] = {}
         for entity, queue in sorted(self._queues.items()):
             view: dict[str, str] = {}
-            if queue.running is not None:
-                request = queue.running.request
+            running = queue.running
+            if running is not None and running.planned and running.plan.commands:
+                request = running.request
                 view["running"] = f"{request.priority.name}/{request.source or '-'}"
-                view["seq"] = queue.running.id
-                view["step"] = f"{queue.running.index}/{len(queue.running.plan.commands)}"
+                view["seq"] = running.id
+                view["step"] = f"{running.index}/{len(running.plan.commands)}"
+                view["age"] = _age(now - running.started)
             if queue.pending is not None:
                 view["waiting"] = f"{queue.pending.priority.name}/{queue.pending.source or '-'}"
+                view["waiting_age"] = _age(now - queue.pending_since)
             if view:
                 out[entity] = view
         return out
@@ -675,6 +711,7 @@ class CoverRunner:
             return
 
         queue.pending = request
+        queue.pending_since = _now()
         if verdict == CANCEL:
             # Never a bare `Task.cancel()`: the successor is already in the
             # slot, so the blind is guaranteed a complete sequence afterwards.
@@ -782,6 +819,7 @@ class CoverRunner:
             return
         computed = _carry_over_tilt(request.carried_tilt, computed, request.action)
         sequence.plan = computed
+        sequence.planned = True
 
         self._log_clamps(blind.entity, computed.clamps)
         for suppressed in _suppressions(blind, request.action, computed, position, tilt):

@@ -815,6 +815,49 @@ and it is correct in the way this one was not: a dry run's arrival waits
 *always* expire, because nothing is moving, so at `WARNING` they would drown out
 the real ones.
 
+### Why `in_flight` only lists a sequence that has commands
+
+`runner.in_flight` exists to answer one question: **which blind is hanging, and
+on what.** Measured on the live house on 2026-09-01 it answered a different one.
+`sensor.cover_logic_mode`'s `pending.queued` listed all eight to ten blinds, on
+every read, each as `running: SCHEDULED/coordinator, step: 0/0` -- while nothing
+was moving and every sequence had finished. Two reads 45 seconds apart shared not
+one `seq` id: the entries were not stuck, they were *newborn*.
+
+The cause is when the attribute is read, not what it holds. The coordinator
+builds `pending` inside the same evaluation that has just handed ten requests to
+the runner, so `in_flight` is read while every one of those sequences is still a
+task that has been created and not yet scheduled. `_Sequence.__init__` starts
+with `Plan()` and `index = 0`, so each of them reports `0/0` and then vanishes a
+tick later. The same `0/0` is also what a genuinely empty plan reports -- a dead
+band that suppressed both axes, or `keep`/`keep` -- and that sequence dispatches
+nothing and blocks nobody either.
+
+Both of those are the same fact from the reader's side: **a sequence with no
+commands to send is not something anyone needs to see in a queue view.** So
+`in_flight` lists a running sequence only once `_run` has computed its plan
+(`_Sequence.planned`) *and* that plan has at least one command. What remains
+listed is exactly what the attribute promised: a sequence that has real commands
+and has not finished them.
+
+That is only half of it, because "is this stuck?" was never answerable from a
+membership test alone -- an entry looks identical at one second old and at three
+hours old. Every entry therefore carries its own age: `age` for the running
+sequence, from the moment it started, and `waiting_age` for the request in the
+one waiting slot, from the moment it was queued. Both are strings (`12s`) rather
+than numbers, because this view is `dict[str, dict[str, str]]` by contract and a
+single typed exception would be the more surprising shape. Both clocks are
+`time.monotonic()`: an age that can go backwards when the host's wall clock is
+corrected is worse than no age at all, and a `hass`-free stdlib clock keeps this
+module importable without Home Assistant, which its own docstring requires.
+
+One duplication was removed in passing, because it was the same defect one
+function over: `_grace_for` also read "has this planned yet?" off
+`sequence.plan.commands` being empty, and so gave a planned-but-empty sequence
+the full 30-second shutdown cap on the reasoning that it had not started. It
+asks `sequence.planned` now. The grace is a *timeout*, and a sequence with
+nothing left to send returns immediately either way.
+
 ## `readiness.py`
 
 ### Why readiness is a veto and not a wait

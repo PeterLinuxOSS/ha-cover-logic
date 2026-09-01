@@ -807,3 +807,94 @@ def test_in_flight_reports_what_is_running_and_what_waits_behind_it(hass_factory
     assert views[0]["cover.a"]["running"] == "SCHEDULED/matrix"
     assert "waiting" not in views[0]["cover.a"]
     assert views[1]["cover.a"]["waiting"] == "SCHEDULED/voice"
+
+
+def test_in_flight_hides_a_sequence_that_has_nothing_to_send(hass_factory):
+    """The 2026-09-01 defect: eight blinds listed as `step: 0/0` while nothing moved.
+
+    `pending.queued` is read from inside the very evaluation that has just
+    handed the runner one request per blind, so every sequence is still a task
+    that was created and never scheduled: no plan, `index` 0, `0/0`. A
+    genuinely empty plan -- here both axes already inside the dead band --
+    reports the identical `0/0`. Neither is sending anything or blocking
+    anyone, so neither belongs in a view of what is queued.
+
+    Both reads below happen while the sequence still holds the slot: the first
+    in the same event-loop turn as the request (never scheduled), the second
+    after one yield (planned, and the plan is empty).
+    """
+    views = []
+
+    async def _run():
+        hass = hass_factory()
+        try:
+            # Already where it is being asked to go, so `plan()` emits nothing.
+            hass.states.async_set(
+                "cover.a", "closed", {"current_position": 0, "current_tilt_position": 0}
+            )
+            runner = _live_runner(hass, [])
+            await runner.async_apply(FAST, CLOSE, priority=Priority.SCHEDULED, source="coordinator")
+            views.append(runner.in_flight)
+            await asyncio.sleep(0)
+            views.append(runner.in_flight)
+            await runner.async_wait_idle()
+        finally:
+            await hass.async_stop(force=True)
+
+    asyncio.run(_run())
+
+    assert views == [{}, {}]
+
+
+class _Clock:
+    """A monotonic clock a test can move, standing in for `runner._now`."""
+
+    def __init__(self, now=1000.0):
+        self.now = now
+
+    def __call__(self):
+        return self.now
+
+    def advance(self, seconds):
+        self.now += seconds
+
+
+def test_in_flight_reports_how_long_each_entry_has_been_in_flight(hass_factory, monkeypatch):
+    """A blind stuck for three hours and one that started a second ago read identically.
+
+    Membership alone cannot answer "which blind is hanging": the entry looks
+    the same either way. So both halves carry their own age -- the running
+    sequence from when it started, the request in the waiting slot from when it
+    took the slot.
+    """
+    clock = _Clock()
+    monkeypatch.setattr("cover_logic.runner._now", clock)
+    views = []
+
+    async def _run():
+        hass = hass_factory()
+        try:
+            hass.states.async_set(
+                "cover.a", "open", {"current_position": 100, "current_tilt_position": 100}
+            )
+            runner = _live_runner(hass, [], arrives=False)
+            await runner.async_apply(SLOW, CLOSE, priority=Priority.SCHEDULED, source="matrix")
+            await asyncio.sleep(0.05)
+            clock.advance(7)
+            views.append(runner.in_flight)
+
+            await runner.async_apply(SLOW, OPEN, priority=Priority.SCHEDULED, source="voice")
+            clock.advance(3)
+            views.append(runner.in_flight)
+
+            await runner.async_shutdown(grace=0)
+        finally:
+            await hass.async_stop(force=True)
+
+    asyncio.run(_run())
+
+    # A frozen cover: the sequence really is stuck, mid-plan, and says so.
+    assert views[0]["cover.a"]["running"] == "SCHEDULED/matrix"
+    assert views[0]["cover.a"]["age"] == "7s"
+    assert views[1]["cover.a"]["age"] == "10s"
+    assert views[1]["cover.a"]["waiting_age"] == "3s"
