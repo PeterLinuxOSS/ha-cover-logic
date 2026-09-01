@@ -268,9 +268,9 @@ async def _async_import_config(hass: HomeAssistant, call: ServiceCall) -> Servic
 def _check_export_target_has_no_comments(path: Path) -> None:
     r"""Refuse to overwrite an existing file that contains whole-line comments.
 
-    Runs inside `hass.async_add_executor_job` -- unlike `_prepare_export_path`,
-    which only ever stats `path` and its parent, this reads file *content*,
-    the boundary that function's own docstring draws.
+    Runs inside `hass.async_add_executor_job`, as `_prepare_export_path`
+    before it does: that one only stats `path` and its parent, this reads file
+    *content*, and neither belongs on the event loop.
 
     Does nothing if `path` does not exist yet (a first export has nothing to
     lose) or is a directory/symlink (`_prepare_export_path` already refused
@@ -322,6 +322,9 @@ def _prepare_export_path(path_str: str) -> Path:
     reads or writes file content. See the module docstring's "Path safety"
     section for why a symlink is refused unconditionally, rather than only
     for one known-dangerous path.
+
+    Runs inside `hass.async_add_executor_job` all the same: a stat is still a
+    filesystem call, and the event loop is not where any of them belong.
     """
     path = Path(path_str)
     if path.is_symlink():
@@ -381,7 +384,7 @@ async def _async_export_config(hass: HomeAssistant, call: ServiceCall) -> Servic
             translation_placeholders={"error_detail": str(err)},
         ) from err
 
-    path = _prepare_export_path(path_str)
+    path = await hass.async_add_executor_job(_prepare_export_path, path_str)
     await hass.async_add_executor_job(_check_export_target_has_no_comments, path)
 
     try:

@@ -19,6 +19,11 @@ No Home Assistant import: `diff_configs` takes and returns plain values, and
 `repo_fixture_path` only ever touches `pathlib.Path` -- so both stay on the
 pure side of the split `tests/test_purity.py` enforces, and both run under
 system Python 3.12 with no `homeassistant` installed at all.
+
+That purity is also why the `repo_*_path` functions below cannot hop to an
+executor themselves: they stat the filesystem, which is blocking, but they
+have no `hass` to hop with. An event-loop caller owns that hop -- see
+`__init__._read_repo_fixture`.
 """
 
 from pathlib import Path
@@ -68,6 +73,8 @@ def repo_fixture_path() -> Path | None:
     drift from, and this project's own "universal integration" goal
     (`MODELS.md` Sec. 1) means that has to stay a silent no-op, not a startup
     failure for every other house that ever installs this integration.
+
+    Blocking (one stat): an event-loop caller must use an executor.
     """
     return _REPO_FIXTURE if _REPO_FIXTURE.is_file() else None
 
@@ -90,5 +97,7 @@ def repo_example_config_path() -> Path | None:
     that step turns it into a plain "not available on this install" message
     rather than a crash, precisely because most installs are expected to hit
     it.
+
+    Blocking (one stat): an event-loop caller must use an executor.
     """
     return _REPO_EXAMPLE_CONFIG if _REPO_EXAMPLE_CONFIG.is_file() else None

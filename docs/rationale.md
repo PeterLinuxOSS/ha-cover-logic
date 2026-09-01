@@ -91,6 +91,38 @@ and `_check_rule_keys` accepts it, because splitting on the first dot happens
 to name two ids that both exist. Rejecting the dot at parse time is cheaper
 than making the join unambiguous.
 
+### Why `load_config_file` stays blocking and the caller owns the executor hop
+
+Home Assistant's `block_async_io` caught this integration reading its own
+configuration on the event loop: two `Detected blocking call` warnings on every
+start, for `read_text` and for the `open` beneath it, both naming
+`fixtures/dom_peter.yaml`. The obvious repair -- make `load_config_file` async
+and hop internally -- is the wrong one, and for the reason the whole project is
+built around: this module has no `homeassistant` import, `tests/test_purity.py`
+enforces that, and the executor lives on `hass`. Taking `hass` here to fix a
+warning would trade the property that lets the decision model be tested as
+plain Python for a matter of convenience.
+
+So the split follows ownership: the pure side stays blocking and says so, and
+every event-loop caller wraps it in `hass.async_add_executor_job`. The same
+holds for `conformance.repo_fixture_path` and `repo_example_config_path`, which
+look free but each `stat` the filesystem -- HA counts those too, and being one
+syscall rather than a read makes them easier to miss, not cheaper.
+
+One consequence worth naming: `__init__._read_repo_fixture` deliberately
+bundles the `stat` and the read into a *single* executor hop instead of two.
+They concern one file and one question ("does this checkout ship a fixture, and
+what is in it"), and two hops would let the file change between them -- a race
+that buys nothing.
+
+The regression test guards the *calling thread*, not a call count:
+`Path.read_text`, `Path.is_file` and `builtins.open` record any invocation that
+reaches them on the thread awaiting setup. It is scoped to paths inside this
+checkout, because `builtins.open` is patched process-wide while the guard is
+armed and Home Assistant does plenty of legitimate loop I/O of its own -- an
+unscoped guard would fail for reasons that have nothing to do with this
+integration.
+
 ### Why condition bodies are exempt from strict key checking
 
 `_check_keys` is only ever called on structures this module owns the schema

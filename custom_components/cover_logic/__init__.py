@@ -25,6 +25,7 @@ imports, not just this module's own tests.
 
 from dataclasses import dataclass
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .config_schema import ConfigError, load_config_file
@@ -127,7 +128,7 @@ async def async_setup_entry(hass: "HomeAssistant", entry: "CoverLogicConfigEntry
         # Only meaningful once subentries are the source of truth -- see
         # that function's own docstring for why a still-legacy, path-based
         # entry (the `if` branch above) has nothing of this kind to check.
-        _check_fixture_conformance(hass, config)
+        await _check_fixture_conformance(hass, config)
 
     problems = validate(config)
     errors = [problem for problem in problems if problem.severity == ERROR]
@@ -165,7 +166,27 @@ async def async_setup_entry(hass: "HomeAssistant", entry: "CoverLogicConfigEntry
     return True
 
 
-def _check_fixture_conformance(hass: "HomeAssistant", config: Config) -> None:
+def _read_repo_fixture() -> tuple[Path | None, Config | None]:
+    """Resolve and parse this checkout's own fixture. Blocking: executor only.
+
+    Both halves touch the filesystem -- `repo_fixture_path` stats the path,
+    `load_config_file` reads and parses it -- so they travel to the executor
+    thread together, in one hop, rather than as two `async_add_executor_job`
+    calls around the same file. A non-`None` path with a `None` config means
+    the fixture is there but unreadable or unparsable; see
+    `_check_fixture_conformance` for why that is treated exactly like "no
+    fixture here at all".
+    """
+    fixture = repo_fixture_path()
+    if fixture is None:
+        return None, None
+    try:
+        return fixture, load_config_file(fixture)
+    except (ConfigError, OSError):
+        return fixture, None
+
+
+async def _check_fixture_conformance(hass: "HomeAssistant", config: Config) -> None:
     """Raise or clear the `fixture_drift` repair issue for this checkout's own fixture.
 
     A no-op everywhere `conformance.repo_fixture_path()` returns `None` -- see
@@ -188,23 +209,24 @@ def _check_fixture_conformance(hass: "HomeAssistant", config: Config) -> None:
     as opposed to `tests/parity/test_subentry_conformance.py`'s dev-time
     version of the same check -- see that module's docstring for why both
     exist instead of just one.
+
+    Async because reading the fixture is blocking I/O and this runs on the
+    event loop: `_read_repo_fixture` goes through `hass.async_add_executor_job`,
+    the same reasoning as this module's `async_setup_entry` and
+    `config_flow._describe_problems` -- `Path.read_text` and the `open` under
+    it are both on Home Assistant's own `block_async_io` list, so a direct
+    call here logged two "Detected blocking call" warnings on every start.
     """
     # Deferred: see the module docstring for why this cannot be a top-level
     # import.
     from homeassistant.helpers import issue_registry as ir  # noqa: PLC0415
 
-    fixture = repo_fixture_path()
-    if fixture is None:
-        ir.async_delete_issue(hass, DOMAIN, _FIXTURE_DRIFT_ISSUE)
-        return
-
-    try:
-        reference = load_config_file(fixture)
-    except (ConfigError, OSError):
-        # The fixture's own health is `tests/test_fixture_dom_peter.py`'s
-        # job, not this check's -- a broken fixture is not evidence that the
-        # *live* configuration drifted from it, so this clears rather than
-        # raises the issue.
+    fixture, reference = await hass.async_add_executor_job(_read_repo_fixture)
+    if reference is None:
+        # No fixture here at all, or one that no longer parses -- the
+        # fixture's own health is `tests/test_fixture_dom_peter.py`'s job, and
+        # neither case is evidence the *live* configuration drifted, so both
+        # clear rather than raise the issue.
         ir.async_delete_issue(hass, DOMAIN, _FIXTURE_DRIFT_ISSUE)
         return
 
