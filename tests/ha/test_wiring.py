@@ -40,7 +40,6 @@ from cover_logic.const import (
     COMMAND_SUPPRESSED,
     COMMAND_WITHHELD,
     COMMAND_WOULD_CALL,
-    EVAL_SETTLE_SECONDS,
     OPT_DRY_RUN,
 )
 from cover_logic.coordinator import SOURCE_GUARD_TIMEOUT, CoverLogicCoordinator, _entity_ids
@@ -49,7 +48,13 @@ from cover_logic.model import KEEP, Action
 from cover_logic.sensor import CoverLogicModeSensor
 from cover_logic.validation import ERROR, validate
 
-_WAIT = EVAL_SETTLE_SECONDS + 0.3
+from .conftest import SHORT_SETTLE_SECONDS
+
+# What is under test here is the path, not the window's length; `test_settle.py`
+# owns the latter and waits out the real 8 s constant.
+pytestmark = pytest.mark.usefixtures("short_settle_window")
+
+_WAIT = SHORT_SETTLE_SECONDS + 0.3
 
 BLIND = "cover.a"
 OTHER = "cover.b"

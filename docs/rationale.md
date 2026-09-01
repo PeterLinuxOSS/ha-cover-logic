@@ -682,6 +682,80 @@ a service call in a sequence for the same reason.
 `return_response` stays at its default: a `cover.*` service returns nothing,
 and asking for a response from a service that has none is an error.
 
+### Why the settle window must outlast the house's own `for:`
+
+The settle window was two seconds because `svitanie`'s own trigger is
+`for: {seconds: 2}` and copying the house's number seemed safer than inventing
+one. It is the opposite. Two reactions to the same event with the same delay
+are not ordered by anything; they are a coin flip, decided by whichever timer
+the event loop happens to reach first. On 2026-09-01, on the live house, it
+lost:
+
+    05:34:33  input_boolean.cover_down             on -> off  (fires `svitanie`)
+    05:34:35  input_boolean.zaluzie_aktivna_spalna on -> off  (`svitanie` resets it)
+    05:34:35  cover_logic  SetTilt(100) -> cover.open_cover_tilt, both bedroom blinds
+
+The mode was `horucava`, where `spalna` rule 4 (`nie_akt_spalna ->
+{position: keep, tilt: keep}`) means "the room is in use, do not touch it". At
+the instant the window expired the room flag was still `on`, rule 4 did not
+match, and evaluation fell through to rule 5 (`pocasie_otvorene -> tilt: 100`).
+One second later the same evaluation would have moved nothing. This is the
+2026-08-31 defect again, at a longer gap: the window is not a debounce, it is
+the thing that decides *which world* the engine is asked about.
+
+**The rule, which is what actually generalises:** the settle window must be
+strictly longer than the longest `for:` on any automation that writes an entity
+this integration reads. A window equal to that `for:` is a tie; a window shorter
+than it guarantees the wrong world. Nothing about "two seconds" was ever the
+reason — the reason was "long enough to be second".
+
+Measured on the house's own writer, `automation.zaluzie_prepocet_a_uplatnenie`
+(id `1785400000001`), which is what produces every entity `fixtures/dom_peter.yaml`
+reads. Its triggers carry, by `for:`:
+
+- **2 s** — `svitanie`, `ochrana`, `alarm` (x2), `pocasie`, `slnko`, `priznak`,
+  `strana` (x4)
+- **5 s** — `kvety` (`input_number.kvety_pozicia_zaluzie`)
+- 30 s — the four `prichod-*`; 5 min — `odchod`, `postel`
+
+`const.SETTLE_MUST_OUTLAST_SECONDS` is that 5, named rather than commented so
+`tests/ha/test_settle.py` can assert the relationship instead of a future reader
+having to re-derive it.
+
+**The 30 s and 5 min triggers are deliberately not in this class, and a future
+reader must not "fix" the window up to five minutes.** What makes a `for:`
+collide is that it delays a write *about the event this integration is also
+reacting to* — the two clocks start together and can therefore tie. A trigger
+that waits 30 s for a presence flag, or 5 minutes for "everyone left", is not
+writing about the state change we are settling; its write is its own event, and
+it starts its own window when it lands. Raising the window to cover those would
+buy nothing and make every reaction in the house five minutes late.
+
+**Eight seconds, not six.** The write we must outlast lands at
+`for:` + the writing automation's own run time — a template recompute, a
+`choose`, and a service call, which on this host is comfortably under a second
+but is not zero and is not bounded by anything we control. Five plus three is a
+margin over that, not over the `for:` alone. The upper bound is what it costs
+(below), and eight seconds is far under one blind's ~55 s travel and the
+~10-minute weather recompute cadence, so nothing physical waits on it.
+
+**Thirty seconds for the cap, not ten.** The cap is measured from the *first*
+change of a burst and never moves, so a cap close to the window makes the cap —
+a fixed window from the first write — the thing that decides when evaluation
+happens, which is precisely the shape `_schedule_settle` exists to avoid. At the
+old 10 s a single restart of an 8 s window already hits it. The case the cap has
+to clear is the chained one: a write, a `for:`-delayed write behind it, and a
+full window after that — 8 + 5 + 8 = 21 s. Thirty clears it with margin.
+The original comment's "five windows" ratio would give 40; the ratio was never
+the reason, and the extra ten seconds buy no additional covered case while
+paying for themselves in deafness under a flapping sensor.
+
+**What this costs, stated plainly.** Every reaction to a state change is now up
+to 8 s later than it was, and up to 30 s while an input is flapping. The
+diagnostic sensor is blank for one window after every reload rather than two
+seconds. Against that: the alternative is a coin flip whose losing side opens
+the slats over sleeping people, which the house has now paid twice.
+
 ### Why startup is no longer exempt from the settle window
 
 The settle window landed with one exemption, written into `async_setup`'s own

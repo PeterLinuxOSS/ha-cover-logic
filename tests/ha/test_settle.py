@@ -18,7 +18,22 @@ own trigger carries `for: {seconds: 2}`; the house's `CLAUDE.md` states the rule
 outright ("Dve automatizácie na tej istej udalosti = preteky ... daj druhej
 krátky `for:` (2 s stačí)").
 
-The three tests that matter here, and what each would catch:
+**And because of a second one, which the window as first written did not
+survive.** On 2026-09-01, same event, same bedroom, mode `horucava`:
+
+    05:34:33   input_boolean.cover_down             on -> off   (fires `svitanie`)
+    05:34:35   input_boolean.zaluzie_aktivna_spalna on -> off   (`svitanie` resets it)
+    05:34:35   cover_logic  SetTilt(100) -> cover.open_cover_tilt, both blinds
+
+The window was 2.0 s and `svitanie`'s own trigger carries `for: {seconds: 2}` --
+two reactions to one event with the same delay, which is a coin flip and not an
+ordering. The rule that replaced the copied number: the window must be strictly
+longer than the longest `for:` on any automation that writes an entity this
+integration reads (`const.SETTLE_MUST_OUTLAST_SECONDS`, measured at 5 s on
+`kvety`). See `docs/rationale.md` -- "Why the settle window must outlast the
+house's own `for:`".
+
+The tests that matter here, and what each would catch:
 
 - `test_svitanie_is_evaluated_on_the_settled_world` reproduces the timeline
   above and asserts the decision is `keep`, not `tilt 100`. It fails against a
@@ -33,6 +48,18 @@ The three tests that matter here, and what each would catch:
   `svitanie` (the writes are 1s apart, the window is 2s), so the timeline test
   alone does not pin down which was implemented. `svitanie`'s point is to
   evaluate after the *last* write, whenever that lands.
+- `test_horucava_morning_is_evaluated_on_the_settled_world` reproduces the
+  2026-09-01 timeline at its measured 2 s gap, and fails at any window that
+  merely ties `svitanie`'s `for:`. Its counter,
+  `test_the_unsettled_horucava_world_really_would_have_tilted_it_open`, is what
+  keeps it from passing because rule 5 stopped being reachable.
+- `test_the_window_outlasts_every_for_it_must_beat` is the general form: the
+  length is not "two seconds", it is "more than the longest `for:` we race".
+
+The two measured-timeline tests, and only those, wait out the *real*
+`EVAL_SETTLE_SECONDS`. Everything else here shrinks it, because what those test
+is the timer's shape; a test about the length that does not use the length is
+not evidence of anything.
 
 Uses `hass_factory` (a real, minimal `HomeAssistant`) for the reason
 `test_coordinator.py` gives: `async_track_state_change_event` and
@@ -48,7 +75,12 @@ import pytest
 pytest.importorskip("homeassistant")
 
 from cover_logic.config_schema import load_config
-from cover_logic.const import COMMAND_WOULD_CALL, EVAL_SETTLE_MAX_SECONDS, EVAL_SETTLE_SECONDS
+from cover_logic.const import (
+    COMMAND_WOULD_CALL,
+    EVAL_SETTLE_MAX_SECONDS,
+    EVAL_SETTLE_SECONDS,
+    SETTLE_MUST_OUTLAST_SECONDS,
+)
 from cover_logic.coordinator import (
     SOURCE_GUARD_TIMEOUT,
     CoverLogicCoordinator,
@@ -60,6 +92,10 @@ from cover_logic.validation import ERROR, validate
 BLIND = "cover.spalna_zaluzia_2"
 COVER_DOWN = "input_boolean.cover_down"
 ROOM_ACTIVE = "input_boolean.zaluzie_aktivna_spalna"
+HEAT = "input_boolean.teplotna_ochrana_dom"
+
+# The gap `svitanie` left between its two writes on 2026-09-01, to the second.
+SVITANIE_GAP_SECONDS = 2.0
 
 # The two writes `svitanie` makes, as a configuration: the night switch chooses
 # the mode, the room flag chooses the action inside it. Deliberately the same
@@ -113,11 +149,65 @@ guards:
 """
 
 
+# The 2026-09-01 morning, as a configuration. Two differences from `BASE`, both
+# taken from the live house: the mode `cover_down` hands over to is `horucava`
+# (chosen by the heat-protection helper), and the room-flag rule has the
+# house's own polarity -- "room *not* active -> keep" first, "the weather says
+# open" behind it. That polarity is the defect's shape: a flag read one instant
+# too early does not match the protective rule and falls *through* to the
+# opening one.
+HORUCAVA = """
+blinds:
+  - entity: cover.spalna_zaluzia_2
+    travel_time: 0.2
+zones:
+  spalna:
+    members: [cover.spalna_zaluzia_2]
+conditions:
+  nocny_rezim:
+    condition: state
+    entity_id: input_boolean.cover_down
+    state: "on"
+  horuco:
+    condition: state
+    entity_id: input_boolean.teplotna_ochrana_dom
+    state: "on"
+  nie_akt_spalna:
+    condition: not
+    conditions:
+      - condition: state
+        entity_id: input_boolean.zaluzie_aktivna_spalna
+        state: "on"
+modes:
+  - id: noc
+    when: !ref nocny_rezim
+  - id: horucava
+    when: !ref horuco
+  - id: bezny_den
+rules:
+  noc.spalna:
+    - then: {position: keep, tilt: keep}
+  horucava.spalna:
+    - name: rule 4 -- izba nie je aktivna
+      if: !ref nie_akt_spalna
+      then: {position: keep, tilt: keep}
+    - name: rule 5 -- pocasie otvorene
+      then: {tilt: 100}
+  bezny_den.spalna:
+    - then: {position: keep, tilt: keep}
+"""
+
+
+def parsed(text):
+    """Parse `text`, refusing anything this project would not accept."""
+    config_ = load_config(text)
+    assert [p for p in validate(config_) if p.severity == ERROR] == []
+    return config_
+
+
 def config(extra=""):
     """Parse `BASE + extra`, refusing anything this project would not accept."""
-    parsed = load_config(BASE + extra)
-    assert [p for p in validate(parsed) if p.severity == ERROR] == []
-    return parsed
+    return parsed(BASE + extra)
 
 
 @pytest.fixture(autouse=True)
@@ -260,6 +350,111 @@ def test_the_unsettled_world_really_would_have_tilted_it_open(
 
 
 # ---------------------------------------------------------------------------
+# The same morning again, at the gap that beat a 2 s window.
+# ---------------------------------------------------------------------------
+
+
+def _seed_horucava(hass, *, cover_down="on", room_active="on"):
+    """The world just before `svitanie` on the morning of 2026-09-01.
+
+    Same as `_seed` plus the heat-protection helper the owner had switched on,
+    which is what makes `cover_down` going off land in `horucava` rather than
+    in the catch-all.
+    """
+    _seed(hass, cover_down=cover_down, room_active=room_active)
+    hass.states.async_set(HEAT, "on")
+
+
+def test_horucava_morning_is_evaluated_on_the_settled_world(
+    hass_factory, runtime_entry, monkeypatch
+):
+    """`cover_down` off at T, the room flag off at T+2s: one evaluation, and it sees both.
+
+    **Fails at `EVAL_SETTLE_SECONDS = 2.0`**, which is the point of it: a window
+    equal to `svitanie`'s own `for: {seconds: 2}` is a coin flip between two
+    reactions to one event, and on the live house it came up `tilt: 100` for a
+    bedroom whose occupants were asleep. The real constant is used deliberately
+    -- shrink it here and this stops being evidence about the length at all.
+    """
+    seen = _counting_evaluate(monkeypatch)
+
+    async def _run():
+        hass = hass_factory()
+        try:
+            _seed_horucava(hass)
+            coordinator = CoverLogicCoordinator(hass, parsed(HORUCAVA), runtime_entry())
+            await coordinator.async_setup()
+            await asyncio.sleep(EVAL_SETTLE_SECONDS + 0.5)
+            assert coordinator.decision.mode == "noc"  # counter: the night, before svitanie
+            seen.clear()
+
+            hass.states.async_set(COVER_DOWN, "off")
+            await asyncio.sleep(SVITANIE_GAP_SECONDS)
+            hass.states.async_set(ROOM_ACTIVE, "off")
+            await asyncio.sleep(EVAL_SETTLE_SECONDS + 0.5)
+            await coordinator.runner.async_wait_idle()
+
+            # One evaluation for two writes about one transition -- and the
+            # world it read had *both* of them. A window that merely ties the
+            # gap gets two, the first of them on a world that never existed.
+            assert len(seen) == 1, [(w.state(COVER_DOWN), w.state(ROOM_ACTIVE)) for w in seen]
+            assert seen[0].state(COVER_DOWN) == "off"
+            assert seen[0].state(ROOM_ACTIVE) == "off"
+
+            # Counter: the mode really did change, so "nothing moved" is not
+            # "nothing happened" -- rule 4 matched, which is what keep means.
+            assert coordinator.decision.mode == "horucava"
+            assert coordinator.decision.targets[BLIND].tilt is KEEP
+            assert coordinator.decision.targets[BLIND].position is KEEP
+            assert _would_call(coordinator) == []
+
+            await coordinator.async_unload()
+        finally:
+            await hass.async_stop(force=True)
+
+    asyncio.run(_run())
+
+
+def test_the_unsettled_horucava_world_really_would_have_tilted_it_open(
+    hass_factory, runtime_entry, monkeypatch
+):
+    """The counter: with the flag still on, `horucava` rule 5 opens the slats.
+
+    Without this, the test above would go green on a configuration where rule 5
+    had become unreachable -- a renamed helper, a mistyped mode -- and would be
+    proving that nothing can move rather than that the settled world was read.
+    """
+    seen = _counting_evaluate(monkeypatch)
+
+    async def _run():
+        hass = hass_factory()
+        try:
+            _seed_horucava(hass)
+            coordinator = CoverLogicCoordinator(hass, parsed(HORUCAVA), runtime_entry())
+            await coordinator.async_setup()
+            await asyncio.sleep(EVAL_SETTLE_SECONDS + 0.5)
+            seen.clear()
+
+            # The same trigger, and the room flag deliberately never reset --
+            # i.e. exactly the world a too-short window reads at T+2s.
+            hass.states.async_set(COVER_DOWN, "off")
+            await asyncio.sleep(EVAL_SETTLE_SECONDS + 0.5)
+            await coordinator.runner.async_wait_idle()
+
+            assert len(seen) == 1
+            assert seen[0].state(ROOM_ACTIVE) == "on"
+            assert coordinator.decision.mode == "horucava"
+            assert coordinator.decision.targets[BLIND].tilt == 100
+            assert _would_call(coordinator) == ["cover.open_cover_tilt"]
+
+            await coordinator.async_unload()
+        finally:
+            await hass.async_stop(force=True)
+
+    asyncio.run(_run())
+
+
+# ---------------------------------------------------------------------------
 # Restart-on-change, not a fixed window.
 # ---------------------------------------------------------------------------
 
@@ -312,8 +507,14 @@ def test_a_change_inside_the_window_postpones_the_evaluation(
     asyncio.run(_run())
 
 
-def test_a_burst_of_five_changes_is_one_evaluation(hass_factory, runtime_entry, monkeypatch):
-    """Five writes in the same event-loop turn produce one engine call, not five."""
+def test_a_burst_of_five_changes_is_one_evaluation(
+    hass_factory, runtime_entry, monkeypatch, short_settle_window
+):
+    """Five writes in the same event-loop turn produce one engine call, not five.
+
+    Coalescing, not length: the window is shrunk here, and the writes are in
+    one loop turn so no plausible window separates them.
+    """
     seen = _counting_evaluate(monkeypatch)
 
     async def _run():
@@ -399,9 +600,34 @@ def test_a_flapping_entity_cannot_postpone_the_evaluation_forever(
 def test_the_cap_is_wider_than_the_window() -> None:
     """A cap at or below the window would make every evaluation fire at the cap."""
     assert EVAL_SETTLE_MAX_SECONDS > EVAL_SETTLE_SECONDS
-    # The measured gap between `svitanie`'s two writes is one second; a window
-    # shorter than that is the defect this module exists for.
-    assert EVAL_SETTLE_SECONDS >= 2.0
+    # And not merely wider: the cap runs from the *first* change of a burst, so
+    # one that permits fewer than two windows is a fixed window in disguise --
+    # the shape `_schedule_settle` exists to avoid. The case it must clear is
+    # the chained one: a write, a `for:`-delayed write behind it, and a full
+    # window after that.
+    assert EVAL_SETTLE_MAX_SECONDS >= 2 * EVAL_SETTLE_SECONDS + SETTLE_MUST_OUTLAST_SECONDS
+
+
+def test_the_window_outlasts_every_for_it_must_beat() -> None:
+    """Strictly longer than the longest `for:` on any automation that writes what we read.
+
+    Equality is not enough, and that is the whole finding of 2026-09-01: the
+    window was 2.0 s, `svitanie`'s trigger is `for: {seconds: 2}`, and two
+    reactions to one event with the same delay are decided by whichever timer
+    the loop reaches first. Strictly greater is an ordering; equal is a toss.
+    """
+    assert EVAL_SETTLE_SECONDS > SETTLE_MUST_OUTLAST_SECONDS
+    # Counter: the number being beaten is the measured 5 s (`kvety`,
+    # `input_number.kvety_pozicia_zaluzie`), not something small enough that
+    # any window at all would clear it -- and it is strictly greater than the
+    # 2 s that ten of that automation's triggers use, so it really is the
+    # longest of the colliding ones.
+    assert SETTLE_MUST_OUTLAST_SECONDS == 5.0
+    assert SETTLE_MUST_OUTLAST_SECONDS > 2.0
+    # The window must also leave room for the writing automation's own run
+    # time -- the write lands at `for:` plus a template recompute and a service
+    # call, not at `for:` exactly.
+    assert EVAL_SETTLE_SECONDS - SETTLE_MUST_OUTLAST_SECONDS >= 1.0
 
 
 # ---------------------------------------------------------------------------

@@ -148,8 +148,8 @@ test:
   `referenced_entities(fixtures/dom_peter.yaml)` contains no `cover.*` entry at
   all — narrow on purpose, so the layer that decides does not end up listening
   to the layer that moves), **coalesces state-change-driven evaluation behind a
-  settle window** (`const.EVAL_SETTLE_SECONDS`, 2 s, restarted by every new
-  change and capped by `EVAL_SETTLE_MAX_SECONDS`; the deferral recheck timer is
+  settle window** (`const.EVAL_SETTLE_SECONDS`, 8 s, restarted by every new
+  change and capped by `EVAL_SETTLE_MAX_SECONDS`, 30 s; the deferral recheck timer is
   deliberately outside it, **startup no longer is** -- see `docs/rationale.md`,
   "Why startup is no longer exempt from the settle window"), and holds the
   last-known-good
@@ -158,8 +158,13 @@ test:
   second apart (`svitanie` switches the night flag off and *then* resets the
   per-room flags), and evaluating between them reads a world that never
   existed — measured doing exactly that on 2026-08-31, deciding `tilt: 100` for
-  the occupied bedroom. See that constant's comment for the timeline and
-  `tests/ha/test_settle.py` for the reproduction. The guards are inside the same
+  the occupied bedroom, and again on 2026-09-01 when the window merely *tied*
+  the writing automation's own `for:`. Hence the rule the length now follows:
+  strictly longer than the longest `for:` on any automation that writes an
+  entity this integration reads (`const.SETTLE_MUST_OUTLAST_SECONDS`, asserted
+  in `tests/ha/test_settle.py`, argued in `docs/rationale.md` — "Why the settle
+  window must outlast the house's own `for:`"). See that constant's comment for
+  both timelines and `tests/ha/test_settle.py` for the reproduction. The guards are inside the same
   `try` as the engine: an interlock that cannot be honoured means dispatch
   nothing, never fall back to the unguarded decision. `readiness.assess` runs in
   that same `try`, on that same snapshot, and `_apply` -- the one funnel both

@@ -11,7 +11,8 @@ full reasoning.
 
 The settle window these tests wait out is `const.EVAL_SETTLE_SECONDS`, and
 `tests/ha/test_settle.py` is where its length and its restart-on-change shape
-are actually asserted; here it is only a delay to wait past.
+are actually asserted; here it is only a delay to wait past, so it is shrunk to
+`conftest.SHORT_SETTLE_SECONDS` for every test in this module.
 """
 
 import asyncio
@@ -22,14 +23,19 @@ pytest.importorskip("homeassistant")
 
 from homeassistant.core import EVENT_STATE_CHANGED
 
-from cover_logic.const import EVAL_SETTLE_SECONDS
 from cover_logic.coordinator import CoverLogicCoordinator, evaluate as real_evaluate
 from cover_logic.engine import EngineError
+
+from .conftest import SHORT_SETTLE_SECONDS
+
+# Every test here is about what the coordinator does, not how long it waits
+# first; the real 8 s window belongs to `test_settle.py`.
+pytestmark = pytest.mark.usefixtures("short_settle_window")
 
 # Comfortably more than one settle window: enough for a pending evaluation to
 # have fired if it was going to, or -- in the negative tests -- long enough
 # that its *absence* is a real assertion, not a race against the clock.
-_WAIT = EVAL_SETTLE_SECONDS + 0.2
+_WAIT = SHORT_SETTLE_SECONDS + 0.2
 
 
 def _counting_evaluate(monkeypatch):
