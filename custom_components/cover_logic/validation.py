@@ -23,8 +23,9 @@ from .const import (
     GUARD_TIMEOUTS,
     RULE_DEFAULT_ZONE,
 )
+from .engine import EngineError, resolve_ownership
 from .guards import guard_blinds
-from .model import UNSET, Config, Guard
+from .model import KEEP, UNSET, Config, Guard
 
 ERROR = "error"
 WARNING = "warning"
@@ -112,6 +113,7 @@ def validate(config: Config) -> list[Problem]:
     problems += _check_circular_condition_refs(config)
     problems += _check_unknown_condition_refs(config)
     problems += _check_condition_shapes(config)
+    problems += _check_tilt_on_tiltless_blinds(config)
     return problems
 
 
@@ -145,6 +147,72 @@ def _check_blinds(config: Config) -> list[Problem]:
         for entity, blind in config.blinds.items()
         if not blind.travel_time > 0
     ]
+
+
+def _check_tilt_on_tiltless_blinds(config: Config) -> list[Problem]:
+    """A rule that sets `tilt` on a blind that has none is a no-op, and says nothing.
+
+    `planner.plan` gates the tilt half on `blind.has_tilt`, so the command is
+    simply never issued. That is the right runtime behaviour -- there is no
+    slat to move -- but nothing tells the author, so a configuration that looks
+    like it sets the slats quietly does not. In this house every blind has
+    tilt, so the check is inert; the install it matters to is the one that does
+    not, which is the whole point of phase 7.
+
+    `WARNING`, not `ERROR`: the configuration works, it just does less than it
+    reads as. Ownership comes from `engine.resolve_ownership`, the one
+    implementation of "which zone owns this blind", rather than a second walk
+    over `zones` -- see `MODELS.md`'s rule about sorts that decide behaviour.
+    That function *raises* on a broken ownership map, so this one has to catch
+    it: `validate` exists to report on malformed configurations and must never
+    fail on one.
+    """
+    try:
+        owner_of = resolve_ownership(config)
+    except EngineError:
+        # Ownership is broken (an orphan, or a blind in two zones), which
+        # `_check_ownership` has already reported by the time this runs. This
+        # check has nothing to add about a configuration that cannot say which
+        # zone decides a blind -- and it must not raise, because reporting on
+        # exactly this kind of configuration is what `validate` is for.
+        return []
+    tiltless_by_zone: dict[str, list[str]] = {}
+    for entity, blind in config.blinds.items():
+        if blind.has_tilt:
+            continue
+        zone = owner_of.get(entity)
+        if zone is not None:
+            tiltless_by_zone.setdefault(zone, []).append(entity)
+    if not tiltless_by_zone:
+        return []
+
+    out: list[Problem] = []
+    for key, rules in config.rules.items():
+        mode, _, zone = key.partition(".")
+        zones = (
+            sorted(tiltless_by_zone)
+            if zone == RULE_DEFAULT_ZONE
+            else ([zone] if zone in tiltless_by_zone else [])
+        )
+        if not zones:
+            continue
+        affected = sorted(
+            entity for one in zones for entity in tiltless_by_zone.get(one, ())
+        )
+        for index, rule in enumerate(rules):
+            if rule.then is None or rule.then.tilt is KEEP:
+                continue
+            out.append(
+                Problem(
+                    WARNING,
+                    "tilt_on_tiltless_blind",
+                    f"rule {key}#{index} sets tilt={rule.then.tilt!r} but "
+                    f"{affected} has no tilt, so that half is never sent"
+                    + ("" if zone != RULE_DEFAULT_ZONE else f" (mode {mode!r} default list)"),
+                    owners=frozenset({_rule_owner(key, index)}),
+                )
+            )
+    return out
 
 
 def _direction_covers(outer: str, inner: str) -> bool:

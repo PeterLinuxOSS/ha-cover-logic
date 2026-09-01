@@ -1101,3 +1101,81 @@ def test_a_guard_problem_names_the_guard_by_position_and_name():
     assert len(problems) == 1
     assert problems[0].message.startswith("guard #0 'wind'")
     assert problems[0].owners == frozenset({("guard", "guard#0")})
+
+
+TILTLESS = """
+blinds:
+  - {entity: cover.a, has_tilt: false}
+zones:
+  z: {members: [cover.a]}
+modes:
+  - {id: den}
+values: {}
+rules:
+  den.z:
+    - {then: {position: 0, tilt: 50}}
+"""
+
+
+def test_setting_tilt_on_a_blind_without_tilt_is_a_warning():
+    """`planner.plan` gates the tilt half on `has_tilt`, so it is simply never sent.
+
+    That is the right runtime behaviour -- there is no slat -- but until this
+    check nothing told the author, so a rule that reads as if it sets the slats
+    quietly did not. Every blind in this house has tilt, so the case that
+    matters is a foreign install, which is the whole point of phase 7.
+    """
+    problems = validate(load_config(TILTLESS))
+
+    assert [p.code for p in problems] == ["tilt_on_tiltless_blind"]
+    assert problems[0].severity == WARNING
+    assert "cover.a" in problems[0].message
+    assert problems[0].owners == frozenset({("rule", "den.z#0")})
+
+
+def test_keeping_tilt_on_a_blind_without_tilt_is_silent():
+    """`tilt: keep` asks for nothing, so there is nothing to warn about.
+
+    The counter-test: without it the one above would pass on a check that
+    fires for every rule regardless of what it asks for.
+    """
+    text = TILTLESS.replace("tilt: 50", "tilt: keep")
+
+    assert validate(load_config(text)) == []
+
+
+def test_tilt_is_not_reported_for_a_blind_that_has_it():
+    text = TILTLESS.replace("has_tilt: false", "has_tilt: true")
+
+    assert validate(load_config(text)) == []
+
+
+def test_a_mode_default_list_names_the_tiltless_blinds_it_reaches():
+    """A default list reaches every zone, so the message has to say which blinds.
+
+    Filed under the default key, its own `owners` still points at that list --
+    the form that can fix it -- while the message names the blinds the author
+    would otherwise have to go and find.
+    """
+    text = TILTLESS.replace("  den.z:", '  "den.*":')
+
+    problems = validate(load_config(text))
+
+    assert [p.code for p in problems] == ["tilt_on_tiltless_blind"]
+    assert "cover.a" in problems[0].message
+    assert "default list" in problems[0].message
+
+
+def test_a_broken_ownership_map_does_not_make_validate_raise():
+    """`resolve_ownership` raises on an orphan; `validate` must still return problems.
+
+    Regression: the tilt check called it directly and turned two ownership
+    errors into an exception -- breaking `validate` on exactly the class of
+    configuration it exists to report on.
+    """
+    orphan = TILTLESS.replace("z: {members: [cover.a]}", "z: {members: []}")
+
+    codes_found = {p.code for p in validate(load_config(orphan))}
+
+    assert "blind_without_zone" in codes_found
+    assert "tilt_on_tiltless_blind" not in codes_found
