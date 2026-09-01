@@ -227,10 +227,10 @@ class CoverLogicCoordinator:
         **What that costs, plainly:** the first evaluation now lands one settle
         window later, so for `EVAL_SETTLE_SECONDS` after every reload the
         diagnostic sensor is unavailable and a pending deferral's recheck timer
-        is unarmed. Two seconds of a blank diagnostic against a house-wide
+        is unarmed. One window of a blank diagnostic against a house-wide
         movement on a world nobody saw is not a close trade, and the deferral
         half costs nothing real: every consequence of a deferral being
-        re-derived two seconds late is *later*, never sooner, which is the same
+        re-derived one window late is *later*, never sooner, which is the same
         argument `deferrals.py` already makes about a restart resetting its
         elapsed seconds.
         """
@@ -311,7 +311,7 @@ class CoverLogicCoordinator:
 
         **Restart-on-change, not a fixed window from the first change**, and
         that distinction is the whole fix. `svitanie` writes several entities
-        in sequence about one transition -- measured at ~1 s apart, see
+        in sequence about one transition -- measured 1-2 s apart, see
         `const.EVAL_SETTLE_SECONDS` -- and the world in between those writes is
         one that never really existed. A fixed window opened by the first write
         evaluates inside the sequence and then again after it; a window that

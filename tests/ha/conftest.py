@@ -54,6 +54,27 @@ def config():
     return load_config(CONFIG_TEXT)
 
 
+# The window a test waits out when what it is testing is not the window. The
+# real `EVAL_SETTLE_SECONDS` is 8 s (it must outlast the house's longest
+# trigger `for:`, see `const.py`), and a module that waits it out a dozen times
+# spends two minutes proving something unrelated to its length.
+SHORT_SETTLE_SECONDS = 0.5
+
+
+@pytest.fixture
+def short_settle_window(monkeypatch):
+    """Shrink the coordinator's settle window; opted into per module, never global.
+
+    Deliberately not autouse: `tests/ha/test_settle.py` reproduces two measured
+    mornings against the *real* constant, and a window shrunk from a shared
+    conftest would delete that evidence without anyone editing that file. The
+    string target imports `cover_logic.coordinator` at call time, which keeps
+    this module free of a `homeassistant` import under system Python.
+    """
+    monkeypatch.setattr("cover_logic.coordinator.EVAL_SETTLE_SECONDS", SHORT_SETTLE_SECONDS)
+    return SHORT_SETTLE_SECONDS
+
+
 class FakeRuntimeEntry:
     """The one attribute the *runtime* side of a config entry is read for.
 

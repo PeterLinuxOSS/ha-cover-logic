@@ -43,16 +43,17 @@ pytest.importorskip("homeassistant")
 from homeassistant.core import ServiceRegistry
 
 from cover_logic.config_schema import load_config
-from cover_logic.const import (
-    COMMAND_WITHHELD,
-    EVAL_SETTLE_SECONDS,
-    OPT_DRY_RUN,
-    READINESS_REASON_PREFIX,
-)
+from cover_logic.const import COMMAND_WITHHELD, OPT_DRY_RUN, READINESS_REASON_PREFIX
 from cover_logic.coordinator import CoverLogicCoordinator, evaluate as real_evaluate
 from cover_logic.validation import ERROR, validate
 
-_WAIT = EVAL_SETTLE_SECONDS + 0.4
+from .conftest import SHORT_SETTLE_SECONDS
+
+# The gate is what is under test, not the window's length; `test_settle.py`
+# owns the latter and waits out the real 8 s constant.
+pytestmark = pytest.mark.usefixtures("short_settle_window")
+
+_WAIT = SHORT_SETTLE_SECONDS + 0.4
 
 BLIND = "cover.a"
 OTHER = "cover.b"
@@ -558,7 +559,7 @@ def test_a_state_change_during_startup_postpones_the_first_evaluation(
             assert seen == []
 
             # Restore lands inside the window.
-            await asyncio.sleep(EVAL_SETTLE_SECONDS / 2)
+            await asyncio.sleep(SHORT_SETTLE_SECONDS / 2)
             _seed_healthy(hass, night="on")
             await _settle(coordinator)
 
