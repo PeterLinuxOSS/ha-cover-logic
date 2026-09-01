@@ -29,18 +29,38 @@ rather than left to callers.
 
 ### Why `condition: sun` takes seconds and skips the polar rollover
 
-Measured on the live house on 2026-09-01, over 14 days of history: the
-lux-threshold half of `Lighting SUN` decides nothing. In daylight hours the
-sensor never once fell below its 2800 threshold (daily minimum 2913-3043,
-sensor maximum 3057 -- the threshold sits inside its noise), while the real
-`lighting_on` transitions tracked the sun to the minute: dusk drifting
--1.9 min/day against sunset's -1.9, dawn +1.8 against sunrise's +1.8. The sun
-triggers, added as a fallback for a flat sensor battery, had quietly become
-the only mechanism.
+The flag this is groundwork for is set by whichever of two triggers fires
+first: a lux threshold held for five minutes, or a sun event. Measured on the
+live house over 14 days of history, both genuinely win:
 
-That is why this condition exists: a house-agnostic `lighting_on` needs
-astronomy and nothing else -- no lux sensor, no hysteresis, no debounce, and
-none of the 46 sensor dropouts those 14 days contained.
+| | lux first | sun first |
+|---|---|---|
+| dusk (on) | 4 of 13 | 9 of 13 |
+| dawn (off) | 11 of 14, to the minute | 3 of 14 |
+
+The lux branch is what makes dusk sensitive to weather -- on two overcast
+evenings it fired 14 and 23 minutes ahead of sunset-20min -- and astronomy
+cannot do that. The sun branch, added as a fallback for a flat sensor
+battery, carries most clear evenings on its own.
+
+So this condition is one of two halves, not a replacement for both. It earns
+its own condition type by being the half that needs no house-specific entity:
+a foreign install with no lux sensor still gets a working dark window from it,
+just one that no longer adapts to cloud cover -- a documented degradation,
+not an equivalent.
+
+An earlier revision of this section claimed the lux threshold decided nothing
+and astronomy alone sufficed. That was wrong twice over, and both mistakes are
+worth naming because neither is specific to this project. The check asked
+whether lux ever fell below its threshold *during daylight hours*, where of
+course it never does -- the threshold does its work at dusk. And the
+supporting evidence was that the transitions drift ~1.9 min/day in step with
+the sun, which *both* hypotheses predict: daylight follows the sun, so a
+daylight threshold crossing drifts identically. When two competing
+explanations predict the same measurement, the measurement is evidence for
+neither. The question that discriminates is which condition was satisfied
+**first**, and that needs both timelines reconstructed rather than one value
+sampled at the moment of the transition.
 
 **Astronomy stays in `ha_world`.** `get_astral_event_date` needs `hass`, and
 `conditions.py` is on `tests/test_purity.py`'s list precisely so the decision
