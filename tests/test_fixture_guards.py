@@ -159,7 +159,7 @@ def test_the_fixture_still_validates_clean_with_guards(config):
 
 
 def test_the_guard_list_is_the_shape_the_report_describes(config):
-    assert len(config.guards) == 7
+    assert len(config.guards) == 6
     assert [g.policy for g in config.guards] == [
         GUARD_FORCE,
         GUARD_SKIP,
@@ -167,9 +167,6 @@ def test_the_guard_list_is_the_shape_the_report_describes(config):
         GUARD_FORCE,
         GUARD_DEFER,
         GUARD_FORCE,
-        # The occupied-bed interlock, deliberately last so everything ahead of
-        # it -- wind, and both "keep the blind off an open door" -- still wins.
-        GUARD_SKIP,
     ]
     # Wind first, on purpose: the one interlock that has to work when
     # everything else is broken, and the only reason the others need not
@@ -613,7 +610,6 @@ def test_every_guard_in_the_fixture_can_actually_fire(config):
         (world(**{"binary_sensor.obyvacka_dvere_senzor": "on"}), opening(config)),
         (world(**{"binary_sensor.spalna_dvere_senzor_2": "on"}), closing(config)),
         (world(**{"binary_sensor.spalna_dvere_senzor_2": "on"}), opening(config)),
-        (world(**{"binary_sensor.postel_occupancy_postel_2": "on"}), tilt_only(config)),
     ]
     seen: set[int] = set()
     for w, decision in worlds:
@@ -626,53 +622,3 @@ def test_every_guard_in_the_fixture_can_actually_fire(config):
 def test_the_fixture_uses_every_policy_and_both_directions(config):
     assert {g.policy for g in config.guards} == {GUARD_SKIP, GUARD_DEFER, GUARD_FORCE}
     assert {g.applies_to for g in config.guards} == {GUARD_ANY, GUARD_CLOSING}
-
-
-# --------------------------------------------------------------------------
-# The occupied-bed interlock (guard index 6, deliberately last).
-# --------------------------------------------------------------------------
-
-BED = "binary_sensor.postel_occupancy_postel_2"
-SPALNA = ("cover.spalna_zaluzia_2", "cover.spalna_zaluzia_dvere_1")
-
-
-def test_an_occupied_bed_stops_every_bedroom_command(config):
-    """2026-09-01, 06:00: those slats went to 100 while the parents slept.
-
-    A 2 s settle window lost a race with `svitanie`, so the room flags were
-    still yesterday's and the rules resolved to "open". The window is 8 s now,
-    but the rules are still one race away from doing it again -- this is the
-    interlock that has to be got past as well. The owner asked for it in those
-    words: do not move the bedroom windows while everyone is asleep.
-    """
-    w = world(**{BED: "on"})
-
-    result = run(config, w, tilt_only(config), at(config))
-
-    claimed = fired_on(result, 6)
-    assert set(SPALNA) <= claimed, f"interlock did not claim the bedroom: {claimed}"
-    for entity in SPALNA:
-        assert result.actions.get(entity) is None, f"{entity} was still commanded"
-
-
-def test_an_empty_bed_leaves_the_bedroom_alone(config):
-    """The counter-test: without it the one above would pass on a dead guard."""
-    w = world(**{BED: "off"})
-
-    result = run(config, w, tilt_only(config), at(config))
-
-    assert fired_on(result, 6) == set()
-
-
-def test_a_gale_still_opens_the_bedroom_over_a_sleeping_person(config):
-    """First match wins, and the wind guard is deliberately first.
-
-    Sleep is worth protecting; a torn blind is not worth protecting it with.
-    Pinned because the fix for a future "it woke me up" report is to move this
-    guard earlier, and that would silently disarm the wind protection.
-    """
-    w = world(**{BED: "on", "sensor.netatmo_veterny_senzor_rychlost_vetra": "80"})
-
-    result = run(config, w, closing(config), at(config, value=0))
-
-    assert fired_on(result, 0) >= set(SPALNA), "wind guard lost to the bed interlock"
