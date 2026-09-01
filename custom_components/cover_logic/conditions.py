@@ -117,9 +117,30 @@ def _state(cond: dict, world: World) -> bool:
     else:
         actual = world.state(cond["entity_id"])
     wanted = cond["state"]
-    if isinstance(wanted, (list, tuple)):
-        return actual in wanted
-    return actual == wanted
+    matches = actual in wanted if isinstance(wanted, (list, tuple)) else actual == wanted
+    if not matches or "for" not in cond:
+        return matches
+    return _held_long_enough(cond, world)
+
+
+def _held_long_enough(cond: dict, world: World) -> bool:
+    """Whether the entity has been in this state for at least `for:` seconds.
+
+    An extension over Home Assistant, whose conditions have no `for:` at all --
+    only triggers do. It exists because a debounce is sometimes the whole point
+    of a flag: a bed sensor that flickers for thirty seconds must not move a
+    blind. See docs/rationale.md, "Why `condition: state` takes `for:`".
+
+    A missing `since` entry **ignores** `for:` rather than failing the
+    condition: absence of timing information should not change what the
+    condition means, and `ha_world` fills `since` for every entity it
+    snapshots (pinned by its own test), so this path never runs in a live
+    house.
+    """
+    held = world.held_for(cond["entity_id"], world.now)
+    if held is None:
+        return True
+    return held >= dt.timedelta(seconds=int(cond["for"]))
 
 
 def _numeric_state(cond: dict, world: World) -> bool:

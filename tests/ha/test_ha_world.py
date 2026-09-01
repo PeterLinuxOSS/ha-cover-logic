@@ -159,3 +159,48 @@ def test_build_world_fills_todays_sun_times_as_naive_local(config, fake_hass):
     assert world.sun.sunrise.date() == world.now.date()
     assert world.sun.sunset.date() == world.now.date()
     assert world.sun.sunrise < world.sun.sunset
+
+
+def test_build_world_fills_since_from_last_changed(config, fake_hass):
+    """`condition: state`'s `for:` silently does nothing without this.
+
+    `last_changed`, not `last_updated`: an attribute-only write must not
+    restart a `for:` that counts how long the *state* has held. Naive local,
+    matching `World.now`, or the first comparison would raise.
+    """
+    hass = fake_hass({"input_boolean.a": State("input_boolean.a", "on")})
+
+    world = build_world(hass, config)
+
+    assert "input_boolean.a" in world.since
+    changed = world.since["input_boolean.a"]
+    assert changed.tzinfo is None
+    assert world.held_for("input_boolean.a", world.now) >= dt.timedelta(0)
+    # An entity that is not in the snapshot has no timing either -- absence
+    # stays absence rather than becoming "changed just now".
+    assert world.held_for("input_boolean.never_set", world.now) is None
+
+
+def test_since_uses_last_changed_not_last_updated(config, fake_hass):
+    """An attribute-only write must not restart a `for:` counting state duration.
+
+    Home Assistant bumps `last_updated` on every write and `last_changed` only
+    when the state itself changes. Reading the wrong one would make a `for:`
+    restart whenever anything about the entity was touched -- a debounce that
+    never expires on a chatty entity, and invisible in review because both
+    fields exist and both are datetimes.
+    """
+    changed = dt_util.now() - dt.timedelta(hours=2)
+    updated = dt_util.now() - dt.timedelta(seconds=1)
+    hass = fake_hass(
+        {
+            "input_boolean.a": State(
+                "input_boolean.a", "on", last_changed=changed, last_updated=updated
+            )
+        }
+    )
+
+    world = build_world(hass, config)
+
+    held = world.held_for("input_boolean.a", world.now)
+    assert held >= dt.timedelta(minutes=110), f"read last_updated instead: held={held}"

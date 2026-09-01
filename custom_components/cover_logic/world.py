@@ -62,6 +62,10 @@ class World:
     now: dt.datetime = dt.datetime(1970, 1, 1)
     event: Event = Event()
     sun: SunTimes = SunTimes()
+    # When each entity last *changed* state, naive local like `now`. Only
+    # `condition: state`'s `for:` reads it; see that condition's own note for
+    # why a missing entry ignores `for:` rather than failing the condition.
+    since: Mapping[str, dt.datetime] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         """Copy the mappings so the snapshot cannot be changed from outside.
@@ -78,6 +82,12 @@ class World:
         """
         object.__setattr__(self, "states", dict(self.states))
         object.__setattr__(self, "attributes", deepcopy(dict(self.attributes)))
+        object.__setattr__(self, "since", dict(self.since))
+
+    def held_for(self, entity_id: str, now: dt.datetime) -> dt.timedelta | None:
+        """How long `entity_id` has been in its current state, or `None` if unknown."""
+        changed = self.since.get(entity_id)
+        return None if changed is None else now - changed
 
     def state(self, entity_id: str) -> str | None:
         """Return the entity's state, or `None` if it is not in the snapshot."""

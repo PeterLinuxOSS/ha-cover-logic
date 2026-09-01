@@ -34,13 +34,29 @@ def world_from_stav(stav, event: Event | None = None) -> World:
     quietly stopped covering something would be worse than one that covers
     less on purpose.
     """
+    now = now_for(stav)
     return World(
-        states=stav.entity(),
+        states={**stav.entity(), **_bed_for(stav)},
         attributes=stav.atributy(),
-        now=now_for(stav),
+        now=now,
         event=event or Event(),
         sun=_sun_for(stav),
+        # An hour, so every `for:` in the configuration is satisfied. The gate
+        # varies *what* the house looks like, never how long it has looked
+        # that way; a debounce that only delays a transition cannot change
+        # which target a settled scenario resolves to.
+        since={entity: now - dt.timedelta(hours=1) for entity in _BED_SENSORS},
     )
+
+
+# The engine reads the bed sensor where it used to read a helper another
+# automation derived from it. The scenario axis is unchanged -- it still means
+# "somebody is asleep" -- so it is translated rather than left behind.
+_BED_SENSORS = ("binary_sensor.postel_occupancy_postel_2",)
+
+
+def _bed_for(stav) -> dict[str, str]:
+    return dict.fromkeys(_BED_SENSORS, "on" if stav.some_sleeping else "off")
 
 
 def _sun_for(stav) -> SunTimes:

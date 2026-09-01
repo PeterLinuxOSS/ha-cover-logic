@@ -50,6 +50,7 @@ def build_world(hass: HomeAssistant, config: Config, event: Event | None = None)
     """
     states: dict[str, str] = {}
     attributes: dict[tuple[str, str], Any] = {}
+    since: dict[str, Any] = {}
 
     for entry in referenced_entities(config):
         if isinstance(entry, tuple):
@@ -63,6 +64,10 @@ def build_world(hass: HomeAssistant, config: Config, event: Event | None = None)
             if state is None:
                 continue
             states[entry] = state.state
+            # `last_changed`, never `last_updated`: an attribute-only write
+            # must not restart a `for:` that is counting how long the *state*
+            # has held. Naive local, matching `World.now`.
+            since[entry] = dt_util.as_local(state.last_changed).replace(tzinfo=None)
 
     now = dt_util.now()
     return World(
@@ -71,6 +76,7 @@ def build_world(hass: HomeAssistant, config: Config, event: Event | None = None)
         now=now.replace(tzinfo=None),
         event=event if event is not None else Event(),
         sun=_sun_times(hass, now),
+        since=since,
     )
 
 

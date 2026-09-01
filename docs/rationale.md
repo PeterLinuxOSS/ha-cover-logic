@@ -129,6 +129,40 @@ coverage deliberately narrowed and written down.
 
 ## `conditions.py`
 
+### Why `condition: state` takes `for:`
+
+Home Assistant's conditions have no `for:` -- only its triggers do, which is
+a documented pitfall of the YAML this dialect otherwise mirrors. This one has
+it anyway, because for some flags the debounce *is* the flag.
+
+`vstali` ("everyone is up") was read off a helper that
+`automation.Sleeping` derived from `binary_sensor.postel_occupancy_postel_2`
+after a two-minute `for:`. Reading the sensor directly retires the helper, but
+naively it would also retire the debounce -- and measured over 14 days that
+sensor produced 20 episodes shorter than two minutes, 16 of them brief
+"off"s. `vstali` gates exactly one rule, the one that opens the terrace fully,
+so a thirty-second flicker would have moved that blind twice. The raw sensor
+tracks the helper to 0.25 % of minutes with every disagreement exactly two
+minutes long, which is the debounce and nothing else.
+
+`for:` is honest about what it can measure. It reads `World.since`, filled
+from `state.last_changed` -- deliberately not `last_updated`, so an
+attribute-only write cannot restart a countdown that is about how long the
+*state* has held. That makes it exact for a binary sensor and it is why the
+same trick is not offered for `numeric_state`: a reading moving 2790 -> 2780
+restarts `last_changed` while never leaving the threshold, so a threshold
+`for:` would silently under-report and the honest implementation of that is a
+latch with its own memory.
+
+**A missing `since` entry ignores `for:` rather than failing the condition.**
+Absence of timing information should not change what a condition means, and
+answering `False` instead would silently disable every rule behind a `for:`
+the moment that fill regressed. `ha_world` fills `since` for every entity it
+snapshots, pinned by its own test, so the fallback never runs in a live house
+-- it exists for hand-built test worlds and for the migration gate, which
+varies what the house looks like and never how long it has looked that way.
+
+
 ### Why `condition: sun` takes seconds and skips the polar rollover
 
 The flag this is groundwork for is set by whichever of two triggers fires

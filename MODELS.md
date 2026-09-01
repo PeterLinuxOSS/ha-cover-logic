@@ -362,7 +362,11 @@ top of them.)
   implied. `sun` takes `before`/`after` (`sunrise`/`sunset`) with
   `before_offset`/`after_offset` in **seconds**, not HA's `"-00:20:00"`
   string; its answers are pinned to HA's own implementation by a differential
-  test, boundary quirks included (see `docs/rationale.md`).
+  test, boundary quirks included (see `docs/rationale.md`). `state` also
+  accepts an optional `for:` in seconds — a second deliberate divergence,
+  since stock HA has `for:` on triggers only; it reads `last_changed`, so it
+  is exact for a binary sensor and is deliberately not offered for
+  `numeric_state`.
 - **`values`** — a mapping of `name -> {entity, default}`: a helper entity
   read at decision time, for use as `!ref name` inside an action's
   `position`/`tilt`.
