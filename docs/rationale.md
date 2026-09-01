@@ -25,6 +25,60 @@ caller mutating the dict it passed in. This module exists to guarantee that
 one evaluation sees one consistent state, so that guarantee is enforced here
 rather than left to callers.
 
+## The `vecer` condition
+
+### Why `vecer` reads the sky, and what the gate stops proving
+
+`vecer` used to read `input_boolean.lighting_on`, a helper written by the
+house's `Lighting SUN` automation. That is the single largest reason this
+integration could not be installed anywhere else: the flag is not something
+the integration computes, it is something another automation has to exist to
+feed it. It now derives the same fact itself, from `condition: sun` OR a lux
+threshold -- the same two mechanisms the automation used, in the same
+first-to-fire arrangement.
+
+**The dark window is one stateless condition, not a latch.** This is why
+`condition: sun`'s odd OR case matters: `before: sunrise` with `after: sunset`
+turns on at sunset−20min, is held across midnight by the `before` half, and
+turns off at sunrise+10min. No memory, no debounce, nothing to persist, and
+nothing a restart can lose.
+
+A latch was designed first and rejected on measurement. Replaying 14 days of
+history minute by minute against the helper's real state (20 159 minutes):
+
+| | disagreement | runs |
+|---|---|---|
+| stateless condition | **0.35 %** (68 min) | 20, all ≤ 12 min |
+| latch + hysteresis + `for: 5 min` | 0.18 % (34 min) | 6 |
+
+34 minutes per fortnight does not buy a new config section, a stateful pure
+module, and a set of restart-persistence decisions. All 20 disagreements are
+in one direction -- on up to five minutes early, which is exactly the missing
+`for: 5 min` -- and `vecer` only ever makes a zone `keep`, so arriving early
+means the matrix stops managing two zones a few minutes sooner while the
+automation that takes them over is already running. The consequence is
+inaction, not movement.
+
+**The stronger argument is self-healing.** On 18 Aug the helper's transitions
+were `11:00 -> off` and then nothing until `19:31` the following day: the flag
+never turned on that evening and the matrix did not know it was dusk all
+night. A latch shares that single point of failure with the helper -- both
+need an automation to fire, and neither notices when it does not. A condition
+re-derived from scratch on every evaluation cannot fail that way. It is the
+same reasoning `deferrals.py` documents at length: a derived fact, not an
+in-flight execution.
+
+**What the migration gate stops proving.** The gate renders the live Jinja
+matrix, which still reads the helper, so an engine that no longer reads it
+would differ by construction -- not by accident. Rather than exempting
+scenarios, `tests/parity/mapping.py` translates the scenario's `lighting_on`
+axis into `World.sun`: the axis still means "it is dusk", it just reaches the
+engine the way the engine now asks for it. All 92 160 scenarios still run and
+still have to match, so everything the gate ever proved about the *decision*
+it still proves. What it no longer covers is the *derivation* of dusk, whose
+evidence is the replay above. Coverage that quietly lapses is worse than
+coverage deliberately narrowed and written down.
+
 ## `conditions.py`
 
 ### Why `condition: sun` takes seconds and skips the polar rollover
