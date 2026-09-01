@@ -385,6 +385,21 @@ def _require(
 
         return
 
+    if kind == "sun":
+        # Same shape as `time` above: fixed by the world, not by any entity
+        # this generator can vary. `condition: sun` reads `World.sun`, which
+        # witnesses leave empty, so it answers False and only `want_true` is
+        # infeasible. Without this branch it falls through to the leaf path,
+        # which needs an `entity_id` it does not have -- so an `or` holding
+        # one becomes unfalsifiable, which is how every `horucava` rule
+        # briefly looked unreachable.
+        empty = World(states={}, attributes={}, now=NOW, event=Event())
+        if evaluate_condition(cond, empty, None, registry) != want_true:
+            msg = f"sun condition is fixed by the witness world, cannot be made {want_true}"
+            raise _Infeasible(msg)
+
+        return
+
     if kind == "sun_hits_target":
         # Read the entities from the condition itself, not from module
         # constants: a house may point this at its own sun/azimuth sensors.

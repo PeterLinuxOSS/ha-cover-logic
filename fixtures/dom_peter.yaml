@@ -30,10 +30,18 @@ values:
   kvety_poz: {entity: input_number.kvety_pozicia_zaluzie, default: 34}
 
 conditions:
-  cover_down:
-    condition: state
-    entity_id: input_boolean.cover_down
-    state: "on"
+  # Two different things, deliberately kept apart: the sky says it is night,
+  # and the person says "close everything now". Either one means mode `noc`.
+  je_noc:
+    condition: or
+    conditions:
+      # Sunset to sunrise-15min. The offset is measured, not chosen: the old
+      # flag went off 11-20 min before sunrise, on a lux threshold this
+      # replaces. See docs/rationale.md.
+      - {condition: sun, before: sunrise, before_offset: -900, after: sunset}
+      # The user's own emergency brake, and it stays a helper on purpose --
+      # a command, not a derived state. Voice "zapni nočný režim" writes it.
+      - {condition: state, entity_id: input_boolean.cover_down, state: "on"}
 
   # POZOR: nesmie sa viazať len na stav panela. Pri spustenom alarme je stav
   # `triggered`, nie `armed_vacation` — matica by spadla na `bezny_den`
@@ -212,7 +220,7 @@ conditions:
     state: "on"
 
 modes:
-  - {id: noc,       when: !ref cover_down}
+  - {id: noc,       when: !ref je_noc}
   - {id: dovolenka, when: !ref alarmo_vacation}
   - {id: horucava,  when: !ref teplotna_ochrana}
   - {id: bezny_den}
