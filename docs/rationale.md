@@ -27,6 +27,60 @@ rather than left to callers.
 
 ## The `je_noc` condition
 
+### Why the manual raise is read off the blind
+
+`kvety_rucny_override` was a helper an automation set when somebody pulled the
+flower blinds up past 45. It is now the position itself, over both kitchen
+blinds. That is not only one helper fewer -- it is the more correct of the two,
+and the measurement says so.
+
+Fourteen days of history, the blind's position at each of the helper's own
+transitions:
+
+| when | helper | position |
+|---|---|---|
+| 20.08 10:19 | on | 51 |
+| 20.08 10:20 | off | 51 |
+| 20.08 10:21 | on | **34** |
+| 20.08 18:49 | on | **29** |
+| 20.08 18:50 | off | **100** |
+| 31.08 11:49 | on | 88 |
+| 31.08 13:48 | off | **100** |
+| 01.09 08:47 | on | 96 |
+
+The flag means "somebody raised it". **Three of those eight transitions leave
+it in a state the position contradicts**, and twice it cleared while the blind
+was still at 100 -- the protection ended while the raise it was protecting was
+still in force. The cause is that it clears on *any* change of matrix mode, so
+a raise at 09:00 can be discarded by the first mode flip of the morning. A
+condition read from the position cannot disagree with the blind it describes.
+
+**Why 45 is safe as a constant.** No rule in this configuration ever sends the
+flowers above `kvety_poz`, whose live value is 34, so a position over 45 is by
+construction not this integration's doing. The dependency is real though:
+raising `input_number.kvety_pozicia_zaluzie` above 45 would make the guard fire
+on the integration's own target. The old automation carried the same unstated
+assumption; it is written down here rather than inherited silently. Comparing
+against the target instead of a constant would need conditions to read
+`values:`, which they cannot.
+
+**On watching two more covers.** `referenced_entities` now names
+`cover.kuchyna_zaluzia_1_4`/`_2_5`, so the coordinator subscribes to them and
+the integration's own movement can trigger a recompute. That is the loop
+`_directional_guard_blinds` documents at length -- and it is already accepted
+for two other blinds, which directional guards watch for exactly the same
+reason. The bound is the same one: the settle window coalesces a travelling
+blind's stream of positions, and the planner's dead band stops the recompute
+turning into a second command. What that docstring rules out is watching
+*every* cover; four named ones are not that.
+
+There is a pleasing consequence. While the blind is above 45 the guard skips
+it, so the integration never moves it down through the threshold itself -- only
+something else can, and when it does, control resumes on its own. The condition
+latches and unlatches by physics rather than by anybody remembering to clear a
+flag.
+
+
 ### Why night is derived but the brake stays a helper
 
 `input_boolean.cover_down` was two unrelated things sharing one entity: the
