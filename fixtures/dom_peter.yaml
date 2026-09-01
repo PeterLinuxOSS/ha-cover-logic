@@ -130,8 +130,16 @@ conditions:
   # pravidla (fáza 6, task 3): meno tu neniesie nič, čo by `entity_id`/`state`
   # na mieste použitia nepovedali rovnako jasne.
 
-  # "Všetci už vstali" — riadi automation.sleeping z postele.
-  vstali: {condition: state, entity_id: input_boolean.some_sleeping, state: "off"}
+  # "Everyone is up". Read straight off the bed sensor rather than the helper
+  # `automation.Sleeping` used to derive from it -- same sensor, same 2 min
+  # debounce, one fewer thing that has to exist. The `for:` is not decoration:
+  # this gates the only rule that opens the terrace fully, and a bed sensor
+  # flickering for thirty seconds would move it twice. See docs/rationale.md.
+  vstali:
+    condition: state
+    entity_id: binary_sensor.postel_occupancy_postel_2
+    state: "off"
+    for: 120
 
   doma_peter: {condition: state, entity_id: binary_sensor.peter_home, state: "on"}
   nie_peter:  {condition: state, entity_id: binary_sensor.peter_home, state: "off"}

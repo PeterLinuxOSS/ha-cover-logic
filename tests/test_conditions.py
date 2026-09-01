@@ -417,3 +417,69 @@ def test_sun_offset_zero_is_the_default():
     cond = {"condition": "sun", "after": "sunset"}
     assert evaluate_condition(cond, sun_world(19, 50)) is False
     assert evaluate_condition(cond, sun_world(19, 51)) is True
+
+
+# --- condition: state with `for:` ------------------------------------------
+
+
+def held(entity, seconds, now=NOW):
+    """A `since` map putting `entity`'s last change `seconds` ago."""
+    return {entity: now - dt.timedelta(seconds=seconds)}
+
+
+@pytest.mark.parametrize(
+    ("held_seconds", "expected"),
+    [(0, False), (119, False), (120, True), (600, True)],
+)
+def test_state_for_requires_the_state_to_have_lasted(held_seconds, expected):
+    """The debounce a bed sensor needs: thirty seconds of flicker must not count."""
+    cond = {
+        "condition": "state",
+        "entity_id": "binary_sensor.bed",
+        "state": "off",
+        "for": 120,
+    }
+    w = World(
+        states={"binary_sensor.bed": "off"},
+        now=NOW,
+        event=Event(),
+        since=held("binary_sensor.bed", held_seconds),
+    )
+    assert evaluate_condition(cond, w) is expected
+
+
+def test_state_for_is_not_consulted_when_the_state_does_not_match():
+    """A wrong state is false regardless of how long it has been wrong."""
+    cond = {"condition": "state", "entity_id": "binary_sensor.bed", "state": "off", "for": 120}
+    w = World(
+        states={"binary_sensor.bed": "on"},
+        now=NOW,
+        event=Event(),
+        since=held("binary_sensor.bed", 9999),
+    )
+    assert evaluate_condition(cond, w) is False
+
+
+def test_state_without_for_ignores_since_entirely():
+    """Every pre-existing condition keeps its exact meaning."""
+    cond = {"condition": "state", "entity_id": "binary_sensor.bed", "state": "off"}
+    w = World(
+        states={"binary_sensor.bed": "off"},
+        now=NOW,
+        event=Event(),
+        since=held("binary_sensor.bed", 0),
+    )
+    assert evaluate_condition(cond, w) is True
+
+
+def test_missing_since_ignores_for_rather_than_failing():
+    """Deliberate: no timing information must not change what the condition means.
+
+    `ha_world` fills `since` for every entity it snapshots, so this is the
+    shape a hand-built test world has, never one a live house produces. Pinned
+    because the alternative -- answering False -- would silently disable every
+    rule behind a `for:` if that fill ever regressed.
+    """
+    cond = {"condition": "state", "entity_id": "binary_sensor.bed", "state": "off", "for": 120}
+    w = World(states={"binary_sensor.bed": "off"}, now=NOW, event=Event())
+    assert evaluate_condition(cond, w) is True
