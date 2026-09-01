@@ -132,7 +132,9 @@ conditions:
 
   # "Everyone is up". Read straight off the bed sensor rather than the helper
   # `automation.Sleeping` used to derive from it -- same sensor, same 2 min
-  # debounce, one fewer thing that has to exist. The `for:` is not decoration:
+  # debounce, one fewer thing that has to exist. The sensor is **Peter's bed**
+  # and the name overpromises, but it overpromised identically before: the
+  # helper was derived from this one sensor too. The `for:` is not decoration:
   # this gates the only rule that opens the terrace fully, and a bed sensor
   # flickering for thirty seconds would move it twice. See docs/rationale.md.
   vstali:
