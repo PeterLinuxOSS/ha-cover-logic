@@ -79,10 +79,20 @@ conditions:
   # Lighting SUN vetva `light-on` už stiahla terasu a kvety, ale `cover_down`
   # (a s ním režim `noc`) príde až o 20–40 min. V tom okne matica nesmie
   # vracať nič hore. Prah 12:30 je ten istý, aký má vetva `light-on`.
+  # First clause derived from the sky, not from `input_boolean.lighting_on`
+  # that `Lighting SUN` used to write. Measured deviation: docs/rationale.md.
   vecer:
     condition: and
     conditions:
-      - {condition: state, entity_id: input_boolean.lighting_on, state: "on"}
+      - condition: or
+        conditions:
+          # Dark window across midnight: on at sunset-20min, held after
+          # midnight by `before: sunrise`, off at sunrise+10min.
+          - {condition: sun, before: sunrise, before_offset: 600,
+                             after: sunset, after_offset: -1200}
+          # An overcast evening crosses the threshold first -- 4 of 13.
+          - {condition: numeric_state, default: 99999, below: 2800,
+             entity_id: sensor.predsien_dvere_senzor_illuminance}
       - {condition: state, entity_id: input_boolean.cover_down, state: "off"}
       - {condition: time, after: "12:30"}
 
