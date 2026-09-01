@@ -322,7 +322,7 @@ rules:
     - {events: [arrival], if: !ref pocasie_otvorene, then: {position: keep, tilt: 100}}
     - {events: [arrival], then: {position: 100, tilt: keep}}
     # 2026-08-27: dvere zatvorené => tieni presne ako `terasa2` (rovnaký
-    # strana-based výpočet), bez ohľadu na vecer/pocasie_otvorene/hocikto/
+    # strana-based výpočet), bez ohľadu na pocasie_otvorene/hocikto/
     # vstali — tie riešia LEN vytiahnutie hore, a to nehrozí, keď je cieľ
     # dole. `dvere_zatvorene` musí byť prvá podmienka v reťazci (je to
     # najvonkajšia `if` v šablóne) a `pocasie_otvorene` musí predchádzať
@@ -330,31 +330,24 @@ rules:
     # nižšie: `strana` je 'ziadna' pri zamračení, takže slnečná vetva by
     # inak vyhrala aj vtedy, keď byť nemá. Platí len pre stavovú variantu —
     # `zp` v šablóne o dverách nič nevie.
-    # 2026-09-01: `vecer` posunuty PRED dverove vetvy. Povodna uvaha (komentar
-    # vyssie a v configuration.yaml) bola, ze `vecer` chrani len proti
-    # VYTIAHNUTIU a pri zatvorenych dverach je ciel dole, takze konflikt
-    # nehrozi. Prehliadla lamely: vetva `light-on` da obom dverovym zaluziam
-    # tilt 100, aby obyvacka nebola potme (oprava 21. 8.), a matica im ho
-    # vratila na 50 osemnast minut pred zapadom.
-    - {if: !ref vecer,            then: {position: keep, tilt: keep}}
+    # 2026-09-01: vo `vecer` sa netieni na 50 — `light-on` dá lamely na 100.
     - {if: [!ref dvere_zatvorene, !ref pocasie_otvorene], then: {position: 0, tilt: 100}}
-    - {if: [!ref dvere_zatvorene, {condition: sun_hits_target}], then: {position: 0, tilt: 50}}
+    - {if: [!ref dvere_zatvorene, {condition: sun_hits_target},
+            {condition: not, conditions: [!ref vecer]}], then: {position: 0, tilt: 50}}
     - {if: !ref dvere_zatvorene, then: {position: 0, tilt: 100}}
     - {if: !ref pocasie_otvorene, then: {position: keep, tilt: 100}}
     - {if: {condition: sun_hits_target}, then: {position: 0, tilt: 50}}
-    - {if: [!ref hocikto_doma, !ref vstali], then: {position: 100, tilt: keep}}
+    - {if: [!ref hocikto_doma, !ref vstali,
+            {condition: not, conditions: [!ref vecer]}], then: {position: 100, tilt: keep}}
     - {if: !ref hocikto_doma,     then: {position: keep, tilt: keep}}
     - {then: {position: keep, tilt: 50}}
 
   # Terasa2 (_2_) zostáva počas horúčavy dole celý deň.
   horucava.terasa2:
-    # 2026-09-01: `vecer` tu chybal, hoci `bezny_den.terasa2` ho ma. Vo `vecer`
-    # dala vetva `light-on` tejto zaluzii lamely 100, aby obyvacka nebola potme
-    # (oprava 21. 8.) -- a matica jej ich o 18 min pred zapadom vratila na 50.
-    # Tienit 18 minut pred zapadom nema co chranit a len zhasina svetlo.
-    - {if: !ref vecer, then: {position: keep, tilt: keep}}
+    # 2026-09-01: vo `vecer` sa netieni na 50 — `light-on` dá lamely na 100.
     - {if: !ref pocasie_otvorene, then: {position: 0, tilt: 100}}
-    - {if: {condition: sun_hits_target}, then: {position: 0, tilt: 50}}
+    - {if: [{condition: sun_hits_target},
+            {condition: not, conditions: [!ref vecer]}], then: {position: 0, tilt: 50}}
     - {then: {position: 0, tilt: 100}}
 
   horucava.peter:
