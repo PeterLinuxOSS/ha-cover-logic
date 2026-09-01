@@ -160,14 +160,6 @@ conditions:
   # odstránené z toho istého dôvodu ako `kvety_on` vyššie. Ich opaky
   # (`nie_akt_*`) sa používajú dvakrát každý (`horucava.*` aj `bezny_den.*`),
   # takže tie zostávajú pomenované.
-  # Somebody is lying in the bed right now. Read off the sensor, not off a
-  # helper, and with no `for:`: a debounce here would only delay the *stop*,
-  # and this condition exists to stop things.
-  postel_obsadena:
-    condition: state
-    entity_id: binary_sensor.postel_occupancy_postel_2
-    state: "on"
-
   nie_akt_peter: {condition: state, entity_id: input_boolean.zaluzie_aktivna_peter,  state: "off"}
   nie_akt_mimka: {condition: state, entity_id: input_boolean.zaluzie_aktivna_mimka,  state: "off"}
   nie_akt_spalna: {condition: state, entity_id: input_boolean.zaluzie_aktivna_spalna, state: "off"}
@@ -607,24 +599,3 @@ guards:
     targets: [cover.spalna_zaluzia_dvere_1]
     when: !ref spalna_dvere_nezatvorene
     then: {position: 100}
-
-  # The owner's own instruction, 2026-09-01: "do not move the bedroom windows
-  # while everyone is asleep". Written as an interlock rather than trusted to
-  # the rules, because the rules already opened those slats once that morning
-  # -- a 2 s settle window lost a race with `svitanie` and the room flags were
-  # still yesterday's. Any successor to that race has to get past this too.
-  #
-  # `applies_to: any`, not `closing`: direction only covers *position*, and
-  # what actually moved that morning was the tilt.
-  #
-  # Deliberately LAST: first match wins, so everything ahead of it still wins.
-  # The wind guard opens the house in a gale -- sleep is worth protecting, a
-  # torn blind is not worth protecting it with -- and the two `drz zaluziu
-  # hore` guards keep a blind off an open door, which must not be blockable by
-  # somebody being in bed either.
-  - name: spalna - nehyb, kym niekto lezi v posteli
-    policy: skip
-    stage: output
-    applies_to: any
-    targets: [spalna]
-    when: !ref postel_obsadena

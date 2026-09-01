@@ -27,6 +27,53 @@ rather than left to callers.
 
 ## The `je_noc` condition
 
+### Why there is no "somebody is in bed" interlock
+
+One was written on 2026-09-01 and removed the same evening. Both reasons it
+was wrong are worth keeping, because the second one is the interesting one.
+
+**It was keyed on the wrong room.** The condition read
+`binary_sensor.postel_occupancy_postel_2` and the guard targeted zone
+`spalna`, the parents' room. That entity's friendly name is *"Peter postel"*:
+it is in Peter's bed, and the house has **no** bed sensor in the parents' room
+and none in Mimka's. So the guard protected one room using another room's
+evidence, and -- far worse than being useless -- it **failed open exactly when
+it mattered**, the morning Peter gets up before his parents do. An entity id
+that reads like "the bed" is not evidence of whose bed it is.
+
+**And the house already solves this, better -- and it was already written
+down.** Every bedroom has an explicit hand-over, and until it happens the room
+is `keep` by construction:
+
+| room | what hands it to the matrix |
+|---|---|
+| parents | `script."Spálňa otvorenie"` (their morning routine), `"Spálňa žalúzie otvoriť"` |
+| Mimka | `Mimka Button`, or the app via the detector below |
+| Peter | `Sleeping Peter izba` (his bed sensor) |
+| any | raising the blind **by hand** -- see below |
+
+`automation.Žalúzie - detekcia ručného zásahu` watches every bedroom blind,
+checks the movement came from a person *directly* (`context.user_id` set,
+`parent_id` unset, and none of the four bedroom scripts running), and switches
+that room's `zaluzie_aktivna_<room>` by **direction**: raising by hand hands
+the room over, lowering takes it back. `svitanie` resets all of them at dawn.
+
+That is the protection a room without a sensor can actually have, and it needs
+no sensor at all. The owner pointed at it in one sentence; it cost an evening
+to rediscover, and the lesson is the cheap one: read what the house already
+does before adding a mechanism to it.
+
+Against that, the interlock was not merely redundant. For Peter's own room it
+was **actively wrong**: raising the blind by hand is how he hands the room to
+the matrix, and a guard keyed on his bed would have blocked the matrix while he
+lay in it -- overriding the handover he had just performed.
+
+The failure that prompted it (slats to 100 while people slept, 2026-09-01) was
+a lost race, not a missing interlock: a 2 s settle window let the matrix read
+yesterday's room flags before `svitanie` reset them. The window is 8 s now,
+which is the fix. Reaching for an interlock was reaching past the cause.
+
+
 ### Why the manual raise is read off the blind
 
 `kvety_rucny_override` was a helper an automation set when somebody pulled the
