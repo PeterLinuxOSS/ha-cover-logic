@@ -196,9 +196,7 @@ def _check_tilt_on_tiltless_blinds(config: Config) -> list[Problem]:
         )
         if not zones:
             continue
-        affected = sorted(
-            entity for one in zones for entity in tiltless_by_zone.get(one, ())
-        )
+        affected = sorted(entity for one in zones for entity in tiltless_by_zone.get(one, ()))
         for index, rule in enumerate(rules):
             if rule.then is None or rule.then.tilt is KEEP:
                 continue
