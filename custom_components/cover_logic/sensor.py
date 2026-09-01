@@ -148,9 +148,12 @@ class CoverLogicModeSensor(SensorEntity):
           does, with no reload.
         - `pending` -- `deferred` (which blind, which guard, how long it has
           waited, what happens when it runs out) and `queued` (which blind is
-          mid-sequence and what is waiting behind it). The queue is the one
-          thing the log genuinely cannot show: a log says what already
-          happened, and this is about what has not happened yet.
+          mid-sequence, for how long, and what is waiting behind it). The queue
+          is the one thing the log genuinely cannot show: a log says what
+          already happened, and this is about what has not happened yet. A
+          sequence with no commands to send is deliberately absent from
+          `queued` -- this is read mid-evaluation, so listing those would list
+          every blind on every read; see `docs/rationale.md`.
         - `last_command` -- the newest thing the executor did or deliberately
           did not do, `withheld` guard suppressions included.
         - `readiness` -- whether the inputs behind this decision could be read
