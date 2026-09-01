@@ -309,13 +309,16 @@ def test_wind_outranks_a_hand_on_the_flowers(config):
     claim is never re-judged, so it would outrank wind wherever it were
     written).
     """
+    # The raise has to be *real* here, or this test passes because the flowers
+    # guard never fired -- which is what happened when its condition moved from
+    # the helper to the blind's own position and this world still set the
+    # helper. Both guards must actually claim the kitchen for order to be the
+    # thing under test.
     w = world(
-        **{
-            "input_boolean.kvety_rucny_override": "on",
-            "sensor.netatmo_veterny_senzor_rychlost_vetra": "60",
-        }
+        attrs={("cover.kuchyna_zaluzia_1_4", "current_position"): 96},
+        **{"sensor.netatmo_veterny_senzor_rychlost_vetra": "60"},
     )
-    result = run(config, w, closing(config), at(config, 0))
+    result = run(config, w, closing(config), at(config, 96))
 
     assert set(FLOWERS) <= fired_on(result, WIND)
     assert fired_on(result, FLOWERS_BY_HAND) == set()  # shadowed, on purpose
@@ -329,7 +332,13 @@ def test_wind_outranks_a_hand_on_the_flowers(config):
 
 
 def test_a_hand_on_the_flowers_suppresses_both_kitchen_blinds(config):
-    w = world(**{"input_boolean.kvety_rucny_override": "on"})
+    """The raise is read off the blind now, not off a helper.
+
+    96 is where somebody actually left it on 2026-09-01 at 08:47. Nothing in
+    this configuration ever sends the flowers above `kvety_poz` (34), so a
+    position over 45 is by construction somebody else's.
+    """
+    w = world(attrs={("cover.kuchyna_zaluzia_1_4", "current_position"): 96})
     result = run(config, w, closing(config), at(config))
 
     assert fired_on(result, FLOWERS_BY_HAND) == set(FLOWERS)
@@ -341,7 +350,7 @@ def test_a_hand_on_the_flowers_suppresses_both_kitchen_blinds(config):
 
 
 def test_a_hand_on_the_flowers_leaves_the_other_eight_blinds_alone(config):
-    w = world(**{"input_boolean.kvety_rucny_override": "on"})
+    w = world(attrs={("cover.kuchyna_zaluzia_1_4", "current_position"): 96})
     result = run(config, w, closing(config), at(config))
 
     untouched = set(config.blinds) - set(FLOWERS)
@@ -599,7 +608,7 @@ def test_every_guard_in_the_fixture_can_actually_fire(config):
     """
     worlds = [
         (world(**{"sensor.netatmo_veterny_senzor_sila_narazov": "99"}), closing(config)),
-        (world(**{"input_boolean.kvety_rucny_override": "on"}), closing(config)),
+        (world(attrs={("cover.kuchyna_zaluzia_1_4", "current_position"): 96}), closing(config)),
         (world(**{"binary_sensor.sauna_running": "on"}), closing(config)),
         (world(**{"binary_sensor.obyvacka_dvere_senzor": "on"}), opening(config)),
         (world(**{"binary_sensor.spalna_dvere_senzor_2": "on"}), closing(config)),

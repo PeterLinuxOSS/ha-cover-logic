@@ -230,10 +230,19 @@ conditions:
   # dokazuje NEGATÍVNE (žiadna zo štyroch automatík nebeží) — `context.user_id`
   # hlas ani vypínač nemajú. Je to iný príznak než `rucne_kuchyna`, ktorý
   # číta matica.
+  # Read off the blind, not off a helper. Nothing in this configuration ever
+  # sends the flower blinds above `kvety_poz` (34), so a position over 45 means
+  # somebody else put it there -- and unlike the helper it cannot disagree with
+  # the blind it describes. Measured: the helper did, on 3 of 8 transitions,
+  # and twice it cleared while the blind was still at 100. See
+  # docs/rationale.md, "Why the manual raise is read off the blind".
   kvety_rucny_override:
-    condition: state
-    entity_id: input_boolean.kvety_rucny_override
-    state: "on"
+    condition: or
+    conditions:
+      - {condition: numeric_state, above: 45, default: 0,
+         entity_id: cover.kuchyna_zaluzia_1_4, attribute: current_position}
+      - {condition: numeric_state, above: 45, default: 0,
+         entity_id: cover.kuchyna_zaluzia_2_5, attribute: current_position}
 
 modes:
   - {id: noc,       when: !ref je_noc}
