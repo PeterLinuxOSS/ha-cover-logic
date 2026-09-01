@@ -5,17 +5,18 @@ import pytest
 
 from cover_logic.conditions import evaluate_condition
 from cover_logic.model import Blind, Zone
-from cover_logic.world import Event, Target, World
+from cover_logic.world import Event, SunTimes, Target, World
 
 NOW = dt.datetime(2026, 8, 19, 13, 0)
 
 
-def world(states=None, attributes=None, now=NOW, event=None) -> World:
+def world(states=None, attributes=None, now=NOW, event=None, sun=None) -> World:
     return World(
         states=states or {},
         attributes=attributes or {},
         now=now,
         event=event or Event(),
+        sun=sun or SunTimes(),
     )
 
 
@@ -318,3 +319,101 @@ def test_state_can_compare_an_attribute():
 
     cond_no = {**cond, "state": "armed_away"}
     assert evaluate_condition(cond_no, w) is False
+
+
+# --- condition: sun --------------------------------------------------------
+
+# 19 Aug 2026 in this house: sunrise 05:44, sunset 19:51. Stated rather than
+# computed, so a test never depends on the astronomy it is checking against.
+SUN = SunTimes(sunrise=dt.datetime(2026, 8, 19, 5, 44), sunset=dt.datetime(2026, 8, 19, 19, 51))
+
+
+def sun_world(hour: int, minute: int = 0, sun: SunTimes | None = None) -> World:
+    return world(now=dt.datetime(2026, 8, 19, hour, minute), sun=SUN if sun is None else sun)
+
+
+@pytest.mark.parametrize(
+    ("hour", "minute", "expected"),
+    [
+        (19, 30, False),  # 21 min before sunset -- one minute short
+        (19, 31, True),  # exactly sunset - 20 min
+        (19, 32, True),
+        (23, 0, True),
+    ],
+)
+def test_sun_after_sunset_with_negative_offset(hour, minute, expected):
+    """The measured `lighting_on` rule: dusk begins 20 minutes before sunset.
+
+    Offsets are seconds, not HA's `"-00:20:00"` string -- see
+    docs/rationale.md.
+    """
+    cond = {"condition": "sun", "after": "sunset", "after_offset": -1200}
+    assert evaluate_condition(cond, sun_world(hour, minute)) is expected
+
+
+@pytest.mark.parametrize(
+    ("hour", "minute", "expected"),
+    [(5, 43, True), (5, 44, True), (5, 45, False), (12, 0, False)],
+)
+def test_sun_before_sunrise_includes_the_boundary_minute(hour, minute, expected):
+    """`before: sunrise` is true *at* sunrise -- HA compares with `>`, not `>=`.
+
+    Deliberately asymmetric with `condition: time`, where `before` excludes
+    its boundary (`now < before`). Matching HA matters more than matching our
+    own other condition: these bodies are copied out of HA's UI. Covered here
+    because the difference is one character and invisible in review.
+    """
+    cond = {"condition": "sun", "before": "sunrise"}
+    assert evaluate_condition(cond, sun_world(hour, minute)) is expected
+
+
+@pytest.mark.parametrize(
+    ("hour", "expected"),
+    [(2, True), (6, False), (13, False), (20, True), (23, True)],
+)
+def test_sun_before_sunrise_after_sunset_is_an_or_not_an_and(hour, expected):
+    """The one place this condition is not the AND of its two bounds.
+
+    `before: sunrise` with `after: sunset` names the dark window around
+    midnight. Read as an AND it would be empty for every day of the year, so
+    HA evaluates it as an OR and so does this engine. A test that only checked
+    daylight would pass either way, which is why 02:00 and 23:00 are both here.
+    """
+    cond = {"condition": "sun", "before": "sunrise", "after": "sunset"}
+    assert evaluate_condition(cond, sun_world(hour)) is expected
+
+
+def test_sun_window_between_sunrise_and_sunset_is_an_and():
+    """`after: sunrise` with `before: sunset` is the ordinary daylight AND."""
+    cond = {"condition": "sun", "after": "sunrise", "before": "sunset"}
+    assert evaluate_condition(cond, sun_world(13)) is True
+    assert evaluate_condition(cond, sun_world(3)) is False
+    assert evaluate_condition(cond, sun_world(21)) is False
+
+
+@pytest.mark.parametrize("missing", ["sunrise", "sunset"])
+def test_sun_is_not_satisfied_when_that_event_does_not_happen_today(missing):
+    """A polar day has no sunrise; answer False rather than raising.
+
+    Only the event actually named is allowed to veto: a missing sunrise must
+    not silently decide a condition that asks about sunset, or a polar summer
+    would answer every sun condition the same way.
+    """
+    polar = SunTimes(
+        sunrise=None if missing == "sunrise" else SUN.sunrise,
+        sunset=None if missing == "sunset" else SUN.sunset,
+    )
+    asked_about = {"condition": "sun", "after": missing}
+    assert evaluate_condition(asked_about, sun_world(13, sun=polar)) is False
+
+    # 21:00 is past both events, so whichever one survives answers True --
+    # the point being that the missing one did not get to answer at all.
+    other = "sunset" if missing == "sunrise" else "sunrise"
+    unrelated = {"condition": "sun", "after": other}
+    assert evaluate_condition(unrelated, sun_world(21, sun=polar)) is True
+
+
+def test_sun_offset_zero_is_the_default():
+    cond = {"condition": "sun", "after": "sunset"}
+    assert evaluate_condition(cond, sun_world(19, 50)) is False
+    assert evaluate_condition(cond, sun_world(19, 51)) is True

@@ -129,6 +129,11 @@ COND_EVENT_TARGETS_ZONE = "event_targets_zone"
 COND_REF = "ref"
 COND_SUN_HITS_TARGET = "sun_hits_target"
 
+# `condition: sun` -- Home Assistant's own type, spelled the same way.
+COND_SUN = "sun"
+SUN_EVENT_SUNRISE = "sunrise"
+SUN_EVENT_SUNSET = "sunset"
+
 # The zone half of a `"<mode>.<zone>"` rules key that marks a *default* rule
 # list for that mode -- a rule with no zone of its own, inherited by every
 # zone in that mode. Chosen as an explicit sentinel over simply omitting the

@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from .const import (
     COND_EVENT_TARGETS_ZONE,
     COND_REF,
+    COND_SUN,
     COND_SUN_HITS_TARGET,
     GUARD_ANY,
     GUARD_DEFER,
@@ -792,7 +793,7 @@ def _check_unknown_condition_refs(config: Config) -> list[Problem]:
     return out
 
 
-# Required keys per condition type. `time`, `numeric_state` and
+# Required keys per condition type. `sun`, `time`, `numeric_state` and
 # `sun_hits_target`/`event_targets_zone` need extra "at least one of" or
 # "none required" handling beyond a flat required-set, so they are handled
 # separately in `_check_condition_shape` -- this only covers the flat case.
@@ -807,6 +808,7 @@ _REQUIRED_CONDITION_KEYS: dict[str, tuple[str, ...]] = {
     "or": ("conditions",),
     COND_REF: ("name",),
     "state": ("entity_id", "state"),
+    COND_SUN: (),
     COND_SUN_HITS_TARGET: (),
     "template": ("value_template",),
     "time": (),
@@ -856,7 +858,7 @@ def _check_condition_shape(node: dict, where: str, owner: tuple[str, str]) -> li
                 owners=owners,
             )
         )
-    if kind == "time" and "after" not in node and "before" not in node:
+    if kind in {COND_SUN, "time"} and "after" not in node and "before" not in node:
         out.append(
             Problem(
                 ERROR,

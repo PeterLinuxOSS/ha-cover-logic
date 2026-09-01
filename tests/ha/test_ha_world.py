@@ -140,3 +140,22 @@ def test_now_type_is_datetime(config, fake_hass):
     world = build_world(hass, config)
 
     assert isinstance(world.now, dt.datetime)
+
+
+def test_build_world_fills_todays_sun_times_as_naive_local(config, fake_hass):
+    """`condition: sun` is only pure because the seam resolves the astronomy.
+
+    Naive local, matching `World.now`: a tz-aware sun compared against a naive
+    `now` raises, and that break would surface once a day at dusk rather than
+    in review.
+    """
+    world = build_world(fake_hass({}), config)
+
+    assert world.sun.sunrise is not None, "the test hass has a latitude; sunrise must resolve"
+    assert world.sun.sunset is not None
+    assert world.sun.sunrise.tzinfo is None
+    assert world.sun.sunset.tzinfo is None
+    # The snapshot's own day, not yesterday's or tomorrow's.
+    assert world.sun.sunrise.date() == world.now.date()
+    assert world.sun.sunset.date() == world.now.date()
+    assert world.sun.sunrise < world.sun.sunset

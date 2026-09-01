@@ -10,7 +10,14 @@ from typing import Any
 
 import jinja2
 
-from .const import COND_EVENT_TARGETS_ZONE, COND_REF, COND_SUN_HITS_TARGET
+from .const import (
+    COND_EVENT_TARGETS_ZONE,
+    COND_REF,
+    COND_SUN,
+    COND_SUN_HITS_TARGET,
+    SUN_EVENT_SUNRISE,
+    SUN_EVENT_SUNSET,
+)
 from .world import Target, World
 
 DEFAULT_AZIMUTH_ENTITY = "sensor.sun_solar_azimuth"
@@ -90,6 +97,8 @@ def evaluate_condition(
         return _numeric_state(cond, world)
     if kind == "time":
         return _time(cond, world)
+    if kind == COND_SUN:
+        return _sun(cond, world)
     if kind == "template":
         return _template(cond, world)
     if kind == COND_SUN_HITS_TARGET:
@@ -166,6 +175,51 @@ def _time(cond: dict, world: World) -> bool:
     if before is not None:
         return now < before
     return True
+
+
+def _sun(cond: dict, world: World) -> bool:
+    """Test `world.now` against today's sunrise/sunset, as HA's `condition: sun` does.
+
+    Offsets are **seconds**, matching `max_wait` and every other duration this
+    schema takes, rather than HA's `"-00:20:00"` string. See
+    docs/rationale.md -- "Why `condition: sun` takes seconds and skips the
+    polar rollover".
+    """
+    before = cond.get("before")
+    after = cond.get("after")
+    sunrise = world.sun.sunrise
+    sunset = world.sun.sunset
+
+    # No sunrise/sunset today is a polar latitude; HA answers "not satisfied"
+    # rather than raising, and a house that never sees the sun set should not
+    # have its blinds decided by an exception.
+    if sunrise is None and SUN_EVENT_SUNRISE in (before, after):
+        return False
+    if sunset is None and SUN_EVENT_SUNSET in (before, after):
+        return False
+
+    now = world.now
+    before_at = dt.timedelta(seconds=int(cond.get("before_offset", 0)))
+    after_at = dt.timedelta(seconds=int(cond.get("after_offset", 0)))
+
+    # `before: sunrise` together with `after: sunset` names the dark window
+    # around midnight, so it is an OR -- the one place this condition is not
+    # the usual AND of two bounds. HA does the same.
+    if (
+        before == SUN_EVENT_SUNRISE
+        and after == SUN_EVENT_SUNSET
+        and sunrise is not None
+        and sunset is not None
+    ):
+        return now < sunrise + before_at or now > sunset + after_at
+
+    if before == SUN_EVENT_SUNRISE and sunrise is not None and now > sunrise + before_at:
+        return False
+    if before == SUN_EVENT_SUNSET and sunset is not None and now > sunset + before_at:
+        return False
+    if after == SUN_EVENT_SUNRISE and sunrise is not None and now < sunrise + after_at:
+        return False
+    return not (after == SUN_EVENT_SUNSET and sunset is not None and now < sunset + after_at)
 
 
 def _template(cond: dict, world: World) -> bool:

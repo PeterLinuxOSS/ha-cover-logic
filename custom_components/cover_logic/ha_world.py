@@ -9,12 +9,14 @@ turns into the plain data those pure modules understand.
 
 from typing import Any
 
+from homeassistant.const import SUN_EVENT_SUNRISE, SUN_EVENT_SUNSET
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.sun import get_astral_event_date
 import homeassistant.util.dt as dt_util
 
 from .config_schema import referenced_entities
 from .model import Config
-from .world import Event, World
+from .world import Event, SunTimes, World
 
 
 def build_world(hass: HomeAssistant, config: Config, event: Event | None = None) -> World:
@@ -62,9 +64,28 @@ def build_world(hass: HomeAssistant, config: Config, event: Event | None = None)
                 continue
             states[entry] = state.state
 
+    now = dt_util.now()
     return World(
         states=states,
         attributes=attributes,
-        now=dt_util.now().replace(tzinfo=None),
+        now=now.replace(tzinfo=None),
         event=event if event is not None else Event(),
+        sun=_sun_times(hass, now),
     )
+
+
+def _sun_times(hass: HomeAssistant, now: Any) -> SunTimes:
+    """Resolve today's sunrise and sunset to naive local, as `World.now` is.
+
+    Always filled, not gated on `referenced_entities`: these are computed from
+    the house's own latitude rather than read off an entity, so there is no
+    entity whose absence could stand for "do not ask". `None` survives as
+    `None` -- a polar day genuinely has no sunrise, and inventing one would
+    make `condition: sun` answer a question the sky did not.
+    """
+
+    def naive(event: str) -> Any:
+        moment = get_astral_event_date(hass, event, now.date())
+        return None if moment is None else dt_util.as_local(moment).replace(tzinfo=None)
+
+    return SunTimes(sunrise=naive(SUN_EVENT_SUNRISE), sunset=naive(SUN_EVENT_SUNSET))
