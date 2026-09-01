@@ -27,6 +27,57 @@ rather than left to callers.
 
 ## `conditions.py`
 
+### Why `condition: sun` takes seconds and skips the polar rollover
+
+Measured on the live house on 2026-09-01, over 14 days of history: the
+lux-threshold half of `Lighting SUN` decides nothing. In daylight hours the
+sensor never once fell below its 2800 threshold (daily minimum 2913-3043,
+sensor maximum 3057 -- the threshold sits inside its noise), while the real
+`lighting_on` transitions tracked the sun to the minute: dusk drifting
+-1.9 min/day against sunset's -1.9, dawn +1.8 against sunrise's +1.8. The sun
+triggers, added as a fallback for a flat sensor battery, had quietly become
+the only mechanism.
+
+That is why this condition exists: a house-agnostic `lighting_on` needs
+astronomy and nothing else -- no lux sensor, no hysteresis, no debounce, and
+none of the 46 sensor dropouts those 14 days contained.
+
+**Astronomy stays in `ha_world`.** `get_astral_event_date` needs `hass`, and
+`conditions.py` is on `tests/test_purity.py`'s list precisely so the decision
+model can be tested as plain Python. So the seam resolves today's sunrise and
+sunset to naive local datetimes -- the shape `World.now` already is -- and
+this condition is pure datetime arithmetic over them. A test can therefore
+state any sun of any latitude without building a `hass`.
+
+**Offsets are seconds**, not HA's `"-00:20:00"` string, because every other
+duration in this schema (`max_wait`, a guard's `for`) is already seconds, and
+one dialect is worth more than literal copy-paste from HA's YAML.
+
+Two behaviours are HA's, kept deliberately even though they look wrong:
+
+- **`before` includes its boundary** (`now > sunrise + offset` is what fails
+  the condition, so *at* sunrise it still passes), asymmetric with
+  `condition: time`, where `before` excludes it. These bodies get copied out
+  of HA's UI, so matching HA beats matching our own other condition.
+- **`before: sunrise` with `after: sunset` is an OR**, not the usual AND of
+  two bounds. Read as an AND it would be empty every day of the year; it
+  names the dark window around midnight.
+
+Both are pinned by `tests/ha/test_sun_condition_parity.py`, which runs this
+implementation and HA's own `components.sun.condition.sun` over the same grid
+of times, offsets and shapes and requires every answer to match. Differential
+rather than a restatement of my reading of HA's code, because the port *is* a
+reading of someone else's code. Verified by mutation: flipping the boundary to
+`>=` fails it, and turning the OR into an AND fails 13 cases.
+
+**Not ported:** HA's rollover to tomorrow's event when
+`today > as_local(sunrise).date()`. It guards a polar/timezone case where a
+same-day astral computation resolves to an earlier date, and reproducing it
+purely would mean handing the engine tomorrow's times too, plus the
+condition's own knowledge of which event it asked about. A missing event
+already answers `False`, so a polar install degrades to "this condition is
+never satisfied" rather than to a wrong answer.
+
 ### Why `_ref_chain` must be threaded through every recursive call
 
 `_ref_chain` is private: it tracks the names of `ref` conditions currently

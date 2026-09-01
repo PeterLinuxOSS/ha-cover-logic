@@ -38,6 +38,21 @@ class Target:
     zone: Zone
 
 
+@dataclass(frozen=True, slots=True)
+class SunTimes:
+    """Today's sunrise and sunset, naive local, exactly as `World.now` is.
+
+    Astronomy lives in `ha_world`, the one seam allowed to import Home
+    Assistant, so `condition: sun` here stays plain datetime arithmetic and
+    tests can state any sun of any day without a `hass`. `None` means the sun
+    does not rise or set today at all -- a polar latitude, which HA's own
+    condition treats as "not satisfied" rather than an error.
+    """
+
+    sunrise: dt.datetime | None = None
+    sunset: dt.datetime | None = None
+
+
 @dataclass(frozen=True)
 class World:
     """One immutable snapshot of every entity state and attribute the engine may read."""
@@ -46,6 +61,7 @@ class World:
     attributes: Mapping[tuple[str, str], Any] = field(default_factory=dict)
     now: dt.datetime = dt.datetime(1970, 1, 1)
     event: Event = Event()
+    sun: SunTimes = SunTimes()
 
     def __post_init__(self) -> None:
         """Copy the mappings so the snapshot cannot be changed from outside.

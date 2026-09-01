@@ -354,12 +354,15 @@ top of them.)
 - **`conditions`** — a mapping of reusable, named condition bodies,
   referenced elsewhere with the `!ref <name>` YAML tag. The dialect is a
   subset of Home Assistant's native condition schema (`state`,
-  `numeric_state`, `time`, `template`, `and`/`or`/`not`) plus two
+  `numeric_state`, `time`, `sun`, `template`, `and`/`or`/`not`) plus two
   target-relative extensions this project adds: `sun_hits_target` and
   `event_targets_zone` (see §3). `numeric_state` requires an explicit
   `default` here, unlike stock HA — it mirrors Jinja's `| float(999)`
   fallback, and which side is "safe" depends on the rule, so it is never
-  implied.
+  implied. `sun` takes `before`/`after` (`sunrise`/`sunset`) with
+  `before_offset`/`after_offset` in **seconds**, not HA's `"-00:20:00"`
+  string; its answers are pinned to HA's own implementation by a differential
+  test, boundary quirks included (see `docs/rationale.md`).
 - **`values`** — a mapping of `name -> {entity, default}`: a helper entity
   read at decision time, for use as `!ref name` inside an action's
   `position`/`tilt`.

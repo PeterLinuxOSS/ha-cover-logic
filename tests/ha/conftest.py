@@ -115,20 +115,36 @@ class FakeStateMachine:
         return self._states.get(entity_id)
 
 
+class FakeLocation:
+    """The three fields `homeassistant.helpers.sun` reads off `hass.config`.
+
+    Bratislava, so a sun time computed in a test is a plausible one for this
+    house rather than Home Assistant's own default of San Diego.
+    """
+
+    latitude = 48.1486
+    longitude = 17.1077
+    elevation = 150
+    time_zone = "Europe/Bratislava"
+
+
 class FakeHass:
     """A minimal stand-in for `HomeAssistant`.
 
-    `build_world` only ever reads `hass.states.get(entity_id)`. Constructing a
-    real `HomeAssistant` needs a running event loop and on-disk config
-    directory -- disproportionate for exercising one read path. This fake
-    carries real `homeassistant.core.State` objects (constructed standalone,
-    no event loop required), so attribute types and `.attributes` semantics
-    are the genuine Home Assistant behaviour, not a reimplementation of it.
+    `build_world` reads `hass.states.get(entity_id)` and -- since sun times
+    became part of the snapshot -- `hass.config`'s latitude/longitude/
+    elevation, by way of `get_astral_event_date`. Constructing a real
+    `HomeAssistant` needs a running event loop and on-disk config directory --
+    disproportionate for exercising one read path. This fake carries real
+    `homeassistant.core.State` objects (constructed standalone, no event loop
+    required), so attribute types and `.attributes` semantics are the genuine
+    Home Assistant behaviour, not a reimplementation of it.
     """
 
     def __init__(self, states):
         """Wrap `states` (entity_id -> `State`) behind a `.states.get()` façade."""
         self.states = FakeStateMachine(states)
+        self.config = FakeLocation()
 
 
 @pytest.fixture
