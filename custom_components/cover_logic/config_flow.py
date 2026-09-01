@@ -511,8 +511,11 @@ class CoverLogicConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         `_async_import_config`/`async_migrate_entry` already give an
         imported subentry, for the same reason those two reuse it instead of
         inventing a third copy.
+
+        `repo_example_config_path` stats a file, so it goes to the executor
+        like the `load_config_file` below it -- both are I/O on the event loop.
         """
-        example_path = repo_example_config_path()
+        example_path = await self.hass.async_add_executor_job(repo_example_config_path)
         if example_path is None:
             return await self.async_step_example_not_available(user_input)
 

@@ -214,7 +214,11 @@ def load_config(text: str) -> Config:
 
 
 def load_config_file(path: str | Path) -> Config:
-    """Read and parse a YAML config file into a frozen `Config`."""
+    """Read and parse a YAML config file into a frozen `Config`.
+
+    Blocking, and stays that way (this module is HA-free and exhaustively
+    tested as plain Python): an event-loop caller owns the executor hop.
+    """
     return load_config(Path(path).read_text(encoding="utf-8"))
 
 

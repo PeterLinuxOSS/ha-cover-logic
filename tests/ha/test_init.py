@@ -30,6 +30,25 @@ from cover_logic.config_schema import load_config
 from cover_logic.config_store import subentries_from_config
 from cover_logic.const import CONF_CONFIG_PATH
 
+# This checkout's root, so the blocking-I/O guard below can ignore reads that
+# are not ours -- Home Assistant does plenty of its own on the loop.
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _is_project_file(path: object) -> bool:
+    """True when `path` names a file inside this checkout, else False.
+
+    Deliberately total: `builtins.open` is patched process-wide while the
+    guard is armed, and it accepts file descriptors and bytes as well as
+    paths, none of which `Path` can take. Anything unrecognisable is somebody
+    else's I/O by definition, so it answers False rather than raising.
+    """
+    try:
+        return Path(path).resolve().is_relative_to(_PROJECT_ROOT)  # type: ignore[arg-type]
+    except (TypeError, ValueError, OSError):
+        return False
+
+
 # Zero problems of any severity: one blind, one zone that owns it, one
 # fallback mode, and a rule list for that (mode, zone) pair ending in an
 # unconditional catch-all rule.
@@ -271,7 +290,9 @@ def test_setup_creates_fixture_drift_issue_when_subentries_diverge(make_entry, s
     delete.assert_not_called()
 
 
-def test_check_fixture_conformance_clears_the_issue_when_config_matches_the_real_fixture():
+def test_check_fixture_conformance_clears_the_issue_when_config_matches_the_real_fixture(
+    setup_hass,
+):
     """This checkout's own `fixtures/dom_peter.yaml`, loaded back as a `Config`, must
     compare equal to itself: proof this conformance check does not fire on a
     false positive, only on a real one.
@@ -283,8 +304,8 @@ def test_check_fixture_conformance_clears_the_issue_when_config_matches_the_real
     a real `hass.bus`/`hass.data` `FakeSetupHass` does not provide (see
     `hass_factory`'s own docstring on why `test_coordinator.py` uses a real,
     minimal `HomeAssistant` for exactly that reason) -- disproportionate for
-    a test about the conformance check alone, which never touches `hass`
-    itself except to pass it through to the two mocked `issue_registry`
+    a test about the conformance check alone, which touches `hass` only for
+    its executor and to pass it through to the two mocked `issue_registry`
     calls below.
     """
     from cover_logic import _check_fixture_conformance  # noqa: PLC0415
@@ -294,12 +315,63 @@ def test_check_fixture_conformance_clears_the_issue_when_config_matches_the_real
     fixture = repo_fixture_path()
     assert fixture is not None, "this test suite must run from inside the project checkout"
     config = load_config_file(fixture)
+    hass = setup_hass()
 
     with (
         mock.patch("homeassistant.helpers.issue_registry.async_create_issue") as create,
         mock.patch("homeassistant.helpers.issue_registry.async_delete_issue") as delete,
     ):
-        _check_fixture_conformance(mock.sentinel.hass, config)
+        asyncio.run(_check_fixture_conformance(hass, config))
 
     create.assert_not_called()
-    delete.assert_called_once_with(mock.sentinel.hass, "cover_logic", "fixture_drift")
+    delete.assert_called_once_with(hass, "cover_logic", "fixture_drift")
+
+
+def test_setup_from_subentries_does_no_blocking_file_io_on_the_event_loop(make_entry, setup_hass):
+    """The subentry branch's own file I/O must go through the executor too.
+
+    `_check_fixture_conformance` used to call `repo_fixture_path` (a stat) and
+    `load_config_file` (a read) straight from `async_setup_entry`, and the
+    real Home Assistant logged it on every start: two `homeassistant.util.loop`
+    "Detected blocking call" warnings for `read_text` and for the `open`
+    underneath it, both naming `fixtures/dom_peter.yaml`.
+
+    Guards the calling thread rather than a call count: `Path.read_text`,
+    `builtins.open` and `Path.is_file` raise if they are reached from the
+    thread that awaits the setup, and are the real functions everywhere else.
+    Scoped to this project's own checkout by path, so an unrelated read Home
+    Assistant's own internals may do on the loop cannot make this fail (or
+    pass) for reasons that have nothing to do with `cover_logic`.
+    """
+    entry = make_entry({}, subentries=_subentries_for(VALID_CONFIG))
+    hass = setup_hass()
+    loop_thread_ident = threading.get_ident()
+    offences = []
+
+    def guard(name, original, path_of):
+        def wrapper(*args, **kwargs):
+            if threading.get_ident() == loop_thread_ident and _is_project_file(path_of(*args)):
+                offences.append(f"{name}({path_of(*args)})")
+            return original(*args, **kwargs)
+
+        return wrapper
+
+    async def run():
+        with (
+            mock.patch.object(
+                Path, "read_text", guard("Path.read_text", Path.read_text, lambda self: self)
+            ),
+            mock.patch.object(
+                Path, "is_file", guard("Path.is_file", Path.is_file, lambda self: self)
+            ),
+            mock.patch("builtins.open", guard("open", open, lambda file, *_rest: file)),
+        ):
+            await async_setup_entry(hass, entry)
+
+    with (
+        mock.patch("homeassistant.helpers.issue_registry.async_create_issue"),
+        mock.patch("homeassistant.helpers.issue_registry.async_delete_issue"),
+    ):
+        asyncio.run(run())
+
+    assert offences == []

@@ -1115,8 +1115,11 @@ class CoverLogicOptionsFlow(OptionsFlow):
 
         Split out so parsing (`config_from_subentries`) happens exactly once
         per render -- see that method's own docstring.
+
+        `repo_fixture_path` stats a file, so it goes to the executor like the
+        `load_config_file` below it -- both are I/O on the event loop.
         """
-        fixture = repo_fixture_path()
+        fixture = await self.hass.async_add_executor_job(repo_fixture_path)
         if fixture is None:
             return (
                 "This installation ships no fixtures/dom_peter.yaml to compare "
