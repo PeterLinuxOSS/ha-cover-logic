@@ -86,10 +86,11 @@ from .config_schema import (
     _zone_to_dict,
     guard_to_dict,
     parse_guards,
+    parse_manual_detection,
     unparse_condition,
 )
 from .const import RULE_DEFAULT_ZONE
-from .model import Config, Mode, Zone
+from .model import Config, ManualDetection, Mode, Zone
 from .validation import Problem, check_duplicate_guard_order, check_duplicate_rule_order
 
 BLIND = "blind"
@@ -99,8 +100,12 @@ CONDITION = "condition"
 VALUE = "value"
 RULE = "rule"
 GUARD = "guard"
+# The one type with cardinality 0-or-1: it is a single house-wide setting,
+# not "many small items" the way the other seven are. `_build_manual_detection`
+# is what refuses a second one.
+MANUAL_DETECTION = "manual_detection"
 
-SUBENTRY_TYPES = frozenset({BLIND, ZONE, MODE, CONDITION, VALUE, RULE, GUARD})
+SUBENTRY_TYPES = frozenset({BLIND, ZONE, MODE, CONDITION, VALUE, RULE, GUARD, MANUAL_DETECTION})
 
 # The single per-item key that names a zone, mode, condition or value --
 # playing the role the YAML mapping key (`zones: {<this>: {...}}`) plays
@@ -343,6 +348,28 @@ def _build_rules(
     }
 
 
+def _build_manual_detection(entry: Any) -> ManualDetection:
+    """The single `manual_detection` subentry, or the empty default if there is none.
+
+    Refuses a second one with a `ConfigError` rather than picking a winner:
+    two declarations of "what is not a person" is an ambiguity, and silently
+    reading whichever iterated first is how a house ends up ignoring half the
+    list it thinks it declared. The subentry flow refuses to *create* a
+    second, so this is the backstop for an entry that got one some other way
+    (an import, a hand-edited `.storage`).
+    """
+    found = _of_type(entry, MANUAL_DETECTION)
+    if len(found) > 1:
+        msg = (
+            f"{len(found)} manual_detection subentries; there can be at most one "
+            f"-- it is a single house-wide setting"
+        )
+        raise ConfigError(msg)
+    if not found:
+        return ManualDetection()
+    return parse_manual_detection(found[0])
+
+
 def config_from_subentries(entry: Any) -> Config:
     """Build a frozen `Config` from `entry.subentries`, the shape `load_config` builds from YAML.
 
@@ -370,6 +397,7 @@ def config_from_subentries(entry: Any) -> Config:
         conditions=conditions,
         values=values,
         guards=_build_guards(entry, raw_conditions, values),
+        manual_detection=_build_manual_detection(entry),
     )
 
 
@@ -671,6 +699,14 @@ def subentries_from_config(config: Config) -> list[tuple[str, dict[str, Any]]]:
             data["zone"] = zone_id
             data["order"] = index * _ORDER_STEP
             items.append((RULE, data))
+
+    if config.manual_detection.ignore_while_on:
+        items.append(
+            (
+                MANUAL_DETECTION,
+                {"ignore_while_on": list(config.manual_detection.ignore_while_on)},
+            )
+        )
 
     items.extend(guard_subentry_items(guards_to_data(config)))
 

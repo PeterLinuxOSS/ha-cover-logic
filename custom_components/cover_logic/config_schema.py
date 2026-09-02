@@ -22,7 +22,20 @@ from .const import (
     GUARD_STAGE_OUTPUT,
     RULE_DEFAULT_ZONE,
 )
-from .model import KEEP, UNSET, Action, Blind, Config, Guard, Mode, Ref, Rule, Value, Zone
+from .model import (
+    KEEP,
+    UNSET,
+    Action,
+    Blind,
+    Config,
+    Guard,
+    ManualDetection,
+    Mode,
+    Ref,
+    Rule,
+    Value,
+    Zone,
+)
 
 
 class ConfigError(Exception):
@@ -57,7 +70,17 @@ _GUARD_KEYS = {
 }
 _MODE_KEYS = {"id", "when"}
 _RULE_KEYS = {"events", "if", "name", "then"}
-_TOP_LEVEL_KEYS = {"blinds", "conditions", "guards", "modes", "rules", "values", "zones"}
+_TOP_LEVEL_KEYS = {
+    "blinds",
+    "conditions",
+    "guards",
+    "manual_detection",
+    "modes",
+    "rules",
+    "values",
+    "zones",
+}
+_MANUAL_DETECTION_KEYS = {"ignore_while_on"}
 _VALUE_KEYS = {"default", "entity"}
 _ZONE_KEYS = {"members", "occupants"}
 
@@ -210,7 +233,38 @@ def load_config(text: str) -> Config:
         conditions=conditions,
         values=values,
         guards=parse_guards(raw.get("guards"), raw_conditions, values),
+        manual_detection=parse_manual_detection(raw.get("manual_detection")),
     )
+
+
+def parse_manual_detection(node: Any) -> ManualDetection:
+    """Parse the `manual_detection:` section, or return the empty default.
+
+    A missing section and an empty `ignore_while_on` mean the same thing --
+    nothing is excluded -- so unlike `guards`' `max_wait` there is no third
+    state to preserve here and both spell themselves as the default.
+
+    Entity ids are checked for the `<domain>.<object_id>` shape and nothing
+    more: whether the entity exists is a question about the house, not about
+    the document, and `validation` is where questions about the house belong.
+    """
+    if node is None:
+        return ManualDetection()
+    mapping = _expect_mapping(node, "manual_detection")
+    _check_keys(mapping, _MANUAL_DETECTION_KEYS, "manual_detection")
+    raw = mapping.get("ignore_while_on") or []
+    entities = tuple(
+        _expect_str(item, "manual_detection ignore_while_on")
+        for item in _expect_list(raw, "manual_detection ignore_while_on")
+    )
+    for entity in entities:
+        if entity.count(".") != 1 or not all(entity.split(".")):
+            msg = (
+                f"manual_detection ignore_while_on {entity!r} is not an entity id "
+                f"of the form '<domain>.<object_id>'"
+            )
+            raise ConfigError(msg)
+    return ManualDetection(ignore_while_on=entities)
 
 
 def load_config_file(path: str | Path) -> Config:
@@ -426,6 +480,8 @@ def dump_config(config: Config) -> str:
             name: unparse_condition(body, RefTag)
             for name, body in sorted(config.conditions.items())
         }
+    if config.manual_detection.ignore_while_on:
+        doc["manual_detection"] = {"ignore_while_on": list(config.manual_detection.ignore_while_on)}
     if config.modes:
         doc["modes"] = [_mode_to_dict(mode) for mode in config.modes]
     if config.rules:

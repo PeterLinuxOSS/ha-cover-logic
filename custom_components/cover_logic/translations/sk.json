@@ -395,6 +395,38 @@
       "abort": {
         "reconfigure_successful": "Rekonfigurácia prebehla úspešne"
       }
+    },
+    "manual_detection": {
+      "entry_type": "Detekcia ručného zásahu",
+      "initiate_flow": {
+        "user": "Nastaviť detekciu ručného zásahu"
+      },
+      "step": {
+        "user": {
+          "title": "Detekcia ručného zásahu",
+          "description": "Ktoré pohyby nie sú od človeka. Toto nastavenie je pre celý dom jedno jediné.",
+          "data": {
+            "ignore_while_on": "Ignoruj pohyby, kým je niektorá z nich zapnutá"
+          },
+          "data_description": {
+            "ignore_while_on": "Entita skriptu je zapnutá presne po dobu svojho behu, takže menovať ju tu znamená „čokoľvek, čo sa pohne počas tohto skriptu, je od skriptu, nie od človeka\". Funguje akákoľvek entita, nielen skripty — input boolean, ktorý si dom zapína okolo vlastných hromadných pohybov, robí to isté."
+          }
+        },
+        "reconfigure": {
+          "title": "Upraviť detekciu ručného zásahu",
+          "description": "Ktoré pohyby nie sú od človeka.",
+          "data": {
+            "ignore_while_on": "Ignoruj pohyby, kým je niektorá z nich zapnutá"
+          }
+        }
+      },
+      "error": {
+        "invalid_config": "Tento súbor sa nedal použiť: {error_detail}"
+      },
+      "abort": {
+        "reconfigure_successful": "Rekonfigurácia prebehla úspešne",
+        "already_configured": "Detekcia ručného zásahu už je nastavená — uprav existujúcu."
+      }
     }
   },
   "options": {
@@ -410,6 +442,7 @@
           "modes": "Režimy ({modes_count})",
           "rules": "Pravidlá ({rules_count})",
           "guards": "Poistky ({guards_count})",
+          "manual_detection": "Detekcia ručného zásahu ({manual_detection_count})",
           "import_export": "Import / export YAML",
           "execution": "Vykonávanie ({execution_summary})",
           "check_matrix": "Zdravie konfigurácie ({health_summary})"
@@ -480,6 +513,16 @@
       "guards": {
         "title": "Poistky",
         "description": "Nastavených: {count}. Skúšajú sa v poradí; o príkaze rozhodne prvá poistka, ktorá naň sadne.",
+        "menu_options": {
+          "add": "Pridať",
+          "edit": "Upraviť existujúce",
+          "remove": "Odstrániť existujúce",
+          "back": "Späť do hlavnej ponuky"
+        }
+      },
+      "manual_detection": {
+        "title": "Detekcia ručného zásahu",
+        "description": "Nastavených: {count} (0 alebo 1). Ktoré pohyby nie sú od človeka.",
         "menu_options": {
           "add": "Pridať",
           "edit": "Upraviť existujúce",

@@ -917,3 +917,69 @@ guards:
     without = [pair for pair in items if pair[0] != "guard"]
     assert any(kind == "guard" for kind, _data in items), "fixture has no guard to drop"
     assert config_from_subentries(entry_from_subentry_items(without)) != original
+
+
+# ---------------------------------------------------------------------------
+# `manual_detection`: the one subentry type with cardinality 0-or-1.
+# ---------------------------------------------------------------------------
+
+
+def test_manual_detection_subentry_parses_like_the_same_yaml():
+    entry = make_entry([("manual_detection", {"ignore_while_on": ["script.x"]})])
+
+    config = config_from_subentries(entry)
+
+    assert (
+        config.manual_detection
+        == load_config("manual_detection:\n  ignore_while_on: [script.x]\n").manual_detection
+    )
+
+
+def test_no_manual_detection_subentry_is_the_empty_default():
+    """Absent and "exclude nothing" are the same thing, so both spell themselves alike."""
+    assert config_from_subentries(make_entry([])).manual_detection.ignore_while_on == ()
+
+
+def test_two_manual_detection_subentries_are_refused_rather_than_one_picked():
+    """Two declarations of "what is not a person" is an ambiguity, not a merge.
+
+    Picking whichever iterated first is how a house ends up ignoring half the
+    list it believes it declared -- silently, and only visibly at the moment a
+    script's movement gets read as somebody's hand.
+    """
+    entry = make_entry(
+        [
+            ("manual_detection", {"ignore_while_on": ["script.a"]}),
+            ("manual_detection", {"ignore_while_on": ["script.b"]}),
+        ]
+    )
+
+    with pytest.raises(ConfigError, match="at most one"):
+        config_from_subentries(entry)
+
+
+def test_manual_detection_survives_a_full_yaml_to_subentries_round_trip():
+    original = load_config(
+        """
+blinds:
+  - {entity: cover.a}
+zones:
+  z: {members: [cover.a]}
+modes:
+  - {id: m}
+rules:
+  m.z:
+    - {then: {position: keep}}
+manual_detection:
+  ignore_while_on: [script.spalna_odhnutie, input_boolean.bulk]
+"""
+    )
+
+    items = subentries_from_config(original)
+    assert config_from_subentries(entry_from_subentry_items(items)) == original
+
+    # The negative control: drop the pair and the round trip must stop matching,
+    # or this test would pass for a `Config` comparison that ignores the field.
+    without = [pair for pair in items if pair[0] != "manual_detection"]
+    assert any(kind == "manual_detection" for kind, _data in items)
+    assert config_from_subentries(entry_from_subentry_items(without)) != original

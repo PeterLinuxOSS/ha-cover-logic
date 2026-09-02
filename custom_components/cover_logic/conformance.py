@@ -26,6 +26,7 @@ have no `hass` to hop with. An event-loop caller owns that hop -- see
 `__init__._read_repo_fixture`.
 """
 
+from dataclasses import fields
 from pathlib import Path
 
 from .model import Config
@@ -34,7 +35,13 @@ from .model import Config
 # the fixture on. Compared one at a time -- not "`live != reference`" as one
 # boolean -- so a failure names *which* piece drifted: "rules" and "guards"
 # point a reader somewhere very different to look.
-_FIELDS = ("blinds", "zones", "modes", "rules", "conditions", "values", "guards")
+#
+# Derived from the dataclass, never hand-listed. It *was* hand-listed, and
+# adding `manual_detection` to `Config` showed what that costs: the new field
+# was simply invisible to this check, so the fixture and the running house
+# could disagree about it forever and the drift test would stay green. A list
+# that has to be remembered is a list that will be forgotten exactly once.
+_FIELDS = tuple(f.name for f in fields(Config))
 
 
 def diff_configs(live: Config, reference: Config) -> list[str]:

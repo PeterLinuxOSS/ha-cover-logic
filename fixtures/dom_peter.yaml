@@ -484,6 +484,17 @@ rules:
 # dverovom senzore — a jej vyradenie by len znamenalo, že sa cez leto pri
 # otvorených dverách nedá zatvoriť. Dverové žalúzie sú práve dve:
 # `cover.obyvacka_zaluzia_dvere_1_3` a `cover.spalna_zaluzia_dvere_1`.
+# Ktoré pohyby nie sú od človeka. Presne tie štyri, ktoré vylučuje aj
+# `automation.Žalúzie - detekcia ručného zásahu` -- `script.<x>` je `on` len
+# počas vlastného behu, takže pohyb v tom čase je od skriptu.
+# Zatiaľ to nič nečíta: detektor sa zapojí až krokom 4.
+manual_detection:
+  ignore_while_on:
+    - script.zaluzie_uplatnit
+    - script.spalna_odhnutie
+    - script.spalna_zatvorenie
+    - script.spalna_zaluzie_otvorit
+
 guards:
   # #9 — Wind cover protection. Prvá zámerne: je to jediný interlock, ktorý
   # musí platiť aj vtedy, keď je všetko ostatné pokazené, a `description` aj
