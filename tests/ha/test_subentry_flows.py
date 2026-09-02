@@ -42,6 +42,7 @@ from cover_logic.config_store import (
     _ID_KEY,
     BLIND,
     CONDITION,
+    GUARD,
     MODE,
     RULE,
     SUBENTRY_TYPES,
@@ -111,7 +112,7 @@ def test_every_subentry_type_the_store_reads_has_a_flow():
 
     assert types is SUBENTRY_FLOW_HANDLERS
     assert set(types) == SUBENTRY_TYPES
-    assert set(types) == {BLIND, ZONE, VALUE, CONDITION, MODE, RULE}
+    assert set(types) == {BLIND, ZONE, VALUE, CONDITION, MODE, RULE, GUARD}
 
 
 def test_blind_add_shows_a_form_with_the_expected_fields(subentry_entry, subentry_hass):
@@ -2718,39 +2719,41 @@ def test_every_field_of_every_rendered_form_has_a_label(subentry_entry, subentry
 
 
 # ---------------------------------------------------------------------------
-# Guards and `_CODE_OWNERS`: guards are not a subentry type (they live in
-# `entry.data["guards"]` -- see `config_store.py`'s module docstring), so no
-# form's fields can fix a guard's problem and none may be blocked by one.
-# That is what every guard code being mapped to an empty owner set means, and
-# this is the test that says so out loud: the failure it guards against is
-# silent, permanent, and has already happened three times in this file's
-# history under other codes -- a defect nobody can reach from any form leaves
-# the whole configuration unbuildable through the UI.
+# Guards and `_CODE_OWNERS`: now that `guard` is a subentry type with a form
+# of its own, every guard code must name that type (or, for the two
+# positional ones, be attributed to one specific guard). A code in neither
+# dict blocks nothing at all, which would let a broken guard be saved with no
+# complaint; a code mapped to the wrong type blocks a form that cannot reach
+# it. Both failures are silent, and this file's history has paid for the
+# second one three times under other codes.
 # ---------------------------------------------------------------------------
 
 
 def test_every_guard_problem_code_is_declared_in_one_of_the_two_owner_dicts(
     subentry_entry, subentry_hass
 ):
-    """A code in neither dict silently blocks nothing -- which is the right
-    behaviour for guards today, but must be a decision on record rather than
-    an omission, or the `guard` subentry flow will land without anyone
-    noticing these were never wired up. Every `ERROR` a broken guard can
-    produce is enumerated here by running one, not by copying a list.
+    """Every `ERROR` a broken guard can produce is enumerated here by running
+    one, not by copying a list -- so a new guard check added to `validation`
+    without an owner entry fails here rather than quietly blocking nothing.
+
+    The broken guards are real guard *subentries*: since config entry version
+    3 that is the only place guards live, and seeding `entry.data["guards"]`
+    the way this test used to would now produce no guard problems at all --
+    which is exactly how this test caught the storage move.
     """
-    entry = subentry_entry(
-        data={
-            "guards": [
-                {"policy": "nonsense", "applies_to": "sideways", "stage": "whenever"},
-                {"policy": "defer"},
-                {"policy": "force"},
-                {"policy": "skip", "max_wait": 90, "then": {"position": 100}},
-                {"policy": "skip", "targets": ["cover.ghost"]},
-            ]
-        }
-    )
+    entry = subentry_entry()
     entry.add_subentry(BLIND, {"entity": "cover.a", "tolerance": 45, "travel_time": 60})
     entry.add_subentry(ZONE, {"id": "z", "members": ["cover.a"], "occupants": []})
+    for index, guard in enumerate(
+        [
+            {"policy": "nonsense", "applies_to": "sideways", "stage": "whenever"},
+            {"policy": "defer"},
+            {"policy": "force"},
+            {"policy": "skip", "max_wait": 90, "then": {"position": 100}},
+            {"policy": "skip", "targets": ["cover.ghost"]},
+        ]
+    ):
+        entry.add_subentry(GUARD, {**guard, "order": index * 10})
 
     codes = {
         problem.code

@@ -76,7 +76,7 @@ pytest.importorskip("homeassistant")
 from homeassistant.data_entry_flow import FlowManager, FlowResultType
 
 from cover_logic.config_flow import CoverLogicConfigFlow
-from cover_logic.config_store import BLIND, CONDITION, MODE, RULE, VALUE, ZONE
+from cover_logic.config_store import BLIND, CONDITION, GUARD, MODE, RULE, VALUE, ZONE
 from cover_logic.const import DOMAIN
 from cover_logic.options_flow import _SECTION_TYPE, CoverLogicOptionsFlow
 from cover_logic.subentry_flow import SUBENTRY_FLOW_HANDLERS
@@ -315,6 +315,7 @@ def test_subentry_flows_every_reachable_step_id_is_dispatchable(subentry_entry, 
             RULE,
             {"mode": "m", "zone": "z", "order": 0, "then": {"position": "keep", "tilt": "keep"}},
         ),
+        GUARD: entry.add_subentry(GUARD, {"policy": "skip", "order": 0}),
     }
     hass = subentry_hass(entry)
 

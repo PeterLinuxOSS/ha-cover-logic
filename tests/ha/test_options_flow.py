@@ -81,6 +81,7 @@ def test_init_menu_lists_every_section_plus_import_export_and_check(subentry_ent
         "conditions",
         "modes",
         "rules",
+        "guards",
         "import_export",
         "execution",
         "check_matrix",
@@ -1142,6 +1143,7 @@ _ALL_STEP_IDS = [
     "conditions",
     "modes",
     "rules",
+    "guards",
     "list",
     "add",
     "add_rule_fields",
@@ -1227,6 +1229,7 @@ def test_main_menu_options_all_have_labels():
         "conditions",
         "modes",
         "rules",
+        "guards",
         "import_export",
         "execution",
         "check_matrix",
@@ -1234,7 +1237,7 @@ def test_main_menu_options_all_have_labels():
 
 
 def test_section_menu_options_all_have_labels():
-    for section in ("blinds", "zones", "values", "conditions", "modes", "rules"):
+    for section in ("blinds", "zones", "values", "conditions", "modes", "rules", "guards"):
         menu = _strings()["options"]["step"][section]["menu_options"]
         expected = {"add", "edit", "remove", "back"}
         if section == "rules":
