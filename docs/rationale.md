@@ -1341,6 +1341,50 @@ the failure being fixed, and if it is still broken when the timer fires,
 `async_setup_entry` reports it as `ConfigEntryNotReady` -- visible, which
 "kept running the old rules" was not.
 
+### Why the integration needs a clock for its own conditions
+
+Every evaluation is triggered by a referenced entity changing. `conditions.py`
+answers `state`'s `for:`, `time` and `sun` by comparing against `World.now` --
+so those three change answer at an instant that produces **no state change**,
+and therefore woke nothing up.
+
+Measured on the owner's live house, 2026-09-02. Nine of its conditions are
+time-derived, and exactly one of the boundaries they name coincides with a
+state change:
+
+| boundary | what announces it |
+|---|---|
+| `sunset` | `sun.sun` flips -- covered |
+| `sunrise - 21 min`, `sunset - 20 min`, `sunrise + 10 min`, `12:30`, bed `off for 120` | nothing |
+
+What made the house look correct anyway is the same accident the evaluation
+floor exists for: its configuration reads `sensor.sun_solar_azimuth`, which
+changes every ~66 s, so every boundary was crossed within the minute by a
+re-evaluation that had nothing to do with it. This also revises an earlier
+reading -- the 8 s between the derived `vecer` and the old helper was recorded
+as the settle window, and part of it was waiting for the azimuth to tick.
+
+`RECONCILE_FLOOR_SECONDS` bounds the error for a house with no such entity, but
+bounding it to five minutes is not the same as being on time: a house that
+should open at `sunrise - 21 min` should not open at `sunrise - 16 min`. So
+`boundaries.next_boundary` answers "how many seconds until the earliest instant
+some condition here could answer differently", and `_reschedule` arms the timer
+it already had. The floor is the guarantee; this is the precision.
+
+`_soonest` is a `min` over the deadlines that exist, and `None` means "this
+kind has nothing pending" rather than infinity -- so a `max_wait: 1` interlock
+still releases in one second with a sun boundary hours away. Getting that
+backwards would be this fix causing the class of bug it fixes, which is why
+there is a test whose only job is to take the interlock's side.
+
+**Only boundaries inside the current local day are visible.** `World.sun`
+carries today's sunrise and sunset and nothing else, so at 20:00 tomorrow's
+`sunrise - 21 min` is not knowable from the snapshot; after midnight it is, and
+it is still hours away. That is a real limit and the floor is what covers it.
+It also bit the first version of the wiring test, which used a sun boundary and
+so passed in the morning and failed at 20:21 -- the test now uses a `for:`
+boundary, whose instant the test itself sets.
+
 ## `readiness.py`
 
 ### Why readiness is a veto and not a wait

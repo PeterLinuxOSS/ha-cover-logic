@@ -29,6 +29,7 @@ PURE_MODULES = [
     # that import should have to argue with a failing test first.
     "command_log.py",
     "deferrals.py",
+    "boundaries.py",
     # `readiness.py` reads its verdict off the same `World` the decision was
     # made from; being on this list is what stops that becoming a second,
     # later read of `hass.states` that could disagree with the decision.

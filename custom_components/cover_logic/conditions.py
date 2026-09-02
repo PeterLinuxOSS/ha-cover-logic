@@ -170,7 +170,7 @@ def _numeric_state(cond: dict, world: World) -> bool:
     return True
 
 
-def _parse_hhmm(text: str) -> dt.time:
+def parse_hhmm(text: str) -> dt.time:
     """Parse `HH:MM` or `HH:MM:SS`, honouring seconds when given.
 
     Home Assistant's own `cv.time` accepts `HH:MM:SS`, and this module's
@@ -186,8 +186,8 @@ def _parse_hhmm(text: str) -> dt.time:
 
 def _time(cond: dict, world: World) -> bool:
     now = world.now.time()
-    after = _parse_hhmm(cond["after"]) if "after" in cond else None
-    before = _parse_hhmm(cond["before"]) if "before" in cond else None
+    after = parse_hhmm(cond["after"]) if "after" in cond else None
+    before = parse_hhmm(cond["before"]) if "before" in cond else None
 
     if after is not None and before is not None:
         if after <= before:
@@ -265,7 +265,7 @@ def _template_globals(world: World) -> dict[str, Any]:
         return world.attribute(entity_id, attr)
 
     def today_at(text: str = "00:00") -> dt.datetime:
-        moment = _parse_hhmm(text)
+        moment = parse_hhmm(text)
         return world.now.replace(hour=moment.hour, minute=moment.minute, second=0, microsecond=0)
 
     return {
