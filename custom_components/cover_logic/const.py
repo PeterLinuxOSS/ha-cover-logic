@@ -12,8 +12,10 @@ DEFAULT_CONFIG_PATH = "/config/cover_logic.yaml"
 # `__init__.async_migrate_entry` migrates up to -- one place, not two, so a
 # version bump can never happen in one without the other. Version 1 is the
 # original shape (`entry.data[CONF_CONFIG_PATH]`, no subentries); version 2
-# is subentries as the source of truth, `CONF_CONFIG_PATH` no longer read.
-CONFIG_ENTRY_VERSION = 2
+# is subentries as the source of truth, `CONF_CONFIG_PATH` no longer read;
+# version 3 moves guards out of `entry.data["guards"]` -- one blob Home
+# Assistant has no UI for -- into the seventh subentry type.
+CONFIG_ENTRY_VERSION = 3
 
 # The one *operational* option of this integration: whether `runner.py` really
 # issues `cover.*` service calls or only logs the ones it would have issued.

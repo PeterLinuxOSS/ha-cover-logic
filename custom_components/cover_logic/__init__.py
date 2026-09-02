@@ -299,7 +299,7 @@ async def async_migrate_entry(hass: "HomeAssistant", entry: "CoverLogicConfigEnt
             # top-level import.
             from homeassistant.config_entries import ConfigSubentry  # noqa: PLC0415
 
-            from .config_store import guards_to_data, subentries_from_config  # noqa: PLC0415
+            from .config_store import subentries_from_config  # noqa: PLC0415
             from .services import _title_for  # noqa: PLC0415  (reused, not reinvented)
 
             try:
@@ -324,19 +324,70 @@ async def async_migrate_entry(hass: "HomeAssistant", entry: "CoverLogicConfigEnt
                     ),
                 )
 
-            new_data = {k: v for k, v in entry.data.items() if k != CONF_CONFIG_PATH}
-            new_data["guards"] = guards_to_data(config)
             hass.config_entries.async_update_entry(
-                entry, data=new_data, version=CONFIG_ENTRY_VERSION
+                entry, data=_migrated_data(entry), version=CONFIG_ENTRY_VERSION
             )
             return True
+
+    # Version 2 -> 3: guards used to live in `entry.data["guards"]`, one
+    # opaque list Home Assistant offers no UI for. An entry that already has
+    # subentries (the v1 import above, or the subentry flows) still carries
+    # them there, so they move across before the key is dropped below --
+    # otherwise `config_from_subentries` would come back with no guards at
+    # all, i.e. a house with its interlocks silently gone.
+    _migrate_guards_to_subentries(hass, entry)
 
     # Either the import above already ran (subentries non-empty) or there was
     # never a path to import from -- either way, nothing left to import, only
     # the version to catch up so this function is not called again.
-    new_data = {k: v for k, v in entry.data.items() if k != CONF_CONFIG_PATH}
-    hass.config_entries.async_update_entry(entry, data=new_data, version=CONFIG_ENTRY_VERSION)
+    hass.config_entries.async_update_entry(
+        entry, data=_migrated_data(entry), version=CONFIG_ENTRY_VERSION
+    )
     return True
+
+
+def _migrated_data(entry: "CoverLogicConfigEntry") -> dict:
+    """`entry.data` without the two keys migration retires.
+
+    `CONF_CONFIG_PATH` stopped being read at version 2, `guards` at version 3
+    (see `config_store._ordered_guards`). Both are dropped in one place so
+    the three call sites above cannot disagree about which keys survive.
+    """
+    return {k: v for k, v in entry.data.items() if k not in (CONF_CONFIG_PATH, "guards")}
+
+
+def _migrate_guards_to_subentries(hass: "HomeAssistant", entry: "CoverLogicConfigEntry") -> None:
+    """Turn `entry.data["guards"]` into guard subentries, once.
+
+    Idempotent the same way the version-1 import above is: if a guard
+    subentry already exists, this returns without adding a second copy of
+    anything -- the case where a previous attempt got as far as adding
+    subentries but not as far as the version bump.
+
+    Order comes from `config_store.guard_subentry_items`, the same function
+    `subentries_from_config` uses, so a migrated house and an imported one
+    end up with identical numbering.
+    """
+    # Deferred: see the module docstring for why this cannot be a top-level
+    # import.
+    from homeassistant.config_entries import ConfigSubentry  # noqa: PLC0415
+
+    from .config_store import GUARD, guard_subentry_items  # noqa: PLC0415
+    from .services import _title_for  # noqa: PLC0415  (reused, not reinvented)
+
+    if any(sub.subentry_type == GUARD for sub in entry.subentries.values()):
+        return
+
+    for subentry_type, data in guard_subentry_items(list(entry.data.get("guards") or [])):
+        hass.config_entries.async_add_subentry(
+            entry,
+            ConfigSubentry(
+                data=data,
+                subentry_type=subentry_type,
+                title=_title_for(subentry_type, data),
+                unique_id=None,
+            ),
+        )
 
 
 async def async_unload_entry(hass: "HomeAssistant", entry: "CoverLogicConfigEntry") -> bool:

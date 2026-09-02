@@ -99,7 +99,7 @@ from homeassistant.helpers import selector
 import voluptuous as vol
 
 from .config_schema import ConfigError, load_config_file
-from .config_store import guards_to_data, subentries_from_config
+from .config_store import subentries_from_config
 from .conformance import repo_example_config_path
 from .const import CONF_CONFIG_PATH, CONFIG_ENTRY_VERSION, DEFAULT_CONFIG_PATH, DOMAIN
 from .options_flow import CoverLogicOptionsFlow
@@ -421,9 +421,12 @@ class CoverLogicConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 _subentry_data(subentry_type, data, _title_for(subentry_type, data))
                 for subentry_type, data in items
             ]
+            # `data` stays empty: guards are the seventh subentry type, so
+            # they are already in `items` (see
+            # `config_store.guard_subentry_items`).
             return self.async_create_entry(
                 title="Cover Logic",
-                data={"guards": guards_to_data(config)},
+                data={},
                 subentries=subentries,
             )
 
@@ -534,14 +537,11 @@ class CoverLogicConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     _subentry_data(subentry_type, data, _title_for(subentry_type, data))
                     for subentry_type, data in items
                 ]
-                # `guards` (see `config_store.py`'s own docstring) is not a
-                # subentry type -- it is carried through in `entry.data`
-                # unchanged, the same way `services._async_import_config`
-                # carries it for an import onto an *existing* entry. The
-                # example config has none today, but a future one might.
+                # `data` stays empty: guards are the seventh subentry type, so
+                # `items` already carries any the example config declares.
                 return self.async_create_entry(
                     title="Cover Logic",
-                    data={"guards": guards_to_data(config)},
+                    data={},
                     subentries=subentries,
                 )
 

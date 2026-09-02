@@ -45,6 +45,7 @@ from cover_logic.config_flow import CoverLogicConfigFlow
 from cover_logic.config_schema import ConfigError
 from cover_logic.config_store import (
     BLIND,
+    GUARD,
     MODE,
     RULE,
     ZONE,
@@ -437,13 +438,13 @@ def test_from_example_creates_the_example_house_subentries(flow_hass):
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
     # `guards` is carried through in `entry.data`, not as a subentry -- see
-    # `config_store.py`'s own docstring. The example config has four of them,
-    # and this is the only path in the codebase that puts a *non-empty* guard
-    # list into a brand new entry's data: `guards_to_data` must have turned
-    # each `Guard` back into a plain mapping, since a frozen dataclass would
-    # not survive `.storage`.
-    assert set(result["data"]) == {"guards"}
-    guards = result["data"]["guards"]
+    # Since config entry version 3 guards are subentries, so `entry.data`
+    # carries nothing at all -- and the example config's four guards have to
+    # show up in the subentry list instead, in order. A frozen `Guard`
+    # dataclass would not survive `.storage`, so each one must be a plain
+    # mapping by the time it gets here.
+    assert set(result["data"]) == set()
+    guards = [entry["data"] for entry in result["subentries"] if entry["subentry_type"] == GUARD]
     assert all(isinstance(guard, dict) for guard in guards)
     assert [guard["policy"] for guard in guards] == ["force", "skip", "defer", "skip"]
     blind_entities = {

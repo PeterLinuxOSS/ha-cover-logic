@@ -79,12 +79,12 @@ from .config_schema import ConfigError, dump_config_file, load_config_file
 from .config_store import (
     BLIND,
     CONDITION,
+    GUARD,
     MODE,
     RULE,
     VALUE,
     ZONE,
     config_from_subentries,
-    guards_to_data,
     subentries_from_config,
 )
 from .const import DOMAIN
@@ -128,6 +128,10 @@ def _title_for(subentry_type: str, data: dict[str, Any]) -> str:
         return str(data.get("id", ""))
     if subentry_type == RULE:
         return f"{data.get('mode')}.{data.get('zone')} #{data.get('order')}"
+    if subentry_type == GUARD:
+        # A guard's `name` is optional and often empty, so fall back to the
+        # policy -- "what this guard does" is the next most useful label.
+        return str(data.get("name") or "").strip() or f"{data.get('policy')} guard"
     return subentry_type
 
 
@@ -258,10 +262,11 @@ async def _async_import_config(hass: HomeAssistant, call: ServiceCall) -> Servic
                 unique_id=None,
             ),
         )
-    guards = guards_to_data(config)
-    if entry.data.get("guards") != guards:
-        hass.config_entries.async_update_entry(entry, data={**entry.data, "guards": guards})
-
+    # No separate guards write: since guards became the seventh subentry type
+    # they arrive in `items` above like every other piece of the config, and
+    # `entry.data` is no longer a config source (see
+    # `config_store._ordered_guards`). Writing the old key here would give
+    # `config_from_subentries` nothing extra and leave a stale copy behind.
     return summary
 
 

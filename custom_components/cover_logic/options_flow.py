@@ -97,13 +97,16 @@ from .config_schema import ConfigError, load_config_file
 from .config_store import (
     BLIND,
     CONDITION,
+    GUARD,
     MODE,
     RULE,
     SUBENTRY_TYPES,
     VALUE,
     ZONE,
     _grouped_rules,
+    _ordered_guards,
     config_from_subentries,
+    duplicate_guard_order_problems,
     duplicate_rule_order_problems,
     effective_rule_items,
 )
@@ -135,6 +138,7 @@ from .validation import ERROR, WARNING, Problem, validate
 # built on top of them -- condition/mode/rule), plus the two actions that are
 # not a subentry type at all.
 _RULES_SECTION = "rules"
+_GUARDS_SECTION = "guards"
 
 _SECTION_TYPE: dict[str, str] = {
     "blinds": BLIND,
@@ -143,6 +147,9 @@ _SECTION_TYPE: dict[str, str] = {
     "conditions": CONDITION,
     "modes": MODE,
     _RULES_SECTION: RULE,
+    # Guards come last: they are the interlocks layered over everything the
+    # rules decide, so they read after the logic they override.
+    _GUARDS_SECTION: GUARD,
 }
 
 _MAIN_MENU_OPTIONS = [*_SECTION_TYPE, "import_export", "execution", "check_matrix"]
@@ -179,6 +186,8 @@ def _items(entry: Any, subentry_type: str) -> list[tuple[str, str]]:
     """
     if subentry_type == RULE:
         return _rule_items(entry)
+    if subentry_type == GUARD:
+        return _guard_items(entry)
     pairs = [
         (subentry_id, subentry.title or subentry_id)
         for subentry_id, subentry in entry.subentries.items()
@@ -204,6 +213,21 @@ def _rule_items(entry: Any) -> list[tuple[str, str]]:
         (subentry_id, entry.subentries[subentry_id].title or subentry_id)
         for items in _grouped_rules(entry).values()
         for subentry_id, _data in items
+    ]
+
+
+def _guard_items(entry: Any) -> list[tuple[str, str]]:
+    """Every guard subentry as `(subentry_id, title)`, in the real first-match order.
+
+    The guard twin of `_rule_items`, and it exists for the same reason: a
+    guard's title leads with its `order` (`GuardSubentryFlowHandler._title`),
+    so sorting titles as text would put "10" before "9" and show a list that
+    is not the order `guards.first_match` tries them in. Reads
+    `config_store._ordered_guards`, the single place guards get sorted.
+    """
+    return [
+        (subentry_id, entry.subentries[subentry_id].title or subentry_id)
+        for subentry_id, _data in _ordered_guards(entry)
     ]
 
 
@@ -322,7 +346,11 @@ def _current_problems(entry: Any) -> tuple[Config | None, list[Problem]]:
     except ConfigError as err:
         problem = Problem(ERROR, "config_unparsable", f"configuration does not parse: {err}")
         return None, [problem]
-    return config, validate(config) + duplicate_rule_order_problems(entry)
+    return config, (
+        validate(config)
+        + duplicate_rule_order_problems(entry)
+        + duplicate_guard_order_problems(entry)
+    )
 
 
 def _owner_text(owners: frozenset[tuple[str, str]]) -> str:
@@ -594,6 +622,10 @@ class CoverLogicOptionsFlow(OptionsFlow):
     async def async_step_rules(self, user_input: dict[str, Any] | None = None) -> dict[str, Any]:
         """List menu for `rule` subentries -- see `_enter_section`."""
         return await self._enter_section("rules")
+
+    async def async_step_guards(self, user_input: dict[str, Any] | None = None) -> dict[str, Any]:
+        """List menu for `guard` subentries -- see `_enter_section`."""
+        return await self._enter_section(_GUARDS_SECTION)
 
     async def _enter_section(self, section: str) -> dict[str, Any]:
         """Record which section is now active and show its list menu.

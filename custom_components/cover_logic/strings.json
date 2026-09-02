@@ -305,6 +305,96 @@
       "abort": {
         "reconfigure_successful": "Reconfiguration was successful"
       }
+    },
+    "guard": {
+      "entry_type": "Guard",
+      "initiate_flow": {
+        "user": "Add guard"
+      },
+      "step": {
+        "user": {
+          "title": "Add guard",
+          "description": "Which policy, and where in the order. The policy decides which fields the next screen has, so it is asked first.",
+          "data": {
+            "policy": "Policy",
+            "order": "Order",
+            "name": "Name (shown in the decision trace)"
+          },
+          "data_description": {
+            "policy": "No default on purpose: the three policies do three different things.",
+            "order": "Lower is tried first. Suggested as ten past the last guard, leaving room to slip one in between two later on. Two guards cannot share an order."
+          }
+        },
+        "guard": {
+          "title": "Add guard",
+          "description": "Guards are tried in order and the first one that matches wins. A guard can skip a movement, defer it, or force a different action instead.",
+          "data": {
+            "targets": "What it covers (leave empty for every blind in the house)",
+            "applies_to": "Which movement",
+            "stage": "When it acts",
+            "condition_ref": "Named condition (leave empty to build one inline, or for a guard that always applies)",
+            "when": "Inline condition (leave empty if using a named condition, or for a guard that always applies)",
+            "position": "Position it imposes",
+            "tilt": "Tilt (slats) it imposes",
+            "wait_limit": "How long it may wait",
+            "max_wait_duration": "At most",
+            "on_timeout": "When the wait runs out",
+            "recheck_every": "Re-check every"
+          },
+          "data_description": {
+            "targets": "Blinds and zones, mixed freely. Empty means every blind -- there is no difference here between 'unset' and 'all'.",
+            "applies_to": "'closing' means a falling position, not the slats. Most guards in a house are 'closing', but the default stays 'any' so a guard means the same thing however it was written.",
+            "stage": "'after the decision' overrides the action; 'before the decision' drops the target out of the decision entirely. A guard acting before the decision must use 'any' -- there is no command yet whose direction it could mean.",
+            "condition_ref": "A numeric threshold can only be reached this way: Home Assistant's inline condition selector rejects the fallback value this integration requires, so name a condition instead.",
+            "position": "Pick 'keep' to leave this axis alone, pick a configured value to read the number from that helper, or type a number from 0 to 100.",
+            "tilt": "Pick 'keep' to leave this axis alone, pick a configured value to read the number from that helper, or type a number from 0 to 100.",
+            "wait_limit": "'no limit' is a real answer, not a blank one: it waits until the condition clears. There is deliberately no default -- the two choices do different things.",
+            "max_wait_duration": "Only read when 'at most' is chosen. Left at zero, the guard is refused rather than saved as a zero-second wait.",
+            "on_timeout": "No default on purpose: dropping the movement and doing it anyway are opposites.",
+            "recheck_every": "A deferred movement does not survive a Home Assistant restart, so this is the safety net that picks it up again."
+          }
+        },
+        "reconfigure": {
+          "title": "Edit guard",
+          "description": "Guards are tried in order and the first one that matches wins. A guard can skip a movement, defer it, or force a different action instead.",
+          "data": {
+            "policy": "Policy",
+            "order": "Order",
+            "name": "Name (shown in the decision trace)",
+            "targets": "What it covers (leave empty for every blind in the house)",
+            "applies_to": "Which movement",
+            "stage": "When it acts",
+            "condition_ref": "Named condition (leave empty to build one inline, or for a guard that always applies)",
+            "when": "Inline condition (leave empty if using a named condition, or for a guard that always applies)",
+            "position": "Position it imposes",
+            "tilt": "Tilt (slats) it imposes",
+            "wait_limit": "How long it may wait",
+            "max_wait_duration": "At most",
+            "on_timeout": "When the wait runs out",
+            "recheck_every": "Re-check every"
+          },
+          "data_description": {
+            "policy": "No default on purpose: the three policies do three different things.",
+            "order": "Lower is tried first. Suggested as ten past the last guard, leaving room to slip one in between two later on. Two guards cannot share an order.",
+            "targets": "Blinds and zones, mixed freely. Empty means every blind -- there is no difference here between 'unset' and 'all'.",
+            "applies_to": "'closing' means a falling position, not the slats. Most guards in a house are 'closing', but the default stays 'any' so a guard means the same thing however it was written.",
+            "stage": "'after the decision' overrides the action; 'before the decision' drops the target out of the decision entirely. A guard acting before the decision must use 'any' -- there is no command yet whose direction it could mean.",
+            "condition_ref": "A numeric threshold can only be reached this way: Home Assistant's inline condition selector rejects the fallback value this integration requires, so name a condition instead.",
+            "position": "Pick 'keep' to leave this axis alone, pick a configured value to read the number from that helper, or type a number from 0 to 100.",
+            "tilt": "Pick 'keep' to leave this axis alone, pick a configured value to read the number from that helper, or type a number from 0 to 100.",
+            "wait_limit": "'no limit' is a real answer, not a blank one: it waits until the condition clears. There is deliberately no default -- the two choices do different things.",
+            "max_wait_duration": "Only read when 'at most' is chosen. Left at zero, the guard is refused rather than saved as a zero-second wait.",
+            "on_timeout": "No default on purpose: dropping the movement and doing it anyway are opposites.",
+            "recheck_every": "A deferred movement does not survive a Home Assistant restart, so this is the safety net that picks it up again."
+          }
+        }
+      },
+      "error": {
+        "invalid_config": "This file could not be used: {error_detail}"
+      },
+      "abort": {
+        "reconfigure_successful": "Reconfiguration was successful"
+      }
     }
   },
   "options": {
@@ -319,6 +409,7 @@
           "conditions": "Conditions ({conditions_count})",
           "modes": "Modes ({modes_count})",
           "rules": "Rules ({rules_count})",
+          "guards": "Guards ({guards_count})",
           "import_export": "Import / export YAML",
           "execution": "Execution ({execution_summary})",
           "check_matrix": "Configuration health ({health_summary})"
@@ -381,6 +472,16 @@
           "add": "Add",
           "list": "See what the house will do",
           "zone": "Look at one zone's real list (including inherited defaults)",
+          "edit": "Edit an existing one",
+          "remove": "Remove an existing one",
+          "back": "Back to the main menu"
+        }
+      },
+      "guards": {
+        "title": "Guards",
+        "description": "{count} configured. Tried in order; the first guard that matches a command decides what happens to it.",
+        "menu_options": {
+          "add": "Add",
           "edit": "Edit an existing one",
           "remove": "Remove an existing one",
           "back": "Back to the main menu"

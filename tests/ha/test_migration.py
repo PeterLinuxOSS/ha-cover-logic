@@ -117,12 +117,11 @@ def test_migrate_skips_import_when_subentries_already_exist_at_the_old_version(
         f"sub{i}": ConfigSubentry(data=data, subentry_type=kind, title="", unique_id=None)
         for i, (kind, data) in enumerate(subentries_from_config(config))
     }
-    # `guards` is set too, not just the subentries -- the realistic partial
-    # state this guards against is a `import_config` run against this entry
-    # (which writes both) before `async_migrate_entry` ever got to bump the
-    # version, not a crash mid-way through this function's own single
-    # `async_update_entry` call (which sets `guards` and `version` together;
-    # see the module docstring).
+    # A stale `guards` key is set too: an entry in this partial state came
+    # from an `import_config` run that wrote both, and since version 3 the
+    # key is no longer a config source at all. `existing` already contains
+    # guard *subentries* (`subentries_from_config` emits them), so the
+    # version-3 step must recognise that and not add a second copy.
     entry = make_entry(
         {CONF_CONFIG_PATH: path, "guards": guards_to_data(config)}, subentries=existing, version=1
     )
@@ -132,7 +131,81 @@ def test_migrate_skips_import_when_subentries_already_exist_at_the_old_version(
 
     assert entry.version == CONFIG_ENTRY_VERSION
     assert len(entry.subentries) == len(existing)
+    assert "guards" not in entry.data
     assert config_from_subentries(entry) == config
+
+
+def test_migrate_moves_guards_from_entry_data_into_subentries(make_entry, setup_hass):
+    """Version 2 -> 3: the house's interlocks must survive, not vanish.
+
+    A version-2 entry holds its guards in `entry.data["guards"]` and has no
+    guard subentries. Since `config_from_subentries` stopped reading that key,
+    a version bump that did not move them would leave the running house with
+    every guard silently gone -- covers open on an open terrace door, no
+    deferral for the sauna. This is the one test that would catch that.
+    """
+    config = load_config(VALID_TEXT)
+    without_guards = [
+        (kind, data) for kind, data in subentries_from_config(config) if kind != "guard"
+    ]
+    existing = {
+        f"sub{i}": ConfigSubentry(data=data, subentry_type=kind, title="", unique_id=None)
+        for i, (kind, data) in enumerate(without_guards)
+    }
+    entry = make_entry({"guards": guards_to_data(config)}, subentries=existing, version=2)
+    hass = setup_hass()
+
+    assert asyncio.run(async_migrate_entry(hass, entry)) is True
+
+    assert entry.version == CONFIG_ENTRY_VERSION
+    assert "guards" not in entry.data
+    assert config_from_subentries(entry).guards == config.guards
+    assert config_from_subentries(entry) == config
+
+
+def test_migrate_to_version_3_is_idempotent(make_entry, setup_hass):
+    """Running the version-3 step twice must not double the guards.
+
+    The second call returns at the version check, but the guard step is also
+    guarded on "a guard subentry already exists" for the interrupted case --
+    two guards where the author wrote one changes behaviour, since guards are
+    first-match-wins.
+    """
+    config = load_config(VALID_TEXT)
+    without_guards = [
+        (kind, data) for kind, data in subentries_from_config(config) if kind != "guard"
+    ]
+    existing = {
+        f"sub{i}": ConfigSubentry(data=data, subentry_type=kind, title="", unique_id=None)
+        for i, (kind, data) in enumerate(without_guards)
+    }
+    entry = make_entry({"guards": guards_to_data(config)}, subentries=existing, version=2)
+    hass = setup_hass()
+
+    asyncio.run(async_migrate_entry(hass, entry))
+    after_first = len(entry.subentries)
+
+    assert asyncio.run(async_migrate_entry(hass, entry)) is True
+    assert len(entry.subentries) == after_first
+    assert config_from_subentries(entry).guards == config.guards
+
+
+def test_migrate_to_version_3_with_no_guards_at_all(make_entry, setup_hass):
+    """A version-2 entry that never had guards migrates cleanly to an empty tuple."""
+    config = load_config(VALID_TEXT)
+    without_guards = [
+        (kind, data) for kind, data in subentries_from_config(config) if kind != "guard"
+    ]
+    existing = {
+        f"sub{i}": ConfigSubentry(data=data, subentry_type=kind, title="", unique_id=None)
+        for i, (kind, data) in enumerate(without_guards)
+    }
+    entry = make_entry({}, subentries=existing, version=2)
+
+    assert asyncio.run(async_migrate_entry(setup_hass(), entry)) is True
+
+    assert entry.version == CONFIG_ENTRY_VERSION
+    assert config_from_subentries(entry).guards == ()
 
 
 def test_migrate_returns_false_and_leaves_version_untouched_on_a_missing_file(

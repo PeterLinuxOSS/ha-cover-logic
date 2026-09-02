@@ -90,7 +90,7 @@ from .config_schema import (
 )
 from .const import RULE_DEFAULT_ZONE
 from .model import Config, Mode, Zone
-from .validation import Problem, check_duplicate_rule_order
+from .validation import Problem, check_duplicate_guard_order, check_duplicate_rule_order
 
 BLIND = "blind"
 ZONE = "zone"
@@ -98,8 +98,9 @@ MODE = "mode"
 CONDITION = "condition"
 VALUE = "value"
 RULE = "rule"
+GUARD = "guard"
 
-SUBENTRY_TYPES = frozenset({BLIND, ZONE, MODE, CONDITION, VALUE, RULE})
+SUBENTRY_TYPES = frozenset({BLIND, ZONE, MODE, CONDITION, VALUE, RULE, GUARD})
 
 # The single per-item key that names a zone, mode, condition or value --
 # playing the role the YAML mapping key (`zones: {<this>: {...}}`) plays
@@ -249,6 +250,48 @@ def _grouped_rules(entry: Any) -> dict[str, list[tuple[str, dict]]]:
     return groups
 
 
+def _guard_body(data: dict) -> dict:
+    """Strip `order` off a guard subentry, leaving what `_parse_guard` expects."""
+    return {k: v for k, v in data.items() if k != "order"}
+
+
+def _ordered_guards(entry: Any) -> list[tuple[str, dict]]:
+    """Every guard subentry as `(subentry id, data)`, in first-match-wins order.
+
+    The guard counterpart of `_grouped_rules` -- and the single place guard
+    subentries get sorted, for the same "One grouping, not two" reason:
+    `_build_guards`, `guard_owner_ids` and `duplicate_guard_order_problems`
+    all read this function's output, so `Config.guards`'s order and the
+    `guard#N` indices `validation` attributes problems to cannot drift apart.
+    Guards are one flat list, not grouped by `(mode, zone)`, because
+    `guards.first_match` scans them all against every command.
+
+    The `(order, subentry id)` sort key -- not `order` alone -- is what makes
+    the sort total; see the module docstring's "Ordering" section.
+    """
+    items = [
+        (subentry_id, dict(subentry.data))
+        for subentry_id, subentry in entry.subentries.items()
+        if subentry.subentry_type == GUARD
+    ]
+    for _subentry_id, data in items:
+        _order(data, "guard subentry")  # validated eagerly; read again in the sort key
+    items.sort(key=lambda item: (_order(item[1], "guard subentry"), item[0]))
+    return items
+
+
+def _build_guards(entry: Any, raw_conditions: dict[str, dict], values: dict[str, Any]) -> tuple:
+    # `_to_reftag` first, for the same reason `_build_rules` does it: a
+    # guard's `when` and its `then` may point at a named condition or value
+    # through this module's `{"ref": ...}` marker, which is what the YAML
+    # door spells `!ref`.
+    return parse_guards(
+        _to_reftag([_guard_body(data) for _subentry_id, data in _ordered_guards(entry)]),
+        raw_conditions,
+        values,
+    )
+
+
 def effective_rule_items(entry: Any, mode_id: str, zone_id: str) -> list[tuple[str, dict, bool]]:
     """Every rule subentry deciding `zone_id`'s blinds under `mode_id`, as `(id, data, is_default)`.
 
@@ -326,13 +369,7 @@ def config_from_subentries(entry: Any) -> Config:
         rules=_build_rules(entry, raw_conditions, values),
         conditions=conditions,
         values=values,
-        # `_to_reftag` first, for the same reason `_build_rules` does it: a
-        # guard's `when` and its `then` may point at a named condition or
-        # value through this module's `{"ref": ...}` marker, which is what
-        # the YAML door spells `!ref`.
-        guards=parse_guards(
-            _to_reftag((entry.data or {}).get("guards") or []), raw_conditions, values
-        ),
+        guards=_build_guards(entry, raw_conditions, values),
     )
 
 
@@ -382,6 +419,40 @@ def duplicate_rule_order_problems(entry: Any) -> list[Problem]:
             ]
             for key, items in _grouped_rules(entry).items()
         }
+    )
+
+
+def guard_owner_ids(entry: Any) -> dict[str, str]:
+    """Map each guard subentry's id to the `"guard#<index>"` string naming it.
+
+    The guard mirror of `rule_owner_ids`, and it exists for the same reason:
+    `validation._guard_owner` attributes a guard's problems by position
+    (`guard#N`), because a `Config` no longer carries subentry ids. This ties
+    the two identities together in one place so `subentry_flow` can ask "is
+    the problem `validate()` just reported about the very guard being saved?".
+
+    The index enumerates `_ordered_guards(entry)` -- the exact list
+    `_build_guards` turns into `Config.guards` -- so a subentry's id here
+    names the same position it occupies there by construction.
+    """
+    return {
+        subentry_id: f"guard#{index}"
+        for index, (subentry_id, _data) in enumerate(_ordered_guards(entry))
+    }
+
+
+def duplicate_guard_order_problems(entry: Any) -> list[Problem]:
+    """Problems visible only at the subentry layer: two guards sharing an `order`.
+
+    The guard mirror of `duplicate_rule_order_problems`; see that function
+    and `validation.check_duplicate_guard_order` for why this cannot live
+    inside `validate()`.
+    """
+    return check_duplicate_guard_order(
+        [
+            (f"guard#{index}", _order(data, "guard subentry"))
+            for index, (_subentry_id, data) in enumerate(_ordered_guards(entry))
+        ]
     )
 
 
@@ -505,23 +576,38 @@ def guards_to_data(config: Config) -> list[dict[str, Any]]:
     return [guard_to_dict(guard, ref_names, _ref_marker) for guard in config.guards]
 
 
-def entry_from_subentry_items(
-    items: list[tuple[str, dict[str, Any]]], guards_data: list[dict[str, Any]] | None = None
-) -> _StubEntry:
+def guard_subentry_items(
+    guards_data: list[dict[str, Any]],
+) -> list[tuple[str, dict[str, Any]]]:
+    """Storage-shaped guard mappings as `(GUARD, data)` pairs with a fresh `order`.
+
+    Guards carry first-match-wins meaning by list position and no `order` of
+    their own (see `subentries_from_config`'s "Ordering" paragraph), so the
+    numbering has to be assigned somewhere. This is that somewhere -- both
+    `subentries_from_config` and `__init__.async_migrate_entry`'s version-3
+    step call it, so "how a guard's order is derived from its position" has
+    one owner rather than two that must be kept agreeing.
+    """
+    return [
+        (GUARD, {**data, "order": index * _ORDER_STEP}) for index, data in enumerate(guards_data)
+    ]
+
+
+def entry_from_subentry_items(items: list[tuple[str, dict[str, Any]]]) -> _StubEntry:
     """Build the minimal entry `config_from_subentries` can read from `(type, data)` pairs.
 
     Shared by `subentries_from_config`'s own round-trip self-check below and
     by `tests/test_config_store.py`'s tests for it, so neither has to
     fabricate a second stand-in for "an entry with exactly these subentries".
 
-    `guards_data` is storage-shaped (what `guards_to_data` produces), not a
-    tuple of `Guard`s: this builds the entry as Home Assistant would have
-    stored it, and `config_from_subentries` parses it back exactly as it
-    would after a restart -- which is what makes the self-check below a check
-    on the serialization too, not only on the subentry list.
+    Takes no `guards_data`: since guards became the seventh subentry type they
+    arrive in `items` like everything else, and `entry.data` is no longer a
+    config source at all -- see `_ordered_guards`. The subentry ids are
+    stringified indices, which is enough for the `(order, subentry id)` sort
+    to be total; real ones come from Home Assistant.
     """
     subentries = {str(i): _StubSubentry(kind, data) for i, (kind, data) in enumerate(items)}
-    return _StubEntry(data={"guards": list(guards_data or [])}, subentries=subentries)
+    return _StubEntry(data={}, subentries=subentries)
 
 
 def subentries_from_config(config: Config) -> list[tuple[str, dict[str, Any]]]:
@@ -586,7 +672,9 @@ def subentries_from_config(config: Config) -> list[tuple[str, dict[str, Any]]]:
             data["order"] = index * _ORDER_STEP
             items.append((RULE, data))
 
-    rebuilt = config_from_subentries(entry_from_subentry_items(items, guards_to_data(config)))
+    items.extend(guard_subentry_items(guards_to_data(config)))
+
+    rebuilt = config_from_subentries(entry_from_subentry_items(items))
     if rebuilt != config:
         msg = (
             "subentries_from_config produced subentries that do not round-trip back to "
