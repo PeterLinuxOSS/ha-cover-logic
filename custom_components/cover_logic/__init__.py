@@ -33,6 +33,7 @@ from .config_store import config_from_subentries
 from .conformance import diff_configs, repo_fixture_path
 from .const import CONF_CONFIG_PATH, CONFIG_ENTRY_VERSION, DOMAIN
 from .model import Config
+from .readiness import name_list
 from .validation import ERROR, validate
 
 if TYPE_CHECKING:
@@ -46,6 +47,10 @@ _LOGGER = logging.getLogger(__name__)
 # `issue_registry.async_create_issue`/`async_delete_issue` key this entry's
 # own repair issue; see `_check_fixture_conformance`.
 _FIXTURE_DRIFT_ISSUE = "fixture_drift"
+
+# The same mechanism for the one question a fresh install needs answered;
+# see `_check_referenced_entities`.
+_UNKNOWN_ENTITIES_ISSUE = "unknown_entities"
 
 # Plain strings, not `homeassistant.const.Platform.SENSOR` -- an enum import
 # would be one more Home Assistant name at module level, exactly what this
@@ -151,6 +156,16 @@ async def async_setup_entry(hass: "HomeAssistant", entry: "CoverLogicConfigEntry
 
     entry.runtime_data = CoverLogicData(config=config, coordinator=coordinator)
 
+    # Deferred, and armed rather than called: see `_check_referenced_entities`
+    # for why this one question can only be asked once Home Assistant has
+    # finished starting.
+    from homeassistant.helpers.start import async_at_started  # noqa: PLC0415
+
+    async def _at_started(_hass: "HomeAssistant") -> None:
+        await _check_referenced_entities(hass, config)
+
+    entry.async_on_unload(async_at_started(hass, _at_started))
+
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     # Deferred: see the module docstring for why this cannot be a top-level
@@ -244,6 +259,73 @@ async def _check_fixture_conformance(hass: "HomeAssistant", config: Config) -> N
         severity=ir.IssueSeverity.WARNING,
         translation_key=_FIXTURE_DRIFT_ISSUE,
         translation_placeholders={"fields": ", ".join(sorted(diff))},
+    )
+
+
+async def _check_referenced_entities(hass: "HomeAssistant", config: Config) -> None:
+    """Which entities this configuration names that this Home Assistant has never heard of.
+
+    The one question a fresh install needs answered, and the one nothing here
+    answered before. `validate` cannot: it is pure, and "does this entity
+    exist" is not a fact about the configuration. `readiness.assess` looks the
+    same but is not -- it answers "could I read this *now*", it runs on every
+    evaluation, and it deliberately exempts every read a node gave a
+    `default:`. Those exemptions are right for acting and wrong for
+    installing: a configuration whose reads are all defaulted would reference
+    nine entities that do not exist, report nothing at all, and quietly behave
+    as though every input in the house were absent -- which is the silent
+    version of the failure this project already has a repair issue for.
+
+    So this asks a different question, once: is the entity *known here*, in
+    either the state machine or the entity registry. Both, because neither
+    alone is the house: a YAML template sensor without a `unique_id` is never
+    in the registry, and an entity that is registered but whose integration
+    has not set it up yet is not in the state machine. Absent from both is the
+    only answer that means "you have not created this".
+
+    Blinds are included unconditionally, unlike in `_entity_ids`, where
+    subscribing to them is a behaviour with a cost. Here it is the most
+    valuable name of all: a `cover.` that does not exist is a rule this house
+    can never carry out.
+
+    Runs from `async_at_started`, not from `async_setup_entry`. At setup time
+    Home Assistant may not have restored state or finished setting up other
+    integrations, so "absent" and "not yet" are indistinguishable -- and
+    mistaking the second for the first is the exact reading error
+    `readiness.py` exists for, one layer down.
+    """
+    # Deferred: see the module docstring for why this cannot be a top-level
+    # import.
+    from homeassistant.helpers import entity_registry as er, issue_registry as ir  # noqa: PLC0415
+
+    from .coordinator import _entity_ids  # noqa: PLC0415
+
+    registry = er.async_get(hass)
+    referenced = _entity_ids(config) | set(config.blinds)
+    unknown = tuple(
+        sorted(
+            entity
+            for entity in referenced
+            if hass.states.get(entity) is None and registry.async_get(entity) is None
+        )
+    )
+    if not unknown:
+        ir.async_delete_issue(hass, DOMAIN, _UNKNOWN_ENTITIES_ISSUE)
+        return
+
+    _LOGGER.warning(
+        "cover_logic: configuration references %d entities this Home Assistant does not have: %s",
+        len(unknown),
+        name_list(unknown),
+    )
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        _UNKNOWN_ENTITIES_ISSUE,
+        is_fixable=False,
+        severity=ir.IssueSeverity.WARNING,
+        translation_key=_UNKNOWN_ENTITIES_ISSUE,
+        translation_placeholders={"count": str(len(unknown)), "entities": name_list(unknown)},
     )
 
 

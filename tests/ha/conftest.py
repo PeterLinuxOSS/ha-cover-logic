@@ -189,6 +189,16 @@ class FakeConfigEntry:
         self.subentries = subentries or {}
         self.version = version
         self.options = dict(options or {})
+        self.on_unload = []
+
+    def async_on_unload(self, callback_):
+        """Record a teardown callback, as the real entry does.
+
+        `async_setup_entry` registers one since it started arming
+        `_check_referenced_entities` through `async_at_started` -- a hook that
+        outlives setup and so has to be cancellable on unload.
+        """
+        self.on_unload.append(callback_)
 
 
 @pytest.fixture
@@ -278,6 +288,19 @@ class FakeServiceRegistry:
         return frozenset(self._services)
 
 
+class FakeEventBus:
+    """`async_listen_once` and nothing else: what `async_at_started` needs while starting."""
+
+    def __init__(self):
+        """Record every one-shot listener so a test could assert on it."""
+        self.listeners = []
+
+    def async_listen_once(self, event_type, listener):
+        """Register `listener` and hand back the no-op unsubscribe a caller stores."""
+        self.listeners.append((event_type, listener))
+        return lambda: None
+
+
 class FakeSetupHass:
     """Stands in for `hass` as seen by `async_setup_entry`/`async_unload_entry`.
 
@@ -299,6 +322,18 @@ class FakeSetupHass:
         self.config_entries = FakeEntryConfigEntries(unload_result=unload_result)
         self.services = FakeServiceRegistry()
         self.states = FakeStateMachine({})
+        # Still starting, which is the honest state during `async_setup_entry`
+        # and the whole reason `_check_referenced_entities` is armed through
+        # `async_at_started` instead of being called there: at this moment
+        # "absent" and "not restored yet" are indistinguishable. So the hook
+        # takes the bus path here and nothing runs -- these tests are about
+        # setup, and the two that are about the check call it directly.
+        # A plain sentinel, not `homeassistant.core.CoreState`: this module
+        # must stay importable without Home Assistant (see its docstring), and
+        # `async_at_started` only asks `hass.state is CoreState.running`, which
+        # any other object answers `False` to.
+        self.state = "not_running"
+        self.bus = FakeEventBus()
 
     @property
     def loop(self):
