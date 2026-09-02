@@ -65,6 +65,7 @@ from .const import (
     GUARD_CLOSING,
     GUARD_OPENING,
     OPT_DRY_RUN,
+    RECONCILE_FLOOR_SECONDS,
 )
 from .deferrals import DeferralRegistry, Elapsed
 from .engine import Decision, evaluate
@@ -691,10 +692,18 @@ class CoverLogicCoordinator:
         self.commands.withheld(entity, reason)
 
     def _reschedule(self, seconds: float | None) -> None:
-        """Arm (or disarm) the periodic re-examination a pending `defer` needs.
+        """Arm the periodic re-examination: a pending `defer`'s deadline, or the floor.
 
-        `None` means nothing is waiting: the timer is cancelled outright rather
-        than left ticking, so a still house costs nothing.
+        `None` means no deferral is waiting, and it used to cancel the timer
+        outright. It no longer does, for the reason `docs/rationale.md` gives
+        under "Why evaluation has a floor": without one, this integration
+        evaluates *only* when a referenced entity changes, so how quickly it
+        repairs a command a blind never heard is a property of the
+        configuration rather than of the integration.
+
+        The floor is a `min` and not a fallback, so a deadline closer than it
+        still wins -- a guard saying `max_wait: 30` must not be released five
+        minutes late because the floor was armed first.
 
         This is the restart-resilient half of a deferral, and it is worth being
         explicit about why it is enough. A deferral is never an in-flight
@@ -719,8 +728,8 @@ class CoverLogicCoordinator:
         if self._unsub_recheck is not None:
             self._unsub_recheck()
             self._unsub_recheck = None
-        if seconds is None:
-            return
+        floor = RECONCILE_FLOOR_SECONDS
+        seconds = floor if seconds is None else min(seconds, floor)
         when = dt_util.utcnow() + dt.timedelta(seconds=seconds)
         self._unsub_recheck = async_track_point_in_utc_time(self.hass, self._handle_recheck, when)
 
