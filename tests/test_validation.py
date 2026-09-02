@@ -611,6 +611,33 @@ def test_numeric_state_missing_default_is_an_error():
     assert "bad_condition_shape" in codes(text)
 
 
+def test_for_on_a_condition_that_ignores_it_is_a_warning():
+    """`conditions.py` reads `for:` in `_state` and nowhere else.
+
+    Verified against the engine before this check was written: a
+    `numeric_state` with `for: 600`, held five seconds, answers `True`. That is
+    a config that reads as debounced and is not -- and HA's own conditions take
+    no `for:` at all, so someone porting one here has every reason to expect
+    this to work everywhere. WARNING and not ERROR: the condition still
+    answers, just sooner than it reads.
+    """
+    text = BASE.replace(
+        'conditions:\n  vzdy: {condition: state, entity_id: x, state: "on"}',
+        "conditions:\n  vzdy: {condition: numeric_state, entity_id: sensor.t, "
+        "above: 25, default: 0, for: 600}",
+    )
+    assert "for_ignored" in codes(text)
+
+
+def test_for_on_a_state_condition_is_not_flagged():
+    """The counter: `state` is the one type that does honour it."""
+    text = BASE.replace(
+        'conditions:\n  vzdy: {condition: state, entity_id: x, state: "on"}',
+        'conditions:\n  vzdy: {condition: state, entity_id: x, state: "on", for: 600}',
+    )
+    assert "for_ignored" not in codes(text)
+
+
 def test_state_missing_state_key_is_an_error():
     text = BASE.replace(
         'conditions:\n  vzdy: {condition: state, entity_id: x, state: "on"}',

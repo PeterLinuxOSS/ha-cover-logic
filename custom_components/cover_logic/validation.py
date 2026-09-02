@@ -937,6 +937,20 @@ def _check_condition_shape(node: dict, where: str, owner: tuple[str, str]) -> li
                 owners=owners,
             )
         )
+    if "for" in node and kind != "state":
+        # `conditions.py` reads `for:` in `_state` and nowhere else, so on any
+        # other type it is silently ignored -- and silence is the failure mode
+        # this project keeps paying for. WARNING, not ERROR: the condition is
+        # still answerable, just less patient than it reads.
+        out.append(
+            Problem(
+                WARNING,
+                "for_ignored",
+                f"{where}: condition {kind!r} ignores 'for:' -- only 'state' takes it here, "
+                f"so this condition answers on the first reading rather than a held one",
+                owners=owners,
+            )
+        )
     return out
 
 
