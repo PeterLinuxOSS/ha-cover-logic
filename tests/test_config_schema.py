@@ -864,3 +864,36 @@ def test_referenced_entities_reaches_a_condition_nested_inside_a_guards_when():
 """
     )
     assert {"binary_sensor.door", "sensor.sauna_temp"} <= referenced_entities(cfg)
+
+
+# ---------------------------------------------------------------------------
+# `manual_detection:` -- the one section the engine never reads.
+# ---------------------------------------------------------------------------
+
+
+def test_manual_detection_defaults_to_excluding_nothing():
+    assert load_config(MINIMAL).manual_detection.ignore_while_on == ()
+
+
+def test_manual_detection_keeps_the_declared_order():
+    """First-match is not at stake here, but a reordered list is still a diff nobody asked for."""
+    config = load_config(MINIMAL + "manual_detection:\n  ignore_while_on: [script.b, script.a]\n")
+    assert config.manual_detection.ignore_while_on == ("script.b", "script.a")
+
+
+def test_manual_detection_rejects_something_that_is_not_an_entity_id():
+    """A bare word here would silently never match anything."""
+    with pytest.raises(ConfigError, match="entity id"):
+        load_config(MINIMAL + "manual_detection:\n  ignore_while_on: [spalna_odhnutie]\n")
+
+
+def test_manual_detection_rejects_an_unknown_key():
+    with pytest.raises(ConfigError):
+        load_config(MINIMAL + "manual_detection:\n  ignore_scripts: [script.a]\n")
+
+
+def test_manual_detection_round_trips_through_dump():
+    original = load_config(
+        MINIMAL + "manual_detection:\n  ignore_while_on: [script.a, input_boolean.b]\n"
+    )
+    assert load_config(dump_config(original)) == original

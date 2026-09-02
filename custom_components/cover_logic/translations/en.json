@@ -395,6 +395,38 @@
       "abort": {
         "reconfigure_successful": "Reconfiguration was successful"
       }
+    },
+    "manual_detection": {
+      "entry_type": "Manual detection",
+      "initiate_flow": {
+        "user": "Set up manual detection"
+      },
+      "step": {
+        "user": {
+          "title": "Manual detection",
+          "description": "Which movements are not a person's. There is only one of these settings for the whole house.",
+          "data": {
+            "ignore_while_on": "Ignore movements while any of these is on"
+          },
+          "data_description": {
+            "ignore_while_on": "A script entity is on for exactly its own run, so naming one here means \"anything that moves while this script runs came from the script, not from a person\". Any entity works, not only scripts -- an input boolean a house sets around its own bulk movements does the same job."
+          }
+        },
+        "reconfigure": {
+          "title": "Edit manual detection",
+          "description": "Which movements are not a person's.",
+          "data": {
+            "ignore_while_on": "Ignore movements while any of these is on"
+          }
+        }
+      },
+      "error": {
+        "invalid_config": "This file could not be used: {error_detail}"
+      },
+      "abort": {
+        "reconfigure_successful": "Reconfiguration was successful",
+        "already_configured": "Manual detection is already set up -- edit the existing one."
+      }
     }
   },
   "options": {
@@ -410,6 +442,7 @@
           "modes": "Modes ({modes_count})",
           "rules": "Rules ({rules_count})",
           "guards": "Guards ({guards_count})",
+          "manual_detection": "Manual detection ({manual_detection_count})",
           "import_export": "Import / export YAML",
           "execution": "Execution ({execution_summary})",
           "check_matrix": "Configuration health ({health_summary})"
@@ -480,6 +513,16 @@
       "guards": {
         "title": "Guards",
         "description": "{count} configured. Tried in order; the first guard that matches a command decides what happens to it.",
+        "menu_options": {
+          "add": "Add",
+          "edit": "Edit an existing one",
+          "remove": "Remove an existing one",
+          "back": "Back to the main menu"
+        }
+      },
+      "manual_detection": {
+        "title": "Manual detection",
+        "description": "{count} configured (0 or 1). Which movements did not come from a person.",
         "menu_options": {
           "add": "Add",
           "edit": "Edit an existing one",

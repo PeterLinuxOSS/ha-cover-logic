@@ -76,7 +76,16 @@ pytest.importorskip("homeassistant")
 from homeassistant.data_entry_flow import FlowManager, FlowResultType
 
 from cover_logic.config_flow import CoverLogicConfigFlow
-from cover_logic.config_store import BLIND, CONDITION, GUARD, MODE, RULE, VALUE, ZONE
+from cover_logic.config_store import (
+    BLIND,
+    CONDITION,
+    GUARD,
+    MANUAL_DETECTION,
+    MODE,
+    RULE,
+    VALUE,
+    ZONE,
+)
 from cover_logic.const import DOMAIN
 from cover_logic.options_flow import _SECTION_TYPE, CoverLogicOptionsFlow
 from cover_logic.subentry_flow import SUBENTRY_FLOW_HANDLERS
@@ -188,6 +197,7 @@ def test_options_flow_every_reachable_step_id_is_dispatchable(subentry_entry, op
     # only `add`/`back`, so a missing seed would make this sweep skip the
     # `edit`/`remove` step ids for that section rather than fail on them.
     entry.add_subentry(GUARD, {"policy": "skip", "order": 0})
+    entry.add_subentry(MANUAL_DETECTION, {"ignore_while_on": []})
     hass = options_hass(entry)
 
     for section in _SECTION_TYPE:
@@ -320,6 +330,7 @@ def test_subentry_flows_every_reachable_step_id_is_dispatchable(subentry_entry, 
             {"mode": "m", "zone": "z", "order": 0, "then": {"position": "keep", "tilt": "keep"}},
         ),
         GUARD: entry.add_subentry(GUARD, {"policy": "skip", "order": 0}),
+        MANUAL_DETECTION: entry.add_subentry(MANUAL_DETECTION, {"ignore_while_on": []}),
     }
     hass = subentry_hass(entry)
 

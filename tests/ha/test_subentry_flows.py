@@ -43,6 +43,7 @@ from cover_logic.config_store import (
     BLIND,
     CONDITION,
     GUARD,
+    MANUAL_DETECTION,
     MODE,
     RULE,
     SUBENTRY_TYPES,
@@ -112,7 +113,7 @@ def test_every_subentry_type_the_store_reads_has_a_flow():
 
     assert types is SUBENTRY_FLOW_HANDLERS
     assert set(types) == SUBENTRY_TYPES
-    assert set(types) == {BLIND, ZONE, VALUE, CONDITION, MODE, RULE, GUARD}
+    assert set(types) == {BLIND, ZONE, VALUE, CONDITION, MODE, RULE, GUARD, MANUAL_DETECTION}
 
 
 def test_blind_add_shows_a_form_with_the_expected_fields(subentry_entry, subentry_hass):

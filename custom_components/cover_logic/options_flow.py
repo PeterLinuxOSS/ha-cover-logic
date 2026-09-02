@@ -98,6 +98,7 @@ from .config_store import (
     BLIND,
     CONDITION,
     GUARD,
+    MANUAL_DETECTION,
     MODE,
     RULE,
     SUBENTRY_TYPES,
@@ -139,6 +140,7 @@ from .validation import ERROR, WARNING, Problem, validate
 # not a subentry type at all.
 _RULES_SECTION = "rules"
 _GUARDS_SECTION = "guards"
+_MANUAL_DETECTION_SECTION = "manual_detection"
 
 _SECTION_TYPE: dict[str, str] = {
     "blinds": BLIND,
@@ -150,6 +152,8 @@ _SECTION_TYPE: dict[str, str] = {
     # Guards come last: they are the interlocks layered over everything the
     # rules decide, so they read after the logic they override.
     _GUARDS_SECTION: GUARD,
+    # And then the one house-wide setting, which is not about deciding at all.
+    _MANUAL_DETECTION_SECTION: MANUAL_DETECTION,
 }
 
 _MAIN_MENU_OPTIONS = [*_SECTION_TYPE, "import_export", "execution", "check_matrix"]
@@ -626,6 +630,12 @@ class CoverLogicOptionsFlow(OptionsFlow):
     async def async_step_guards(self, user_input: dict[str, Any] | None = None) -> dict[str, Any]:
         """List menu for `guard` subentries -- see `_enter_section`."""
         return await self._enter_section(_GUARDS_SECTION)
+
+    async def async_step_manual_detection(
+        self, user_input: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """List menu for the one `manual_detection` subentry -- see `_enter_section`."""
+        return await self._enter_section(_MANUAL_DETECTION_SECTION)
 
     async def _enter_section(self, section: str) -> dict[str, Any]:
         """Record which section is now active and show its list menu.

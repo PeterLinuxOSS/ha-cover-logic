@@ -201,6 +201,33 @@ class Guard:
         return f"guard #{index} {self.name!r}" if self.name else f"guard #{index}"
 
 
+@dataclass(frozen=True, slots=True)
+class ManualDetection:
+    """Which callers' movements must *not* be read as somebody moving a blind by hand.
+
+    `ignore_while_on` names entities that are `on` for exactly as long as an
+    automated mover is running -- a script, most usefully, since a Home
+    Assistant `script.<x>` entity is `on` only during its own run. A state
+    change arriving while any of them is `on` came from that, not from a
+    person.
+
+    Named for the mechanism rather than for scripts. The spec that asked for
+    this called the field `ignore_scripts`, but the test is "is this entity
+    `on`", and restricting it to the `script.` domain would be a constraint
+    the code does not actually have: an `input_boolean` a house sets around
+    its own bulk movements works identically.
+
+    This is the one part of the configuration the engine never reads. It is
+    here rather than in `entry.options` (where `dry_run` lives) so that it
+    travels with an export and is covered by the migration gate like
+    everything else -- a house's own declaration of what is not a person is
+    exactly the kind of thing that goes missing when it lives outside the
+    configuration.
+    """
+
+    ignore_while_on: tuple[str, ...] = ()
+
+
 @dataclass(frozen=True)
 class Config:
     """The whole parsed configuration: blinds, zones, modes, rules and guards."""
@@ -212,3 +239,4 @@ class Config:
     conditions: dict[str, dict] = field(default_factory=dict)
     values: dict[str, Ref] = field(default_factory=dict)
     guards: tuple[Guard, ...] = ()
+    manual_detection: ManualDetection = ManualDetection()

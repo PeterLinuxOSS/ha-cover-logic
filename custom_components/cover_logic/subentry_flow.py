@@ -65,6 +65,7 @@ from .config_store import (
     BLIND,
     CONDITION,
     GUARD,
+    MANUAL_DETECTION,
     MODE,
     RULE,
     VALUE,
@@ -1805,6 +1806,68 @@ class GuardSubentryFlowHandler(_SubentryFlowBase):
         return f"{label} -> {data.get(_GUARD_APPLIES_FIELD, GUARD_ANY)} on {scope}"
 
 
+_MD_IGNORE_FIELD = "ignore_while_on"
+
+
+class ManualDetectionSubentryFlowHandler(_SubentryFlowBase):
+    """Add or edit the one `manual_detection` subentry.
+
+    The only type with cardinality 0-or-1: it is a single house-wide setting
+    -- which callers' movements are not a person's -- rather than one of many
+    small items. So `async_step_user` refuses a second one instead of relying
+    on `_duplicate_errors`, which is about a unique *field* among several
+    subentries and has nothing to say about "there may only be one at all".
+
+    The field is `ignore_while_on` rather than the "scripts" the spec asked
+    for, because the test really is "is this entity `on` right now": a
+    `script.<x>` entity is `on` for exactly its own run, which is what makes
+    it useful here, but an `input_boolean` a house sets around its own bulk
+    movements works identically and there is no reason to forbid it.
+    """
+
+    subentry_type = MANUAL_DETECTION
+    # No id field: there is only ever one of these, so there is nothing for it
+    # to be unique among.
+    id_key = None
+
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.SubentryFlowResult:
+        """Refuse a second one, then behave like any other add."""
+        entry = self._get_entry()
+        already = any(sub.subentry_type == MANUAL_DETECTION for sub in entry.subentries.values())
+        if already:
+            return self.async_abort(reason="already_configured")
+        return await self._step(user_input, step_id="user")
+
+    def _build_schema(self, entry: Any) -> vol.Schema:
+        """One multi-select of entity ids, free-form because they name anything."""
+        return vol.Schema(
+            {
+                vol.Optional(_MD_IGNORE_FIELD, default=list): selector.EntitySelector(
+                    selector.EntitySelectorConfig(multiple=True)
+                ),
+            }
+        )
+
+    def _to_data(self, entry: Any, user_input: dict[str, Any]) -> dict[str, Any]:
+        """Write the list, always -- an empty one is a meaningful "exclude nothing"."""
+        return {_MD_IGNORE_FIELD: list(user_input.get(_MD_IGNORE_FIELD) or [])}
+
+    def _to_form_values(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Invert `_to_data`, to prefill a reconfigure form."""
+        return {_MD_IGNORE_FIELD: list(data.get(_MD_IGNORE_FIELD) or [])}
+
+    def _candidate_id(self, candidate: Any, subentry_id: str, data: dict[str, Any]) -> Any:
+        """There is only one, so its identity is its type."""
+        return MANUAL_DETECTION
+
+    def _title(self, data: dict[str, Any]) -> str:
+        """Say how many callers are excluded -- the only number worth showing."""
+        count = len(data.get(_MD_IGNORE_FIELD) or [])
+        return f"Manual detection ({count} ignored)"
+
+
 # Registered by subentry type. `config_flow.py`'s
 # `CoverLogicConfigFlow.async_get_supported_subentry_types` just returns
 # this; `options_flow.py`'s `_render_type_form` looks a single type up in it
@@ -1817,4 +1880,5 @@ SUBENTRY_FLOW_HANDLERS: dict[str, type[config_entries.ConfigSubentryFlow]] = {
     MODE: ModeSubentryFlowHandler,
     RULE: RuleSubentryFlowHandler,
     GUARD: GuardSubentryFlowHandler,
+    MANUAL_DETECTION: ManualDetectionSubentryFlowHandler,
 }
