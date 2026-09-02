@@ -35,10 +35,10 @@ conditions:
   je_noc:
     condition: or
     conditions:
-      # Sunset to sunrise-15min. The offset is measured, not chosen: the old
-      # flag went off 11-20 min before sunrise, on a lux threshold this
-      # replaces. See docs/rationale.md.
-      - {condition: sun, before: sunrise, before_offset: -900, after: sunset}
+      # Sunset to sunrise-21min. Re-measured 2026-09-02 against Home
+      # Assistant's own sun.sun, not astral-with-elevation: median 20.9 min,
+      # range 11.3-24.9 over 15 dawns. See docs/rationale.md.
+      - {condition: sun, before: sunrise, before_offset: -1260, after: sunset}
       # The user's own emergency brake, and it stays a helper on purpose --
       # a command, not a derived state. Voice "zapni nočný režim" writes it.
       - {condition: state, entity_id: input_boolean.cover_down, state: "on"}
