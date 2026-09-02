@@ -184,6 +184,10 @@ def test_options_flow_every_reachable_step_id_is_dispatchable(subentry_entry, op
     entry.add_subentry(
         RULE, {"mode": "m", "zone": "z", "order": 0, "then": {"position": "keep", "tilt": "keep"}}
     )
+    # One of every type, including a guard: an empty section's menu offers
+    # only `add`/`back`, so a missing seed would make this sweep skip the
+    # `edit`/`remove` step ids for that section rather than fail on them.
+    entry.add_subentry(GUARD, {"policy": "skip", "order": 0})
     hass = options_hass(entry)
 
     for section in _SECTION_TYPE:
