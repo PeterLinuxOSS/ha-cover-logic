@@ -120,6 +120,13 @@ EVAL_SETTLE_MAX_SECONDS = 30.0
 # configuration -- see `docs/rationale.md`, "Why evaluation has a floor".
 RECONCILE_FLOOR_SECONDS = 300.0
 
+# How long a burst of configuration writes may keep arriving before the entry
+# is reloaded. The same restart-on-change shape as the settle window above and
+# for the same reason -- an import writes one subentry at a time -- but far
+# shorter, because this waits on one caller's loop and not on the house.
+# See `docs/rationale.md`, "Why a configuration change reloads the entry".
+CONFIG_RELOAD_SETTLE_SECONDS = 2.0
+
 # ---------------------------------------------------------------------------
 # Readiness: what makes an input unreadable, and how many names a diagnostic
 # may carry. See `readiness.py`'s module docstring for the measured minute

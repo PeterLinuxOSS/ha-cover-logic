@@ -183,22 +183,34 @@ class FakeConfigEntry:
     mapping is the "dry run on" default and not a missing attribute.
     """
 
-    def __init__(self, data, *, subentries=None, version=1, options=None):
+    def __init__(self, data, *, subentries=None, version=1, options=None, entry_id="entry1"):
         """Store `data`/`subentries`/`version`/`options`; `runtime_data` is left unset."""
+        self.entry_id = entry_id
         self.data = data
         self.subentries = subentries or {}
         self.version = version
         self.options = dict(options or {})
         self.on_unload = []
+        self.update_listeners = []
 
     def async_on_unload(self, callback_):
         """Record a teardown callback, as the real entry does.
 
-        `async_setup_entry` registers one since it started arming
-        `_check_referenced_entities` through `async_at_started` -- a hook that
-        outlives setup and so has to be cancellable on unload.
+        `async_setup_entry` registers these since it started arming hooks that
+        outlive setup -- `_check_referenced_entities` through
+        `async_at_started`, and `_ConfigReloader`'s pending timer.
         """
         self.on_unload.append(callback_)
+
+    def add_update_listener(self, listener):
+        """Register `listener` and hand back the unsubscribe the real entry returns.
+
+        Real `ConfigEntry` fires these from `_async_save_and_notify`, which
+        every subentry write reaches -- which is why `_ConfigReloader` listens
+        here rather than reloading at each write site.
+        """
+        self.update_listeners.append(listener)
+        return lambda: self.update_listeners.remove(listener)
 
 
 @pytest.fixture
@@ -228,10 +240,21 @@ class FakeEntryConfigEntries:
         self.forwarded = []
         self.unloaded = []
         self.unload_result = unload_result
+        self.scheduled_reloads = []
 
     async def async_forward_entry_setups(self, entry, platforms):
         """Record the call; a real platform loader would import and set up each platform."""
         self.forwarded.append((entry, list(platforms)))
+
+    def async_schedule_reload(self, entry_id):
+        """Record a scheduled reload, which `_ConfigReloader` asks for after a config write.
+
+        Recorded rather than performed: a real reload needs the whole
+        config-entries machinery these fakes exist to avoid, and what the
+        tests assert is *how many* were asked for -- one per burst, not one
+        per subentry write.
+        """
+        self.scheduled_reloads.append(entry_id)
 
     def async_add_subentry(self, entry, subentry):
         """Insert `subentry` keyed by its own `subentry_id`, like the real manager does."""
@@ -627,10 +650,21 @@ class FakeServiceConfigEntries:
         `services._get_entry`'s docstring).
         """
         self._entries = list(entries)
+        self.scheduled_reloads = []
 
     def async_entries(self, domain):
         """Return every wrapped entry; `domain` is ignored -- there is only one domain here."""
         return list(self._entries)
+
+    def async_schedule_reload(self, entry_id):
+        """Record a scheduled reload, which `import_config` asks for after it writes.
+
+        The reload is what makes the write take effect at all: the coordinator
+        parses its `Config` once, at setup. Recorded rather than performed --
+        performing it needs the whole config-entries machinery this fake
+        exists to avoid.
+        """
+        self.scheduled_reloads.append(entry_id)
 
     def async_add_subentry(self, entry, subentry):
         """Insert `subentry` keyed by its own `subentry_id`, like the real manager does."""
@@ -735,6 +769,16 @@ class FakeOptionsConfigEntries:
     def __init__(self, entry):
         """Wrap the one entry this fake ever returns."""
         self._entry = entry
+        self.scheduled_reloads = []
+
+    def async_schedule_reload(self, entry_id):
+        """Record a scheduled reload, as `FakeServiceConfigEntries` above does.
+
+        Reached because the import/export screen calls
+        `services._async_import_config` directly, and an import now reloads
+        the entry -- writing subentries is not deploying them.
+        """
+        self.scheduled_reloads.append(entry_id)
 
     def async_get_known_entry(self, entry_id):
         """Return the wrapped entry regardless of `entry_id` -- there is only ever one."""
