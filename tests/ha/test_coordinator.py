@@ -21,7 +21,7 @@ import pytest
 
 pytest.importorskip("homeassistant")
 
-from homeassistant.core import EVENT_STATE_CHANGED
+from homeassistant.core import EVENT_STATE_CHANGED, Context
 
 from cover_logic.config_schema import load_config
 from cover_logic.coordinator import CoverLogicCoordinator, evaluate as real_evaluate
@@ -328,3 +328,170 @@ def test_the_context_a_command_is_issued_under_is_recognised_as_our_own(
             await hass.async_stop(force=True)
 
     asyncio.run(_run())
+
+
+# ---------------------------------------------------------------------------
+# Manual-move detection, through the public path: fire a real state change and
+# read the `Event` that reached the evaluation. Every rejection below is a
+# measured failure mode, not a hypothetical -- 14 days of this house's logbook
+# says 53 of 92 movements of the bedroom blinds carried no `user_id`, and 8 of
+# the 39 that did happened during one of its own script runs. See the spec in
+# the operator's config repo.
+# ---------------------------------------------------------------------------
+
+_DETECT_CONFIG = """
+blinds:
+  - entity: cover.a
+zones:
+  za:
+    members: [cover.a]
+modes:
+  - {id: bezny_den}
+rules:
+  bezny_den.za:
+    - {then: {position: keep, tilt: keep}}
+manual_detection:
+  ignore_while_on: [script.mover]
+"""
+
+
+def _moved(hass, *, context, position=100, tilt=0, entity="cover.a"):
+    """One cover movement, attributed to `context` the way Home Assistant does."""
+    hass.states.async_set(
+        entity,
+        "open" if position else "closed",
+        {"current_position": position, "current_tilt_position": tilt},
+        context=context,
+    )
+
+
+async def _event_after(hass, coordinator, worlds):
+    """The `Event` the next evaluation saw, once the settle window has run."""
+    await asyncio.sleep(_WAIT)
+    assert worlds, "no evaluation happened, so there is no event to inspect"
+    return worlds[-1].event
+
+
+def _detect_case(hass_factory, runtime_entry, monkeypatch, body):
+    """Shared harness: a coordinator on `_DETECT_CONFIG`, with evaluations captured."""
+    worlds = _counting_evaluate(monkeypatch)
+
+    async def _run():
+        hass = hass_factory()
+        try:
+            hass.states.async_set(
+                "cover.a", "closed", {"current_position": 0, "current_tilt_position": 0}
+            )
+            coordinator = CoverLogicCoordinator(hass, load_config(_DETECT_CONFIG), runtime_entry())
+            await coordinator.async_setup()
+            await asyncio.sleep(_WAIT)
+            worlds.clear()
+            await body(hass, coordinator, worlds)
+            await coordinator.async_unload()
+        finally:
+            await hass.async_stop(force=True)
+
+    asyncio.run(_run())
+
+
+def test_a_persons_move_on_our_blind_reaches_the_evaluation(
+    hass_factory, runtime_entry, monkeypatch
+):
+
+    async def _body(hass, coordinator, worlds):
+        _moved(hass, context=Context(user_id="u1"))
+        event = await _event_after(hass, coordinator, worlds)
+        assert event.kind == "manual_move"
+        assert event.blind == "cover.a"
+        assert event.direction == "opening"
+
+    _detect_case(hass_factory, runtime_entry, monkeypatch, _body)
+
+
+def test_a_move_with_no_user_context_is_not_a_person(hass_factory, runtime_entry, monkeypatch):
+    """The measured majority: 53 of 92 movements carried no `user_id` at all.
+
+    Accepting these is what would misread roughly four movements a day as
+    somebody's hand, which is why "not our own command" cannot stand alone.
+    """
+
+    async def _body(hass, coordinator, worlds):
+        _moved(hass, context=Context())
+        event = await _event_after(hass, coordinator, worlds)
+        assert event.kind == "state_change"
+        assert event.blind is None
+
+    _detect_case(hass_factory, runtime_entry, monkeypatch, _body)
+
+
+def test_our_own_command_is_not_a_person_even_with_a_user_context(
+    hass_factory, runtime_entry, monkeypatch
+):
+    """What `CommandLog.is_own` buys: it holds even when a user context is attached."""
+
+    async def _body(hass, coordinator, worlds):
+        ours = Context(user_id="u1")
+        coordinator.commands.dispatched("open_cover", {"entity_id": "cover.a"}, context_id=ours.id)
+        _moved(hass, context=ours)
+        assert (await _event_after(hass, coordinator, worlds)).kind == "state_change"
+
+        # One hop below ours is still ours -- Home Assistant chains contexts.
+        worlds.clear()
+        _moved(hass, context=Context(user_id="u1", parent_id=ours.id), position=50)
+        assert (await _event_after(hass, coordinator, worlds)).kind == "state_change"
+
+    _detect_case(hass_factory, runtime_entry, monkeypatch, _body)
+
+
+def test_a_move_while_a_declared_mover_runs_is_not_a_person(
+    hass_factory, runtime_entry, monkeypatch
+):
+    """8 of the 39 user-context movements happened during a script run.
+
+    A Home Assistant script inherits the caller's context, `user_id` and all,
+    so without this a script a person started is indistinguishable from that
+    person still pressing buttons. The second half is the counter: with the
+    mover off, the very same movement *is* detected.
+    """
+
+    async def _body(hass, coordinator, worlds):
+        hass.states.async_set("script.mover", "on")
+        _moved(hass, context=Context(user_id="u1"))
+        assert (await _event_after(hass, coordinator, worlds)).kind == "state_change"
+
+        hass.states.async_set("script.mover", "off")
+        worlds.clear()
+        _moved(hass, context=Context(user_id="u1"), position=50)
+        assert (await _event_after(hass, coordinator, worlds)).kind == "manual_move"
+
+    _detect_case(hass_factory, runtime_entry, monkeypatch, _body)
+
+
+def test_a_tilt_only_move_is_still_a_movement(hass_factory, runtime_entry, monkeypatch):
+    """A blind already at the top can only be moved by its slats."""
+
+    async def _body(hass, coordinator, worlds):
+        _moved(hass, context=Context(user_id="u1"), position=100, tilt=0)
+        worlds.clear()
+        _moved(hass, context=Context(user_id="u1"), position=100, tilt=100)
+        event = await _event_after(hass, coordinator, worlds)
+        assert event.kind == "manual_move"
+        assert event.direction == "opening"
+
+    _detect_case(hass_factory, runtime_entry, monkeypatch, _body)
+
+
+def test_the_event_does_not_survive_into_the_next_evaluation(
+    hass_factory, runtime_entry, monkeypatch
+):
+    """An event describes one moment; reporting it twice would be a second movement."""
+
+    async def _body(hass, coordinator, worlds):
+        _moved(hass, context=Context(user_id="u1"))
+        assert (await _event_after(hass, coordinator, worlds)).kind == "manual_move"
+
+        worlds.clear()
+        hass.states.async_set("script.mover", "off")  # any unrelated change
+        assert (await _event_after(hass, coordinator, worlds)).kind == "state_change"
+
+    _detect_case(hass_factory, runtime_entry, monkeypatch, _body)
