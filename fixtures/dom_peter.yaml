@@ -30,8 +30,36 @@ values:
   kvety_poz: {entity: input_number.kvety_pozicia_zaluzie, default: 34}
 
 conditions:
-  # Two different things, deliberately kept apart: the sky says it is night,
-  # and the person says "close everything now". Either one means mode `noc`.
+  # Kedy sa lux senzoru NEVERÍ. Nie liveness, ale plauzibilita -- zamrznutie
+  # sa z časov zistiť nedá: hlási len pri zmene, cez deň saturuje a v noci
+  # nezmení hodnotu 9,2 h legitímne. Viď docs/rationale.md.
+  lux_neverim:
+    condition: or
+    conditions:
+      - {condition: state, entity_id: sensor.predsien_dvere_senzor_illuminance,
+         state: [unavailable, unknown]}
+      # Je deň, ale lux tvrdí tmu. Najnižšia denná hodnota za 14 dní: 2872.
+      - condition: and
+        conditions:
+          - {condition: numeric_state, entity_id: sun.sun, attribute: elevation,
+             above: 10, default: 0}
+          - {condition: numeric_state, entity_id: sensor.predsien_dvere_senzor_illuminance,
+             below: 500, default: 999999}
+      # Je noc, ale lux tvrdí svetlo. Najvyššia nočná hodnota za 14 dní: 50.
+      - condition: and
+        conditions:
+          - {condition: numeric_state, entity_id: sun.sun, attribute: elevation,
+             below: -10, default: 0}
+          - {condition: numeric_state, entity_id: sensor.predsien_dvere_senzor_illuminance,
+             above: 2800, default: 0}
+
+  # Obloha je PRIMÁRNA a zostáva ňou zámerne: dom bez `cover_down` a bez lux
+  # senzora musí mať noc tiež, inak sa táto konfigurácia nedá preniesť --
+  # `test_night_is_derived_from_the_sky_not_from_the_helper` to drží.
+  # Za `lux_neverim` ide len BRZDA, lebo tú píše `Lighting SUN` z luxu: pri
+  # senzore zamrznutom nízko zapne brzdu za bieleho dňa a dom zostane celý
+  # deň zatvorený so svetlami, ktoré nezhasnú. Presne to sa už raz stalo.
+  # Viď docs/rationale.md -- "Why the brake is gated on trusting the lux".
   je_noc:
     condition: or
     conditions:
@@ -41,7 +69,10 @@ conditions:
       - {condition: sun, before: sunrise, before_offset: -1260, after: sunset}
       # The user's own emergency brake, and it stays a helper on purpose --
       # a command, not a derived state. Voice "zapni nočný režim" writes it.
-      - {condition: state, entity_id: input_boolean.cover_down, state: "on"}
+      - condition: and
+        conditions:
+          - {condition: not, conditions: [!ref lux_neverim]}
+          - {condition: state, entity_id: input_boolean.cover_down, state: "on"}
 
   # POZOR: nesmie sa viazať len na stav panela. Pri spustenom alarme je stav
   # `triggered`, nie `armed_vacation` — matica by spadla na `bezny_den`
@@ -99,8 +130,14 @@ conditions:
           - {condition: sun, before: sunrise, before_offset: 600,
                              after: sunset, after_offset: -1200}
           # An overcast evening crosses the threshold first -- 4 of 13.
-          - {condition: numeric_state, default: 99999, below: 2800,
-             entity_id: sensor.predsien_dvere_senzor_illuminance}
+          # Za `lux_neverim` zámerne: zamrznutý nízko by inak robil `vecer`
+          # pravdivým každý deň od 12:30 a slnko to nezachráni, lebo tento
+          # OR berie ten SKORŠÍ z dvoch.
+          - condition: and
+            conditions:
+              - {condition: not, conditions: [!ref lux_neverim]}
+              - {condition: numeric_state, default: 99999, below: 2800,
+                 entity_id: sensor.predsien_dvere_senzor_illuminance}
       - {condition: state, entity_id: input_boolean.cover_down, state: "off"}
       - {condition: time, after: "12:30"}
 

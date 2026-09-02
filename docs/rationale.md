@@ -219,6 +219,75 @@ sunrise−15min already reproduces. This is the opposite finding to `vecer`
 above, where dropping lux would have cost four overcast evenings — which is
 why each flag got its own replay rather than one conclusion applied to both.
 
+### Why the brake is gated on trusting the lux sensor
+
+`Lighting SUN` writes `input_boolean.cover_down` **from the lux sensor**
+(`cover-down` fires below 500 lx for 5 min). So a lux sensor frozen at a low
+value turns the brake on in broad daylight, `je_noc` answers `noc`, and the
+house stays shut all day with lights that never go off. The owner has lived
+through exactly that: "začali mrznúť hodnoty ... v celom dome sa mi
+neoťahovali žalúzie, nezhasínalo sa mi cez deň svetlo".
+
+**Only the brake is gated, and that is the whole design decision.** The first
+attempt inverted the condition entirely -- lux as the sole decider, the sky as
+a pure fallback, which is how the owner describes his own intent for
+`Lighting SUN` (every branch there carries a lux trigger and a sun trigger
+under one `id`, and the sun is insurance for a dead battery). That attempt was
+stopped by `test_night_is_derived_from_the_sky_not_from_the_helper`, and the
+test was right: a house with no `cover_down` helper and no lux sensor would
+then have no night at all, which is the portability this phase exists to buy.
+Trigger-OR takes the *earlier* of two triggers, so lux leads there and the sun
+really is a backup; condition-OR takes the *later*, so the same shape here
+would let the fallback override. Gating only the brake gets the failure fixed
+without trading the derivation away.
+
+Measured cost of not inverting it: the sun boundary wins the morning 3 times
+in 10 (September, 10 dawns), by at most 2.6 min. Modelled, not measured: the
+twilight lead grows from ~32 min in September to ~42 min at the solstice, so
+in summer the sun would hold night ~10 min past what the lux said. Three
+minutes today is not worth a portability regression, and the same reasoning
+kept `vecer`'s sun window primary too.
+
+### Why the check is plausibility and not liveness
+
+"Use the sun when the lux cannot answer" wants a freshness test. There is
+none to be had, and this was measured rather than assumed on 2026-09-02:
+
+- `last_changed` is useless -- the sensor legitimately holds one value for
+  **9.2 hours** (0 overnight, saturated at ~3030 by day; it is mounted
+  outdoors on the roof despite being named after the hallway door).
+- `last_reported` is useless too -- it reports **only on change**. Observed
+  live: 22 minutes without advancing, on a healthy sensor.
+- `sensor.predsien_dvere_senzor_last_seen` reads **7 August**. It is itself
+  frozen, so the device offers no heartbeat.
+- `unavailable`/`unknown` happens **57 times in 14 days**, in bursts of ~12 s,
+  so that state alone would flap the fallback in and out.
+
+What works is a contradiction with the sun's own height. `sun.sun` carries
+`elevation` and `numeric_state` takes `attribute:`, so this is configuration
+rather than code -- and elevation is *seasonally self-correcting*, unlike a
+time offset that has to be recalibrated. Cross-checking against another lux
+sensor is deliberately not an option: the owner's instruction is that this one
+is the only accurate one of the dozen in the house.
+
+Thresholds measured over 14 days of history, with **zero false positives**:
+
+| when | samples | worst reading | threshold | margin |
+|---|---|---|---|---|
+| sun above +10 deg (clear day) | 298 | lux **2872** | below 500 | 2372 lx |
+| sun below -10 deg (clear night) | 85 | lux **50** | above 2800 | 2750 lx |
+
+Any freeze is caught within half a day: stuck low shows up by day, stuck high
+shows up at night. A freeze at a mid value escapes both, and the thresholds
+stay that loose on purpose -- the data is from late summer, and a winter noon
+could read far below 2872.
+
+`vecer` gets the same gate for the opposite reason. Its OR takes the *earlier*
+of the two, so a lux frozen low would make it dusk every day from 12:30 and
+the sun could not rescue it; behind the gate, the sun window alone decides.
+On healthy data that changes nothing, which is what makes it deployable
+without waiting for an evening to watch.
+
 ## The `vecer` condition
 
 ### Why `vecer` reads the sky, and what the gate stops proving
