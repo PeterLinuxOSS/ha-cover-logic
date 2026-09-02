@@ -1,7 +1,9 @@
 {
   "domain": "cover_logic",
   "name": "Cover Logic",
-  "codeowners": ["@PeterLinuxOSS"],
+  "codeowners": [
+    "@PeterLinuxOSS"
+  ],
   "config_flow": true,
   "documentation": "https://github.com/PeterLinuxOSS/ha-cover-logic",
   "integration_type": "hub",
@@ -9,5 +11,5 @@
   "issue_tracker": "https://github.com/PeterLinuxOSS/ha-cover-logic/issues",
   "requirements": [],
   "single_config_entry": true,
-  "version": "0.1.0"
+  "version": "0.2.0"
 }

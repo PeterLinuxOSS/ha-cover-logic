@@ -43,11 +43,15 @@ as a configuration you can carry, diff, and hand to someone else.
 
 ## Install
 
-Not in the HACS default store yet.
+Not in the HACS default store yet, so add it as a custom repository:
 
-1. Copy `custom_components/cover_logic/` into your Home Assistant `custom_components/` directory.
-2. Restart Home Assistant.
-3. **Settings → Devices & Services → Add Integration → "Cover Logic"**.
+1. **HACS → ⋮ → Custom repositories**, URL `https://github.com/PeterLinuxOSS/ha-cover-logic`, category **Integration**.
+2. Find "Cover Logic" in HACS and download it.
+3. Restart Home Assistant.
+4. **Settings → Devices & Services → Add Integration → "Cover Logic"**.
+
+Or without HACS: copy `custom_components/cover_logic/` into your Home Assistant
+`custom_components/` directory, restart, then step 4.
 
 Setup then asks how you want to start:
 
