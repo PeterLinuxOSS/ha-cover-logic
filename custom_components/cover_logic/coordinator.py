@@ -317,6 +317,17 @@ class CoverLogicCoordinator:
         `World` snapshot of every referenced entity, not just the one that
         changed, so there is nothing this handler needs from it beyond "some
         watched entity changed, evaluate once the house has stopped writing".
+
+        **This is where a manual move will be recognised, and deliberately not
+        yet.** `world.Event` can carry one (`kind=manual_move`, with the blind
+        and the direction) and `conditions._manual_move` can match it, but
+        nothing produces one, because "not our own command" is not the same as
+        "a person did this": the house's own scripts and its lighting
+        automation would all qualify. Excluding them needs the declared
+        `ignore_scripts` list -- step 3 of
+        `docs/superpowers/specs/2026-09-01-detekcia-rucneho-zasahu-navrh.md`,
+        in the operator's config repo. Wiring it here before that lands would
+        report every automation's movement as manual, silently.
         """
         self._schedule_settle()
 

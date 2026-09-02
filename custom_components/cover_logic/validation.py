@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 from .const import (
     COND_EVENT_TARGETS_ZONE,
+    COND_MANUAL_MOVE,
     COND_REF,
     COND_SUN,
     COND_SUN_HITS_TARGET,
@@ -869,6 +870,9 @@ def _check_unknown_condition_refs(config: Config) -> list[Problem]:
 _REQUIRED_CONDITION_KEYS: dict[str, tuple[str, ...]] = {
     "and": ("conditions",),
     COND_EVENT_TARGETS_ZONE: (),
+    # `direction` is optional -- absent means "moved at all"; see
+    # `conditions._manual_move`.
+    COND_MANUAL_MOVE: (),
     "not": ("conditions",),
     "numeric_state": ("default", "entity_id"),
     "or": ("conditions",),

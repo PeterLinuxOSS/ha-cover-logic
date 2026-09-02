@@ -77,6 +77,7 @@ from .config_store import (
 )
 from .const import (
     EVENT_ARRIVAL,
+    EVENT_MANUAL_MOVE,
     EVENT_STATE_CHANGE,
     GUARD_ANY,
     GUARD_DEFAULT_RECHECK,
@@ -1220,7 +1221,9 @@ class RuleSubentryFlowHandler(_SubentryFlowBase):
                 vol.Required(_RULE_TILT_FIELD, default=_AXIS_KEEP): axis(),
                 vol.Optional(_RULE_EVENTS_FIELD, default=list): selector.SelectSelector(
                     selector.SelectSelectorConfig(
-                        options=[EVENT_ARRIVAL, EVENT_STATE_CHANGE], multiple=True, sort=True
+                        options=[EVENT_ARRIVAL, EVENT_MANUAL_MOVE, EVENT_STATE_CHANGE],
+                        multiple=True,
+                        sort=True,
                     )
                 ),
                 vol.Optional(_RULE_NAME_FIELD, default=""): selector.TextSelector(),

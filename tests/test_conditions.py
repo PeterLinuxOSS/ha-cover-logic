@@ -281,6 +281,62 @@ def test_event_targets_zone():
     )
 
 
+# ---------------------------------------------------------------------------
+# `manual_move`: relative to the target, exactly as `sun_hits_target` and
+# `event_targets_zone` are, so the same rule works in every room.
+# ---------------------------------------------------------------------------
+
+
+def _moved(entity="cover.a", direction="opening"):
+    return world(event=Event(kind="manual_move", blind=entity, direction=direction))
+
+
+def test_manual_move_matches_this_blind_and_direction():
+    cond = {"condition": "manual_move", "direction": "opening"}
+    assert evaluate_condition(cond, _moved(), target()) is True
+
+
+def test_manual_move_ignores_the_other_direction():
+    cond = {"condition": "manual_move", "direction": "closing"}
+    assert evaluate_condition(cond, _moved(direction="opening"), target()) is False
+
+
+def test_manual_move_ignores_a_move_on_another_blind():
+    """The point of being relative to the target: one room must not react to another."""
+    cond = {"condition": "manual_move"}
+    assert evaluate_condition(cond, _moved(entity="cover.elsewhere"), target()) is False
+
+
+def test_manual_move_without_a_direction_means_moved_at_all():
+    assert evaluate_condition({"condition": "manual_move"}, _moved(direction="closing"), target())
+    assert evaluate_condition({"condition": "manual_move"}, _moved(direction="opening"), target())
+
+
+def test_manual_move_accepts_any_as_an_explicit_spelling_of_that():
+    cond = {"condition": "manual_move", "direction": "any"}
+    assert evaluate_condition(cond, _moved(direction="closing"), target()) is True
+
+
+def test_manual_move_is_false_for_an_ordinary_state_change():
+    """The default event carries no blind, so nothing must match it."""
+    assert evaluate_condition({"condition": "manual_move"}, world(), target()) is False
+
+
+def test_manual_move_checks_the_kind_not_only_the_blind():
+    """An arrival that happened to name a blind is still not a manual move.
+
+    Written because matching on `blind` alone would look correct today and
+    quietly become wrong the moment another event kind grows that field.
+    """
+    w = world(event=Event(kind="arrival", person="peter", blind="cover.a", direction="opening"))
+    assert evaluate_condition({"condition": "manual_move"}, w, target()) is False
+
+
+def test_manual_move_needs_a_target():
+    """No target means nothing to be relative to -- false, never a crash."""
+    assert evaluate_condition({"condition": "manual_move"}, _moved(), None) is False
+
+
 def test_template_condition_sees_the_same_globals_as_home_assistant():
     w = world({"input_boolean.x": "on"})
     cond = {"condition": "template", "value_template": "{{ is_state('input_boolean.x', 'on') }}"}
