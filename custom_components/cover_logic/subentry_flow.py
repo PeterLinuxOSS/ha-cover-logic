@@ -64,15 +64,31 @@ from .config_store import (
     _ID_KEY,
     BLIND,
     CONDITION,
+    GUARD,
     MODE,
     RULE,
     VALUE,
     ZONE,
     config_from_subentries,
+    duplicate_guard_order_problems,
     duplicate_rule_order_problems,
+    guard_owner_ids,
     rule_owner_ids,
 )
-from .const import EVENT_ARRIVAL, EVENT_STATE_CHANGE, RULE_DEFAULT_ZONE
+from .const import (
+    EVENT_ARRIVAL,
+    EVENT_STATE_CHANGE,
+    GUARD_ANY,
+    GUARD_DEFAULT_RECHECK,
+    GUARD_DEFER,
+    GUARD_DIRECTIONS,
+    GUARD_FORCE,
+    GUARD_POLICIES,
+    GUARD_STAGE_OUTPUT,
+    GUARD_STAGES,
+    GUARD_TIMEOUTS,
+    RULE_DEFAULT_ZONE,
+)
 from .validation import ERROR, Problem, validate
 
 _LOGGER = logging.getLogger(__name__)
@@ -80,7 +96,7 @@ _LOGGER = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Subentry flows, one per member of `config_store.SUBENTRY_TYPES`: `blind`,
-# `zone`, `value`, `condition`, `mode`, `rule`.
+# `zone`, `value`, `condition`, `mode`, `rule`, `guard`.
 # ---------------------------------------------------------------------------
 
 # Not a real Home Assistant subentry id (those are ULIDs) -- used only as the
@@ -134,28 +150,19 @@ _CODE_OWNERS: dict[str, frozenset[str]] = {
     "blind_without_zone": frozenset({ZONE}),
     "no_fallback_mode": frozenset({MODE}),
     "fallback_mode_not_last": frozenset({MODE}),
-    # Guards own no subentry type yet: they live in `entry.data["guards"]`
-    # (see `config_store.py`'s module docstring), so there is no form whose
-    # fields could fix any of these -- an empty set is the honest answer, not
-    # an oversight, and it is written out rather than left absent so that the
-    # next person to read this dict sees the decision instead of a gap. It is
-    # also the only *safe* answer: mapping a guard's problem onto some
-    # existing type would block every save of that type on a defect that form
-    # cannot reach, which is exactly the deadlock this dict exists to prevent
-    # (`MODELS.md` §9 -- gotten wrong three times). When the `guard` subentry
-    # flow lands, these become `frozenset({GUARD})`, and the two codes tied
-    # to one *specific* guard rather than to the set as a whole
-    # (`guard_unknown_target`, `guard_unreachable`) want `_ATTRIBUTED_CODES`
-    # instead -- `validation._guard_owner` already populates `Problem.owners`
-    # for every guard problem in readiness for that.
-    "guard_unknown_policy": frozenset(),
-    "guard_defer_needs_timeout": frozenset(),
-    "guard_unused_field": frozenset(),
-    "guard_force_needs_action": frozenset(),
-    "guard_bad_direction": frozenset(),
-    "guard_bad_stage": frozenset(),
-    "guard_input_direction": frozenset(),
-    "guard_unknown_target": frozenset(),
+    # Guards now own a subentry type, so their problems block guard saves.
+    # Every one of these is a statement about a single guard's own fields,
+    # and every guard form carries those fields -- so the *type* is enough
+    # and none of them needs `_ATTRIBUTED_CODES`, except the two below that
+    # name one specific guard.
+    "guard_unknown_policy": frozenset({GUARD}),
+    "guard_defer_needs_timeout": frozenset({GUARD}),
+    "guard_unused_field": frozenset({GUARD}),
+    "guard_force_needs_action": frozenset({GUARD}),
+    "guard_bad_direction": frozenset({GUARD}),
+    "guard_bad_stage": frozenset({GUARD}),
+    "guard_input_direction": frozenset({GUARD}),
+    "guard_unknown_target": frozenset({GUARD}),
 }
 
 # The codes whose owning type is not enough to say which save could fix them
@@ -171,6 +178,14 @@ _ATTRIBUTED_CODES = frozenset(
         "circular_condition_ref",
         "unknown_rule_key",
         "duplicate_rule_order",
+        # A guard's own two positional codes, for the same reason a rule's
+        # are here: a tie on one `order`, or a guard naming a deleted zone,
+        # is not something adding an unrelated guard caused or can fix. A
+        # guard's identity in `owners` is the `"guard#<index>"` string
+        # `validation._guard_owner` builds and
+        # `config_store.guard_owner_ids` maps a real subentry id onto.
+        "duplicate_guard_order",
+        "guard_unreachable",
     }
 )
 
@@ -389,9 +404,9 @@ class _SubentryFlowBase(config_entries.ConfigSubentryFlow):
         together, one source's complete set of checks: `_duplicate_errors`
         (a collapse `validate()` cannot see, see its own docstring), then
         `config_from_subentries` (structural), then `validate()` (semantic),
-        then `duplicate_rule_order_problems` (the one thing `validate()`
-        cannot see once subentries collapse into a `Config` -- see that
-        function's own docstring).
+        then the two `duplicate_*_order_problems` (the one thing
+        `validate()` cannot see once subentries collapse into a `Config`
+        -- see those functions' own docstrings).
 
         Only `ERROR`-severity problems block, matching how
         `_describe_problems` above treats the YAML path -- and even then,
@@ -426,7 +441,11 @@ class _SubentryFlowBase(config_entries.ConfigSubentryFlow):
         except ConfigError as err:
             return [] if not _parses(entry) else [str(err)]
 
-        problems = validate(config) + duplicate_rule_order_problems(candidate)
+        problems = (
+            validate(config)
+            + duplicate_rule_order_problems(candidate)
+            + duplicate_guard_order_problems(candidate)
+        )
         candidate_id = self._candidate_id(candidate, subentry_id, data)
         return [
             f"{problem.code}: {problem.message}"
@@ -1340,6 +1359,449 @@ class RuleSubentryFlowHandler(_SubentryFlowBase):
         return f"{label} -> {action}"
 
 
+_GUARD_POLICY_FIELD = "policy"
+_GUARD_ORDER_FIELD = "order"
+_GUARD_NAME_FIELD = "name"
+_GUARD_TARGETS_FIELD = "targets"
+_GUARD_APPLIES_FIELD = "applies_to"
+_GUARD_STAGE_FIELD = "stage"
+_GUARD_REF_FIELD = "condition_ref"
+_GUARD_INLINE_FIELD = "when"
+_GUARD_POSITION_FIELD = "position"
+_GUARD_TILT_FIELD = "tilt"
+_GUARD_WAIT_LIMIT_FIELD = "wait_limit"
+_GUARD_MAX_WAIT_FIELD = "max_wait_duration"
+_GUARD_ON_TIMEOUT_FIELD = "on_timeout"
+_GUARD_RECHECK_FIELD = "recheck_every"
+
+# The two answers to "how long may this defer wait". `indefinitely` is a
+# *value* (`Guard.max_wait = None`, wait forever), not an absence -- which is
+# exactly why this field exists instead of reading a bare duration: a
+# `DurationSelector` always returns something (zero), so it cannot say "I
+# left this blank", and blank has to stay distinguishable from "no limit".
+_GUARD_WAIT_AT_MOST = "for_at_most"
+_GUARD_WAIT_INDEFINITELY = "indefinitely"
+_GUARD_WAIT_LIMITS = (_GUARD_WAIT_AT_MOST, _GUARD_WAIT_INDEFINITELY)
+
+
+def _guard_target_options(entry: Any) -> list[str]:
+    """Everything a guard's `targets` may name: every configured blind, and every zone.
+
+    Not an `EntitySelector`: a zone is not an entity, and free text lets a
+    typo through silently -- the same reasoning `_zone_options` gives for a
+    rule's `zone`. An empty selection means "every blind in the house", so
+    "unset" and "explicitly all" coincide here and need no third state (they
+    do not for `max_wait`, which is why that one is spelled out).
+    """
+    blinds = sorted(
+        sub.data["entity"]
+        for sub in entry.subentries.values()
+        if sub.subentry_type == BLIND and "entity" in sub.data
+    )
+    return [*blinds, *_configured_ids(entry, ZONE)]
+
+
+def _next_guard_order(entry: Any) -> int:
+    """The `order` that appends a guard to the end of the list.
+
+    The guard twin of `_next_order`, and malformed existing orders are
+    skipped for the same reason: this only suggests a form value.
+    """
+    orders = []
+    for sub in entry.subentries.values():
+        if sub.subentry_type != GUARD:
+            continue
+        try:
+            orders.append(int(sub.data[_GUARD_ORDER_FIELD]))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return max(orders) + _ORDER_GAP if orders else 0
+
+
+def _guard_pick_schema(entry: Any) -> vol.Schema:
+    """Step one of adding a guard: which policy, where in the order, and a name.
+
+    A free function for the same reason `_rule_pick_schema` is one:
+    `options_flow.py`'s menu renders the identical form rather than growing a
+    second copy of it.
+
+    `policy` deliberately has no `default` and no suggested value. The three
+    policies do three different things, so prefilling any of them would be a
+    silent choice made on the user's behalf -- the same rule `on_timeout`
+    follows one level down.
+    """
+    return vol.Schema(
+        {
+            vol.Required(_GUARD_POLICY_FIELD): selector.SelectSelector(
+                # `sort=False`: the order in `const.GUARD_POLICIES` goes from
+                # least to most invasive, which is more useful than alphabetical.
+                selector.SelectSelectorConfig(options=list(GUARD_POLICIES), sort=False)
+            ),
+            vol.Required(_GUARD_ORDER_FIELD, default=_next_guard_order(entry)): (
+                selector.NumberSelector(selector.NumberSelectorConfig(step=1, mode=_BOX))
+            ),
+            vol.Optional(_GUARD_NAME_FIELD, default=""): selector.TextSelector(),
+        }
+    )
+
+
+def _duration_seconds(raw: Any) -> int:
+    """Total seconds of a `DurationSelector` submission, which is a `{hours, minutes, seconds}`."""
+    if not isinstance(raw, dict):
+        return 0
+    return (
+        int(raw.get("hours") or 0) * 3600
+        + int(raw.get("minutes") or 0) * 60
+        + int(raw.get("seconds") or 0)
+    )
+
+
+def _seconds_to_duration(total: int) -> dict[str, int]:
+    """Invert `_duration_seconds`, to prefill a reconfigure form."""
+    return {
+        "hours": total // 3600,
+        "minutes": (total % 3600) // 60,
+        "seconds": total % 60,
+    }
+
+
+class GuardSubentryFlowHandler(_SubentryFlowBase):
+    """Add, edit or remove one `guard` subentry.
+
+    Two steps, and for a different reason than `rule`'s two: `policy` does
+    not merely change another field's *default*, it decides which fields
+    **exist**. Home Assistant builds a form's schema when it renders, not as
+    the user types, so leaving `policy` editable on the same screen as
+    `max_wait`/`on_timeout` would let someone switch `skip` to `defer` and
+    submit a form that never contained those fields -- saving a guard that
+    fails `guard_defer_needs_timeout` with no way to fix it on screen. So
+    step one is the policy (plus `order` and `name`), step two is the guard,
+    and the policy appears there only as text in the header. Changing an
+    existing guard's policy means walking step one again, which an edit does
+    anyway.
+
+    Both edit screens live under the one `reconfigure` step id and are told
+    apart by `self._policy is None` -- the same trick `RuleSubentryFlowHandler`
+    plays with `self._pick`. That keeps `_step(step_id="reconfigure")`, and
+    with it `_get_reconfigure_subentry()`, so an edit writes back into the
+    existing subentry instead of creating a second one.
+
+    The condition splits into `condition_ref` and `when` exactly as `mode`
+    and `rule` split theirs, and for the same reason (see
+    `ModeSubentryFlowHandler`). That split is also the only route to a
+    `numeric_state` guard -- Home Assistant's own selector rejects the
+    `default` key this project requires -- so the house's wind protection,
+    which keys on a numeric threshold, has to name a `condition` subentry
+    rather than build its test inline.
+    """
+
+    subentry_type = GUARD
+    # Like a rule, a guard has no id field: its identity is its position in
+    # the one ordered list, so `_duplicate_errors` does not apply and
+    # `duplicate_guard_order` covers the collision that does matter.
+    id_key = None
+
+    # Set by step one, read by step two's schema and prefill. `None` on the
+    # first render of a reconfigure, which is what makes that render step one.
+    _policy: str | None = None
+    _pick: dict[str, Any] | None = None
+
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.SubentryFlowResult:
+        """Step one of adding a guard: which policy, and where in the order."""
+        entry = self._get_entry()
+        if user_input is not None:
+            self._pick = dict(user_input)
+            self._policy = str(user_input[_GUARD_POLICY_FIELD])
+            return await self._step(None, step_id="guard")
+
+        return self.async_show_form(step_id="user", data_schema=_guard_pick_schema(entry))
+
+    async def async_step_guard(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.SubentryFlowResult:
+        """Step two of adding a guard: the guard itself."""
+        return await self._step(user_input, step_id="guard")
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.SubentryFlowResult:
+        """Edit an existing guard: step one on the first render, step two after it.
+
+        The first render has to be step one because the saved policy decides
+        step two's schema, and the user must be able to change it -- see the
+        class docstring. `self._policy` starting as `None` is what marks
+        "step one has not been answered yet" without a second step id.
+        """
+        if self._policy is None:
+            subentry = self._get_reconfigure_subentry()
+            if user_input is not None:
+                self._pick = dict(user_input)
+                self._policy = str(user_input[_GUARD_POLICY_FIELD])
+                return await super().async_step_reconfigure(None)
+
+            data = dict(subentry.data)
+            return self.async_show_form(
+                step_id="reconfigure",
+                data_schema=self.add_suggested_values_to_schema(
+                    _guard_pick_schema(self._get_entry()),
+                    {
+                        _GUARD_POLICY_FIELD: data.get(_GUARD_POLICY_FIELD),
+                        _GUARD_ORDER_FIELD: data.get(_GUARD_ORDER_FIELD),
+                        _GUARD_NAME_FIELD: data.get(_GUARD_NAME_FIELD, ""),
+                    },
+                ),
+            )
+
+        return await super().async_step_reconfigure(user_input)
+
+    def _build_schema(self, entry: Any) -> vol.Schema:
+        """Build step two from the policy picked in step one, plus what the entry has."""
+        fields: dict[Any, Any] = {
+            vol.Optional(_GUARD_TARGETS_FIELD, default=list): selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=_guard_target_options(entry),
+                    multiple=True,
+                    sort=True,
+                )
+            ),
+            # Default `any`, not `closing`, even though most of this house's
+            # guards are `closing`: `any` is the *model's* default (what a
+            # missing key means in YAML), so prefilling anything else would
+            # make the same guard mean two different things depending on
+            # which door it was written through. The hint that most guards
+            # are `closing` belongs in `data_description`, not here.
+            vol.Required(_GUARD_APPLIES_FIELD, default=GUARD_ANY): selector.SelectSelector(
+                selector.SelectSelectorConfig(options=list(GUARD_DIRECTIONS), sort=False)
+            ),
+            vol.Required(_GUARD_STAGE_FIELD, default=GUARD_STAGE_OUTPUT): (
+                selector.SelectSelector(
+                    selector.SelectSelectorConfig(options=list(GUARD_STAGES), sort=False)
+                )
+            ),
+            vol.Optional(_GUARD_REF_FIELD): selector.SelectSelector(
+                selector.SelectSelectorConfig(options=_configured_ids(entry, CONDITION), sort=True)
+            ),
+            vol.Optional(_GUARD_INLINE_FIELD, default=list): selector.ConditionSelector(),
+        }
+
+        if self._policy == GUARD_FORCE:
+            axis_options = [_AXIS_KEEP, *_configured_ids(entry, VALUE)]
+
+            def axis() -> selector.SelectSelector:
+                return selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=axis_options, custom_value=True, sort=False
+                    )
+                )
+
+            fields[vol.Required(_GUARD_POSITION_FIELD, default=_AXIS_KEEP)] = axis()
+            fields[vol.Required(_GUARD_TILT_FIELD, default=_AXIS_KEEP)] = axis()
+
+        if self._policy == GUARD_DEFER:
+            # Neither `wait_limit` nor `on_timeout` gets a `default`: the two
+            # choices in each do opposite things, so Home Assistant refusing
+            # to submit an unanswered field is the point. `_initial_values`
+            # must not smuggle a default back in either.
+            fields[vol.Required(_GUARD_WAIT_LIMIT_FIELD)] = selector.SelectSelector(
+                selector.SelectSelectorConfig(options=list(_GUARD_WAIT_LIMITS), sort=False)
+            )
+            fields[vol.Optional(_GUARD_MAX_WAIT_FIELD, default=dict)] = selector.DurationSelector(
+                selector.DurationSelectorConfig(enable_day=False)
+            )
+            fields[vol.Required(_GUARD_ON_TIMEOUT_FIELD)] = selector.SelectSelector(
+                selector.SelectSelectorConfig(options=list(GUARD_TIMEOUTS), sort=False)
+            )
+            # `recheck_every` *does* get its default: it is a safety net, not
+            # a choice. A deferred wait does not survive a Home Assistant
+            # restart, so every parsed `defer` carries a recheck interval
+            # whether its author wrote one or not; hiding it as blank would
+            # repeat the very omission it exists to cover.
+            fields[
+                vol.Required(
+                    _GUARD_RECHECK_FIELD,
+                    default=lambda: _seconds_to_duration(GUARD_DEFAULT_RECHECK),
+                )
+            ] = selector.DurationSelector(selector.DurationSelectorConfig(enable_day=False))
+
+        return vol.Schema(fields)
+
+    def _initial_values(self, entry: Any) -> dict[str, Any] | None:
+        """Prefill step two. For `defer`, deliberately almost nothing.
+
+        Only the fields whose defaults are honest suggestions are listed.
+        `wait_limit` and `on_timeout` are absent on purpose: putting them
+        here would restore, through `add_suggested_values_to_schema`, exactly
+        the default the schema refuses to give them.
+        """
+        if self._pick is None:
+            return None
+        return {
+            _GUARD_APPLIES_FIELD: GUARD_ANY,
+            _GUARD_STAGE_FIELD: GUARD_STAGE_OUTPUT,
+            **(
+                {
+                    _GUARD_POSITION_FIELD: _AXIS_KEEP,
+                    _GUARD_TILT_FIELD: _AXIS_KEEP,
+                }
+                if self._policy == GUARD_FORCE
+                else {}
+            ),
+            **(
+                {_GUARD_RECHECK_FIELD: _seconds_to_duration(GUARD_DEFAULT_RECHECK)}
+                if self._policy == GUARD_DEFER
+                else {}
+            ),
+        }
+
+    def _local_problems(self, user_input: dict[str, Any]) -> list[str]:
+        """Reject a submission that fills both the named and the inline condition."""
+        if user_input.get(_GUARD_REF_FIELD) and user_input.get(_GUARD_INLINE_FIELD):
+            return ["guard: choose either a named condition or an inline condition, not both"]
+        return []
+
+    def _to_data(self, entry: Any, user_input: dict[str, Any]) -> dict[str, Any]:
+        """Reshape the submission into the keys `config_schema._parse_guard` reads.
+
+        Per-policy keys are written *only* for the policy that reads them:
+        `then` for `force`, `max_wait`/`on_timeout`/`recheck_every` for
+        `defer`. Writing them anyway would trip `guard_unused_field`, which
+        is an ERROR -- the form has to produce a guard that validates, not
+        one that merely round-trips.
+
+        `max_wait` carries the whole "no limit is a value" distinction from
+        the spec: `indefinitely` writes `None`, a non-zero duration writes
+        seconds, and a zero duration writes **no key at all** so
+        `guard_defer_needs_timeout` blocks the save rather than a silent
+        zero-second wait being stored.
+
+        `condition_ref` is written as `{"condition": "ref", "name": ...}` --
+        the already-parsed shape -- for the reason
+        `ModeSubentryFlowHandler._to_data` spells out: a `{"ref": ...}`
+        marker is resolved eagerly, so a deleted condition would raise
+        `ConfigError` and block every save of every type instead of one
+        attributable problem.
+        """
+        pick = self._pick or {}
+        policy = str(pick.get(_GUARD_POLICY_FIELD) or self._policy or "")
+        data: dict[str, Any] = {
+            _GUARD_POLICY_FIELD: policy,
+            _GUARD_ORDER_FIELD: int(pick.get(_GUARD_ORDER_FIELD, 0)),
+            _GUARD_APPLIES_FIELD: user_input.get(_GUARD_APPLIES_FIELD, GUARD_ANY),
+            _GUARD_STAGE_FIELD: user_input.get(_GUARD_STAGE_FIELD, GUARD_STAGE_OUTPUT),
+        }
+
+        name = pick.get(_GUARD_NAME_FIELD)
+        if name:
+            data[_GUARD_NAME_FIELD] = name
+
+        targets = user_input.get(_GUARD_TARGETS_FIELD)
+        if targets:
+            data[_GUARD_TARGETS_FIELD] = list(targets)
+
+        ref = user_input.get(_GUARD_REF_FIELD)
+        inline = _normalize_condition_tree(user_input.get(_GUARD_INLINE_FIELD))
+        if ref:
+            data[_GUARD_INLINE_FIELD] = {"condition": "ref", "name": ref}
+        elif inline:
+            data[_GUARD_INLINE_FIELD] = inline
+
+        if policy == GUARD_FORCE:
+            value_ids = _configured_ids(entry, VALUE)
+            data["then"] = {
+                _GUARD_POSITION_FIELD: _axis_to_data(
+                    user_input.get(_GUARD_POSITION_FIELD, _AXIS_KEEP), value_ids
+                ),
+                _GUARD_TILT_FIELD: _axis_to_data(
+                    user_input.get(_GUARD_TILT_FIELD, _AXIS_KEEP), value_ids
+                ),
+            }
+
+        if policy == GUARD_DEFER:
+            limit = user_input.get(_GUARD_WAIT_LIMIT_FIELD)
+            if limit == _GUARD_WAIT_INDEFINITELY:
+                data["max_wait"] = None
+            else:
+                seconds = _duration_seconds(user_input.get(_GUARD_MAX_WAIT_FIELD))
+                if seconds:
+                    data["max_wait"] = seconds
+            on_timeout = user_input.get(_GUARD_ON_TIMEOUT_FIELD)
+            if on_timeout:
+                data[_GUARD_ON_TIMEOUT_FIELD] = on_timeout
+            data[_GUARD_RECHECK_FIELD] = (
+                _duration_seconds(user_input.get(_GUARD_RECHECK_FIELD)) or GUARD_DEFAULT_RECHECK
+            )
+
+        return data
+
+    def _to_form_values(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Invert `_to_data` for step two of an edit.
+
+        `max_wait` maps back three ways, matching the three states `_to_data`
+        can write: `None` is `indefinitely`, an int is `for_at_most` plus the
+        duration, and `UNSET` (a guard that already fails
+        `guard_defer_needs_timeout` today) leaves **both** fields blank
+        rather than guessing which the author meant.
+        """
+        when = data.get(_GUARD_INLINE_FIELD)
+        is_ref = isinstance(when, dict) and when.get("condition") == "ref" and "name" in when
+        if is_ref or when is None:
+            inline: Any = []
+        elif isinstance(when, list):
+            inline = when
+        else:
+            inline = [when]
+
+        then = data.get("then") or {}
+        values: dict[str, Any] = {
+            _GUARD_TARGETS_FIELD: list(data.get(_GUARD_TARGETS_FIELD) or []),
+            _GUARD_APPLIES_FIELD: data.get(_GUARD_APPLIES_FIELD, GUARD_ANY),
+            _GUARD_STAGE_FIELD: data.get(_GUARD_STAGE_FIELD, GUARD_STAGE_OUTPUT),
+            _GUARD_REF_FIELD: when["name"] if is_ref else None,
+            _GUARD_INLINE_FIELD: inline,
+        }
+
+        if self._policy == GUARD_FORCE:
+            values[_GUARD_POSITION_FIELD] = _axis_to_form(then.get(_GUARD_POSITION_FIELD))
+            values[_GUARD_TILT_FIELD] = _axis_to_form(then.get(_GUARD_TILT_FIELD))
+
+        if self._policy == GUARD_DEFER:
+            if "max_wait" in data:
+                max_wait = data["max_wait"]
+                if max_wait is None:
+                    values[_GUARD_WAIT_LIMIT_FIELD] = _GUARD_WAIT_INDEFINITELY
+                else:
+                    values[_GUARD_WAIT_LIMIT_FIELD] = _GUARD_WAIT_AT_MOST
+                    values[_GUARD_MAX_WAIT_FIELD] = _seconds_to_duration(int(max_wait))
+            on_timeout = data.get(_GUARD_ON_TIMEOUT_FIELD)
+            if on_timeout:
+                values[_GUARD_ON_TIMEOUT_FIELD] = on_timeout
+            values[_GUARD_RECHECK_FIELD] = _seconds_to_duration(
+                int(data.get(_GUARD_RECHECK_FIELD) or GUARD_DEFAULT_RECHECK)
+            )
+
+        return values
+
+    def _candidate_id(self, candidate: Any, subentry_id: str, data: dict[str, Any]) -> Any:
+        """This guard's position in the finished list, as `validation` names it (`guard#N`)."""
+        return guard_owner_ids(candidate).get(subentry_id)
+
+    def _title(self, data: dict[str, Any]) -> str:
+        """Order first, then what the guard does -- so the list reads without opening rows.
+
+        The same reasoning as `RuleSubentryFlowHandler._title`: order is this
+        type's whole point and Home Assistant sorts subentries by title.
+        """
+        label = f"{data.get(_GUARD_ORDER_FIELD)} {data.get(_GUARD_POLICY_FIELD)}"
+        name = data.get(_GUARD_NAME_FIELD)
+        if name:
+            label = f"{label} {name}"
+        targets = data.get(_GUARD_TARGETS_FIELD)
+        scope = ", ".join(targets) if targets else "all blinds"
+        return f"{label} -> {data.get(_GUARD_APPLIES_FIELD, GUARD_ANY)} on {scope}"
+
+
 # Registered by subentry type. `config_flow.py`'s
 # `CoverLogicConfigFlow.async_get_supported_subentry_types` just returns
 # this; `options_flow.py`'s `_render_type_form` looks a single type up in it
@@ -1351,4 +1813,5 @@ SUBENTRY_FLOW_HANDLERS: dict[str, type[config_entries.ConfigSubentryFlow]] = {
     CONDITION: ConditionSubentryFlowHandler,
     MODE: ModeSubentryFlowHandler,
     RULE: RuleSubentryFlowHandler,
+    GUARD: GuardSubentryFlowHandler,
 }

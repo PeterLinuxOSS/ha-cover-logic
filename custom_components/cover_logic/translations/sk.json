@@ -305,6 +305,96 @@
       "abort": {
         "reconfigure_successful": "Rekonfigurácia bola úspešná"
       }
+    },
+    "guard": {
+      "entry_type": "Poistka",
+      "initiate_flow": {
+        "user": "Pridať poistku"
+      },
+      "step": {
+        "user": {
+          "title": "Pridať poistku",
+          "description": "Aká politika a kde v poradí. Politika určuje, ktoré polia bude mať ďalšia obrazovka, preto sa pýta prvá.",
+          "data": {
+            "policy": "Politika",
+            "order": "Poradie",
+            "name": "Názov (zobrazí sa v trace)"
+          },
+          "data_description": {
+            "policy": "Zámerne bez defaultu: tie tri politiky robia tri rozdielne veci.",
+            "order": "Nižšie sa skúša skôr. Návrh je o desať za poslednou poistkou, aby sa medzi dve dala neskôr vsunúť ďalšia. Dve poistky nesmú mať to isté poradie."
+          }
+        },
+        "guard": {
+          "title": "Pridať poistku",
+          "description": "Poistky sa skúšajú v poradí a vyhráva prvá, ktorá sadne. Poistka môže pohyb vynechať, odložiť, alebo vnútiť inú akciu.",
+          "data": {
+            "targets": "Čoho sa týka (prázdne = všetky žalúzie v dome)",
+            "applies_to": "Ktorý pohyb",
+            "stage": "Kedy zasahuje",
+            "condition_ref": "Pomenovaná podmienka (prázdne = vlastná nižšie, alebo poistka platná vždy)",
+            "when": "Vlastná podmienka (prázdne, ak používaš pomenovanú, alebo pre poistku platnú vždy)",
+            "position": "Poloha, ktorú vnúti",
+            "tilt": "Lamely, ktoré vnúti",
+            "wait_limit": "Ako dlho môže čakať",
+            "max_wait_duration": "Najviac",
+            "on_timeout": "Keď čas vyprší",
+            "recheck_every": "Kontrolovať každých"
+          },
+          "data_description": {
+            "targets": "Žalúzie a zóny sa dajú mixovať. Prázdne = všetky žalúzie; „nevyplnené\" a „výslovne všetky\" tu znamenajú to isté.",
+            "applies_to": "„zatváranie\" je klesajúca poloha, nie lamely. Väčšina poistiek v dome je „zatváranie\", ale default zostáva „akýkoľvek\", aby tá istá poistka znamenala to isté bez ohľadu na to, ako bola napísaná.",
+            "stage": "„po rozhodnutí\" prepíše akciu, „pred rozhodnutím\" vyradí cieľ z rozhodovania. Poistka pred rozhodnutím musí mať „akýkoľvek\" -- ešte neexistuje príkaz, ktorého smer by mohla mieniť.",
+            "condition_ref": "Číselný prah sa dá dosiahnuť len takto: HA selektor nepustí záložnú hodnotu, ktorú táto integrácia vyžaduje, takže podmienku treba pomenovať.",
+            "position": "„keep\" nechá os na pokoji, nastavená hodnota prečíta číslo z helpera, alebo napíš číslo 0-100.",
+            "tilt": "„keep\" nechá os na pokoji, nastavená hodnota prečíta číslo z helpera, alebo napíš číslo 0-100.",
+            "wait_limit": "„bez obmedzenia\" je skutočná odpoveď, nie prázdno: čaká, kým podmienka nezmizne. Default zámerne nie je -- tie dve možnosti robia rozdielne veci.",
+            "max_wait_duration": "Čita sa len pri „najviac\". Nula znamená, že sa poistka odmietne, nie že sa uloží nulové čakanie.",
+            "on_timeout": "Zámerne bez defaultu: zahodiť pohyb a vykonať ho aj tak sú protiklady.",
+            "recheck_every": "Odložený pohyb neprežije reštart HA, takže toto je poistka, ktorá ho znova zdvihne."
+          }
+        },
+        "reconfigure": {
+          "title": "Upraviť poistku",
+          "description": "Poistky sa skúšajú v poradí a vyhráva prvá, ktorá sadne. Poistka môže pohyb vynechať, odložiť, alebo vnútiť inú akciu.",
+          "data": {
+            "policy": "Politika",
+            "order": "Poradie",
+            "name": "Názov (zobrazí sa v trace)",
+            "targets": "Čoho sa týka (prázdne = všetky žalúzie v dome)",
+            "applies_to": "Ktorý pohyb",
+            "stage": "Kedy zasahuje",
+            "condition_ref": "Pomenovaná podmienka (prázdne = vlastná nižšie, alebo poistka platná vždy)",
+            "when": "Vlastná podmienka (prázdne, ak používaš pomenovanú, alebo pre poistku platnú vždy)",
+            "position": "Poloha, ktorú vnúti",
+            "tilt": "Lamely, ktoré vnúti",
+            "wait_limit": "Ako dlho môže čakať",
+            "max_wait_duration": "Najviac",
+            "on_timeout": "Keď čas vyprší",
+            "recheck_every": "Kontrolovať každých"
+          },
+          "data_description": {
+            "policy": "Zámerne bez defaultu: tie tri politiky robia tri rozdielne veci.",
+            "order": "Nižšie sa skúša skôr. Návrh je o desať za poslednou poistkou, aby sa medzi dve dala neskôr vsunúť ďalšia. Dve poistky nesmú mať to isté poradie.",
+            "targets": "Žalúzie a zóny sa dajú mixovať. Prázdne = všetky žalúzie; „nevyplnené\" a „výslovne všetky\" tu znamenajú to isté.",
+            "applies_to": "„zatváranie\" je klesajúca poloha, nie lamely. Väčšina poistiek v dome je „zatváranie\", ale default zostáva „akýkoľvek\", aby tá istá poistka znamenala to isté bez ohľadu na to, ako bola napísaná.",
+            "stage": "„po rozhodnutí\" prepíše akciu, „pred rozhodnutím\" vyradí cieľ z rozhodovania. Poistka pred rozhodnutím musí mať „akýkoľvek\" -- ešte neexistuje príkaz, ktorého smer by mohla mieniť.",
+            "condition_ref": "Číselný prah sa dá dosiahnuť len takto: HA selektor nepustí záložnú hodnotu, ktorú táto integrácia vyžaduje, takže podmienku treba pomenovať.",
+            "position": "„keep\" nechá os na pokoji, nastavená hodnota prečíta číslo z helpera, alebo napíš číslo 0-100.",
+            "tilt": "„keep\" nechá os na pokoji, nastavená hodnota prečíta číslo z helpera, alebo napíš číslo 0-100.",
+            "wait_limit": "„bez obmedzenia\" je skutočná odpoveď, nie prázdno: čaká, kým podmienka nezmizne. Default zámerne nie je -- tie dve možnosti robia rozdielne veci.",
+            "max_wait_duration": "Čita sa len pri „najviac\". Nula znamená, že sa poistka odmietne, nie že sa uloží nulové čakanie.",
+            "on_timeout": "Zámerne bez defaultu: zahodiť pohyb a vykonať ho aj tak sú protiklady.",
+            "recheck_every": "Odložený pohyb neprežije reštart HA, takže toto je poistka, ktorá ho znova zdvihne."
+          }
+        }
+      },
+      "error": {
+        "invalid_config": "Tento súbor sa nedal použiť: {error_detail}"
+      },
+      "abort": {
+        "reconfigure_successful": "Rekonfigurácia prebehla úspešne"
+      }
     }
   },
   "options": {
@@ -319,6 +409,7 @@
           "conditions": "Podmienky ({conditions_count})",
           "modes": "Režimy ({modes_count})",
           "rules": "Pravidlá ({rules_count})",
+          "guards": "Poistky ({guards_count})",
           "import_export": "Import / export YAML",
           "execution": "Vykonávanie ({execution_summary})",
           "check_matrix": "Zdravie konfigurácie ({health_summary})"
@@ -381,6 +472,16 @@
           "add": "Pridať",
           "list": "Zobraziť, čo dom naozaj urobí",
           "zone": "Pozrieť si zoznam jednej zóny (vrátane zdedených)",
+          "edit": "Upraviť existujúce",
+          "remove": "Odstrániť existujúce",
+          "back": "Späť do hlavnej ponuky"
+        }
+      },
+      "guards": {
+        "title": "Poistky",
+        "description": "Nastavených: {count}. Skúšajú sa v poradí; o príkaze rozhodne prvá poistka, ktorá naň sadne.",
+        "menu_options": {
+          "add": "Pridať",
           "edit": "Upraviť existujúce",
           "remove": "Odstrániť existujúce",
           "back": "Späť do hlavnej ponuky"
