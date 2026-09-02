@@ -143,8 +143,22 @@ has lost the brake.
 
 **The two directions do not use the same sensor.** Measured over 14 days:
 the flag goes on at 19:26-19:32 — sunset to the minute, with lux still at
-2100-2400, so the sunset trigger wins the evening — and off at 05:26-05:34,
-which is 11-20 minutes *before* sunrise, on the lux threshold. In the dawn
+2100-2400, so the sunset trigger wins the evening — and off 11-25 minutes
+*before* sunrise, on the lux threshold.
+
+The dawn offset was re-measured on 2026-09-02, and the first measurement had
+been wrong: it compared against `astral.sun.sunrise` with this location's
+**elevation** (1066 m), which is not what Home Assistant's own `sun.sun`
+reports. Against HA's values, over 15 dawns, the flag went off a median of
+**20.9 minutes** before sunrise (range 11.3-24.9), so the condition uses
+`sunrise - 21min`, not the `sunrise - 15min` the first pass produced.
+
+For *this* house the offset barely matters, because `je_noc` is an OR and
+night therefore ends at whichever of the two comes **later** — never before
+the helper does, which is what keeps the mode change from overtaking
+`svitanie`'s flag reset. It matters for a house with **no** such helper,
+where this clause is the whole answer: at `-15min` that house's dawn would
+land about six minutes later than this one's. In the dawn
 window both the set and the reset condition hold at once, so the old flag is
 genuinely history-dependent there: at dusk that same combination means night,
 at dawn it means day. No AND/OR of conditions can express "whichever fired
