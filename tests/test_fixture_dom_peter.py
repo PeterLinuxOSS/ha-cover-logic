@@ -7,7 +7,6 @@ import pytest
 from cover_logic.config_schema import load_config_file
 from cover_logic.const import RULE_DEFAULT_ZONE
 from cover_logic.engine import evaluate
-from cover_logic.model import KEEP
 from cover_logic.validation import validate
 from cover_logic.world import Event, SunTimes, World
 
@@ -159,9 +158,25 @@ def test_the_manual_brake_still_forces_night_in_broad_daylight(config):
     assert evaluate(config, _at(13, 0, **{"input_boolean.cover_down": "on"})).mode == "noc"
 
 
-def test_night_leaves_every_blind_alone(config):
-    """`noc` means nothing moves -- the brake would be useless otherwise."""
+def test_night_closes_every_blind(config):
+    """Phase 7.6: `noc` closes the house. It used to decide `keep` for
+    everything, which meant the lighting automation's `cover-down` branch was
+    the only thing closing it -- and so the only reason this configuration
+    could not move to another house.
+
+    The brake is not weakened by this: `cover_down` still *forces* mode `noc`
+    from anywhere (see the test above), and what `noc` then does is close.
+    The blinds that must **not** close on an open door are held up by a force
+    guard, not by `keep` -- see `test_an_open_door_at_night_still_holds_the_
+    blind_up`, which is what makes that protection load-bearing rather than
+    incidental.
+    """
     decision = evaluate(config, _at(2, 0))
-    assert all(
-        action.position is KEEP and action.tilt is KEEP for action in decision.targets.values()
-    )
+    # The flower blinds are the one exception, and were the same exception in
+    # the branch this replaces: `kvety_on` is not `off` in this world, so their
+    # height goes to the `kvety_poz` helper (34 by default) with the slats shut,
+    # rather than to the floor.
+    flowers = {"cover.kuchyna_zaluzia_1_4", "cover.kuchyna_zaluzia_2_5"}
+    for entity, action in decision.targets.items():
+        assert action.position == (34 if entity in flowers else 0), (entity, action)
+        assert action.tilt == 0, (entity, action)

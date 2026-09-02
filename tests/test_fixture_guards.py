@@ -467,15 +467,23 @@ def test_an_open_terrace_door_holds_the_living_room_blind_up(config):
 
 
 def test_an_open_door_at_night_still_holds_the_blind_up(config):
-    """Mode `noc` decides `keep/keep` for everything; the guard overrides it.
+    """The force guard holds it up against a `noc` that wants it shut.
+
     This is the live `Coverdown` branch of `automation.obyvacka_dvere_auto`,
     which force-opens exactly here.
+
+    **Since phase 7.6 this test carries real weight.** `noc` used to decide
+    `keep/keep`, so the blind stayed up whether the guard worked or not; now
+    the engine actively asks for it to be shut and only the guard stands
+    between that and a blind coming down onto an open terrace door.
     """
     w = world(**{"input_boolean.cover_down": "on", "binary_sensor.obyvacka_dvere_senzor": "on"})
     decision = evaluate(config, w)
 
-    assert decision.mode == "noc"  # counter: the engine really said keep/keep
-    assert decision.targets[LIVING_DOOR] == Action()
+    # Counter: the engine really does want it shut, so the assertion below is
+    # about the guard and not about a decision that was harmless anyway.
+    assert decision.mode == "noc"
+    assert decision.targets[LIVING_DOOR] == Action(position=0, tilt=0)
     result = run(config, w, decision, at(config, 0))
     assert result.actions[LIVING_DOOR] == Action(position=100, tilt=KEEP)
 
