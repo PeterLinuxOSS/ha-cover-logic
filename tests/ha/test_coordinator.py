@@ -498,8 +498,13 @@ def test_the_event_does_not_survive_into_the_next_evaluation(
         _moved(hass, context=Context(user_id="u1"))
         assert (await _event_after(hass, coordinator, worlds)).kind == "manual_move"
 
+        # A second movement of the same blind, this time with no user context:
+        # it triggers an evaluation (the blind is watched) but is not a manual
+        # move -- so the previous one must not still be being reported.
+        # `script.mover` would not do here: `ignore_while_on` entities are read
+        # on demand, never subscribed, so changing one triggers nothing.
         worlds.clear()
-        hass.states.async_set("script.mover", "off")  # any unrelated change
+        _moved(hass, context=Context(), position=50)
         assert (await _event_after(hass, coordinator, worlds)).kind == "state_change"
 
     _detect_case(hass_factory, runtime_entry, monkeypatch, _body)
