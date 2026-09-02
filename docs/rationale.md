@@ -1243,6 +1243,47 @@ the full 30-second shutdown cap on the reasoning that it had not started. It
 asks `sequence.planned` now. The grace is a *timeout*, and a sequence with
 nothing left to send returns immediately either way.
 
+### Why evaluation has a floor
+
+Every evaluation is triggered by a referenced entity changing. Nothing was
+wrong with that until phase 7.6 made this integration the only thing that
+closes the house at night, and then one property of it started to matter: it
+makes the *convergence time of a lost command* a fact about the configuration
+rather than about the integration.
+
+The design is reconciling, not event-driven, and deliberately so.
+`planner._off_target` compares a target against the blind's **reported**
+position, and answers "command it" when that position is unreadable -- so a
+blind that was `unavailable` when the sun set, or one whose radio dropped the
+message, is commanded again by the next evaluation, and the next, until it
+reports arrival. Readiness does not withhold it either: a blind is blocked by
+the entities *its own decision reads*, and its own position is not one of them.
+So the repair mechanism was already there. What was missing was a guarantee
+that a next evaluation ever comes.
+
+Measured on the owner's house on 2026-09-02: of the 27 entities the
+configuration references, `sensor.sun_solar_azimuth` changes roughly every
+66 s. That is the only reason this house recomputes continuously -- an
+accident of it using sun shading. A configuration with no sun-position
+condition references only slow entities (helpers, a weather entity, door
+sensors) and can sit still for hours. The same code would then repair a lost
+close by morning instead of within the minute, in the one direction that
+costs a night.
+
+`RECONCILE_FLOOR_SECONDS` is the guarantee: `_reschedule` arms the timer it
+already had for deferral deadlines even when no deferral is pending. It is a
+`min` and not a fallback, so a guard's own deadline still wins -- a
+`max_wait: 30` released five minutes late because the floor was armed first
+would be this fix causing the class of bug it is fixing.
+
+Five minutes, and not tighter, because an evaluation is idempotent (the dead
+band turns "already there" into no command at all) but not free, and the
+faults it repairs are minutes-scale. It is also comfortably longer than one
+blind's ~55 s travel, so it never lands repeatedly inside a move. In the
+owner's house it changes nothing at all -- 300 s is *rarer* than the 66 s that
+already happens -- which is what made it safe to deploy on the same day the
+integration took over the night.
+
 ## `readiness.py`
 
 ### Why readiness is a veto and not a wait

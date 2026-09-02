@@ -115,6 +115,11 @@ EVAL_SETTLE_SECONDS = 8.0
 # recompute cadence and about half one blind's ~55 s travel.
 EVAL_SETTLE_MAX_SECONDS = 30.0
 
+# The longest this may go without evaluating at all, so that how fast a lost
+# command is repaired is a property of the integration and not of the
+# configuration -- see `docs/rationale.md`, "Why evaluation has a floor".
+RECONCILE_FLOOR_SECONDS = 300.0
+
 # ---------------------------------------------------------------------------
 # Readiness: what makes an input unreadable, and how many names a diagnostic
 # may carry. See `readiness.py`'s module docstring for the measured minute

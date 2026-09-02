@@ -1018,3 +1018,47 @@ def test_a_refused_service_stops_that_blind_only_and_wedges_no_queue(
             await hass.async_stop(force=True)
 
     asyncio.run(_run())
+
+
+def test_a_command_a_blind_never_heard_is_re_issued_with_nothing_changing(
+    hass_factory, runtime_entry, monkeypatch
+):
+    """No deferral, no state change, no referenced entity moving: the floor repairs it.
+
+    The counter to `test_the_recheck_timer_times_a_wait_out_...`: there the
+    timer exists because a guard armed it, here nothing did. `cover.a` is
+    `unavailable` before setup, so the close it is sent goes nowhere and it
+    never reports arrival -- and `planner._off_target` answers "command it"
+    for an unreadable position, which is what makes a second evaluation a
+    repair rather than a duplicate. Remove `RECONCILE_FLOOR_SECONDS` and the
+    count below stays at one for as long as the house is quiet, which in a
+    configuration that references no fast-changing entity is all night.
+    """
+
+    async def _run():
+        hass = hass_factory()
+        try:
+            _seed(hass, zavri="on")
+            hass.states.async_set(BLIND, "unavailable")
+            monkeypatch.setattr("cover_logic.coordinator.RECONCILE_FLOOR_SECONDS", 1.0)
+            coordinator = CoverLogicCoordinator(hass, config(), runtime_entry())
+            await coordinator.async_setup()
+            await _settle(coordinator)
+
+            def _attempts():
+                # By `seq`, not by command: one evaluation issues both axes.
+                return {e["seq"] for e in _services(coordinator) if e["blind"] == BLIND}
+
+            assert len(_attempts()) == 1, coordinator.commands.recent
+            assert coordinator.pending["deferred"] == {}  # counter: nothing armed the timer
+
+            await asyncio.sleep(1.0 + _WAIT)
+            await coordinator.runner.async_wait_idle()
+
+            assert len(_attempts()) > 1, coordinator.commands.recent
+
+            await coordinator.async_unload()
+        finally:
+            await hass.async_stop(force=True)
+
+    asyncio.run(_run())
