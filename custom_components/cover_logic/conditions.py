@@ -12,9 +12,12 @@ import jinja2
 
 from .const import (
     COND_EVENT_TARGETS_ZONE,
+    COND_MANUAL_MOVE,
     COND_REF,
     COND_SUN,
     COND_SUN_HITS_TARGET,
+    EVENT_MANUAL_MOVE,
+    GUARD_ANY,
     SUN_EVENT_SUNRISE,
     SUN_EVENT_SUNSET,
 )
@@ -105,6 +108,8 @@ def evaluate_condition(
         return _sun_hits_target(cond, world, target)
     if kind == COND_EVENT_TARGETS_ZONE:
         return _event_targets_zone(world, target)
+    if kind == COND_MANUAL_MOVE:
+        return _manual_move(cond, world, target)
 
     msg = f"unknown condition type: {kind!r}"
     raise ValueError(msg)
@@ -305,3 +310,30 @@ def _event_targets_zone(world: World, target: Target | None) -> bool:
     if target is None or world.event.person is None:
         return False
     return world.event.person in target.zone.occupants
+
+
+def _manual_move(cond: dict, world: World, target: Target | None) -> bool:
+    """Did somebody move *this* blind by hand, and if `direction` is given, that way?
+
+    Relative to the target, exactly as `sun_hits_target` and
+    `event_targets_zone` are: a manual move somewhere else in the house is not
+    something the blind being decided should react to. That is what makes the
+    same rule work for every room without naming entities.
+
+    `direction` is optional. Omitted means "moved at all", which is the honest
+    reading of an absent key and matches how `applies_to` treats
+    `GUARD_ANY` -- and `GUARD_ANY` is accepted as an explicit spelling of the
+    same thing, so a rule can say it out loud.
+
+    Every part is checked, not just the kind: an `Event` of another kind
+    carries no `blind`, so matching on the kind alone would make this true for
+    an arrival the moment somebody added `blind` to that event too.
+    """
+    if target is None or world.event.kind != EVENT_MANUAL_MOVE:
+        return False
+    if world.event.blind != target.blind.entity:
+        return False
+    wanted = cond.get("direction")
+    if wanted is None or wanted == GUARD_ANY:
+        return world.event.direction is not None
+    return world.event.direction == wanted

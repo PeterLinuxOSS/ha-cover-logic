@@ -20,10 +20,27 @@ class Event:
 
     `person` carries who arrived or left, so a rule can ask whether the event
     belongs to the occupant of the zone currently being decided.
+
+    `blind` and `direction` carry the same idea for a movement somebody made
+    by hand: which blind was moved, and which way -- `const.GUARD_OPENING` or
+    `GUARD_CLOSING`, the same direction vocabulary a guard's `applies_to`
+    uses, rather than a second spelling of up and down.
+
+    **Why a manual move lives on `Event` rather than in a new input.** "Who
+    moved that blind, and which way" is not state: it is what happened
+    *between* two snapshots, and `World` is deliberately a snapshot, so it
+    cannot be another entity read. But it is exactly what `Event` already
+    means -- "what prompted this evaluation" -- and a second input would need
+    its own lifetime rules while giving two answers to that one question.
+    What a manual move additionally needs is *memory* ("this room is handed
+    over until dawn"); that is a separate concern from reporting the movement,
+    and keeping them apart is the point rather than an omission.
     """
 
     kind: str = "state_change"
     person: str | None = None
+    blind: str | None = None
+    direction: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -25,6 +25,37 @@ caller mutating the dict it passed in. This module exists to guarantee that
 one evaluation sees one consistent state, so that guarantee is enforced here
 rather than left to callers.
 
+## Manual movements: an event, not a state
+
+"Somebody moved that blind, and which way" cannot be an entity read. `World`
+is a snapshot on purpose -- the same snapshot always yields the same decision,
+which is what removes the whole race-condition class -- and a movement is what
+happened *between* two snapshots. So it arrives on the one input that already
+means "what prompted this evaluation": `Event`, with a `blind` and a
+`direction` beside the `person` an arrival carries.
+
+That was a decision with a real alternative. A separate input would have
+needed its own lifetime rules (how long is a manual move "current"?) and would
+have given two answers to the one question `Event` already answers. What a
+manual move *additionally* needs is memory -- "this room is handed over until
+dawn" -- and that is a different concern from reporting the movement. Keeping
+them apart is the point: the memory is a latch, and a latch belongs nowhere
+near a snapshot.
+
+`conditions.manual_move` is relative to the target, exactly as
+`sun_hits_target` and `event_targets_zone` are, so one rule works in every
+room without naming entities -- and it checks the event *kind*, not only the
+blind, so it cannot start matching an arrival the day another event kind grows
+a `blind` field.
+
+**Nothing produces this event yet, and that is not an oversight.** "Not our
+own command" is not "a person did this": the house's own scripts and its
+lighting automation are not us either. Telling them apart needs a declared
+list of callers to ignore, which is a later step; wiring the detector before
+that would report every automation's movement as manual, and it would do it
+silently. `coordinator._handle_state_change` is where it will go and says so.
+
+
 ## The `je_noc` condition
 
 ### Why there is no "somebody is in bed" interlock

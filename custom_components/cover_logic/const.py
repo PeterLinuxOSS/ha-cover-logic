@@ -142,6 +142,7 @@ READINESS_REASON_PREFIX = "world not ready"
 
 # Built-in condition types beyond the Home Assistant native set.
 COND_EVENT_TARGETS_ZONE = "event_targets_zone"
+COND_MANUAL_MOVE = "manual_move"
 COND_REF = "ref"
 COND_SUN_HITS_TARGET = "sun_hits_target"
 
@@ -166,6 +167,10 @@ RULE_DEFAULT_ZONE = "*"
 # Default event kind used when nothing more specific applies.
 EVENT_ARRIVAL = "arrival"
 EVENT_STATE_CHANGE = "state_change"
+# Somebody moved a blind by hand. Carries `Event.blind` and `Event.direction`;
+# see `world.Event` for why this is an event kind rather than a new input, and
+# `conditions._manual_move` for what a rule can ask about it.
+EVENT_MANUAL_MOVE = "manual_move"
 
 # ---------------------------------------------------------------------------
 # `guards:` -- the vocabularies one guard entry is written in.
