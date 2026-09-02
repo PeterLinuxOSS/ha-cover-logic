@@ -26,6 +26,26 @@ jobs:
       # guarantee and must be run locally before any release.
       - run: python -m pytest tests/ -q --ignore=tests/parity
 
+  # `tests/ha/` guards every module with `pytest.importorskip("homeassistant")`,
+  # so without Home Assistant installed those files collect ZERO tests and
+  # report neither a pass nor a skip -- the suite looks green while the whole
+  # Home Assistant layer (config flow, subentry flows, options flow, entry
+  # migration) goes unchecked. This job is what actually runs them. It is
+  # separate from the matrix above because Home Assistant needs Python
+  # >= 3.14.2, which this project's own floor does not.
+  pytest-ha:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - run: pip install -e ".[dev,ha]"
+      # No extra "did anything run?" check needed: pytest exits 5 on "no tests
+      # collected", so if the import guard skips everything this step fails
+      # rather than passing silently -- which is the whole point of the job.
+      - run: python -m pytest tests/ha -q
+
   lint:
     runs-on: ubuntu-latest
     steps:
