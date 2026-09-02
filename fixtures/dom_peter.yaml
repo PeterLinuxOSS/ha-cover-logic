@@ -245,14 +245,33 @@ modes:
   - {id: bezny_den}
 
 rules:
-  # ---- NOC: nič sa nehýbe, ani po príchode ------------------------------
-  # Bolo tu 7 zoznamov, jeden na zónu, všetky s tým istým jediným pravidlom
-  # -- v noci sa nič nehýbe, bez ohľadu na zónu. Odkedy pravidlo bez zóny
-  # (kľúč "*", `const.RULE_DEFAULT_ZONE`) platí ako default pre celý režim
-  # (fáza 6, task 1: `engine._apply_rules`), stačí ho napísať raz. Žiadna zóna
-  # v `noc` nemá vlastný zoznam, takže default nič nezatieni -- `validate()`
-  # na tomto prepise hlási 0 chýb aj 0 varovaní, presne ako predtým.
-  "noc.*": [{then: {position: keep, tilt: keep}}]
+  # ---- NOC: zatvor dom ---------------------------------------------------
+  # 2026-09-02 (fáza 7.6): dovtedy tu stálo `keep/keep` a dom v noci zatvárala
+  # VÝHRADNE vetva `cover-down` v Lighting SUN -- integrácia mlčala, takže sa
+  # nedala preniesť do iného domu bez tej automatizácie. Teraz zatvára ona.
+  # `position: 0, tilt: 0` je presne to, čo po sebe nechávala tá vetva.
+  # Časovanie: vetva čakala 15 min po lux prahu, čo za 14 dní dopadalo na
+  # 19:26-19:32, teda na minútu so západom -- a `je_noc` začína západom. Tých
+  # 15 minút teda nie je rozdiel, ale kompenzácia skoršieho lux triggera.
+  # Dverová žalúzia sa pri otvorených dverách nezatvorí -- to nie je výnimka
+  # tu, ale poistka `terasa - dvere alebo sauna` nižšie (`defer`).
+  # Sedem zoznamov, nie `"noc.*"` default: fáza 6 ich zliala do defaultu práve
+  # preto, že boli identické, a odkedy `kvety` majú v noci vlastnú výšku, už
+  # identické nie sú. Default vedľa vlastného zoznamu zóny navyše hlási
+  # `unreachable_rule`, a `test_fixture_has_no_validation_errors` žiada nulu
+  # problémov akejkoľvek závažnosti -- nie nulu chýb.
+  noc.spolocne: [{then: {position: 0, tilt: 0}}]
+  noc.terasa:   [{then: {position: 0, tilt: 0}}]
+  noc.terasa2:  [{then: {position: 0, tilt: 0}}]
+  noc.peter:    [{then: {position: 0, tilt: 0}}]
+  noc.mimka:    [{then: {position: 0, tilt: 0}}]
+  noc.spalna:   [{then: {position: 0, tilt: 0}}]
+  # Kvety: pri zapnutom `kvety_on` ide výška na `kvety_poz` a lamely na 0,
+  # presne ako to robila vetva `cover-down`. `rucne_kuchyna` sa v noci
+  # ZÁMERNE ignoruje, lebo ho ignorovala aj ona.
+  noc.kvety:
+    - {if: !ref nie_kvety_on, then: {position: 0, tilt: 0}}
+    - {then: {position: !ref kvety_poz, tilt: 0}}
 
   # ---- DOVOLENKA: spálne úplne zavreté, spoločné lamely 50 -------------
   # Príchodová varianta je zhodná so stavovou (zp = z), preto žiadne
