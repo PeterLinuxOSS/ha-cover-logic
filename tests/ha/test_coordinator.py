@@ -23,6 +23,7 @@ pytest.importorskip("homeassistant")
 
 from homeassistant.core import EVENT_STATE_CHANGED
 
+from cover_logic.config_schema import load_config
 from cover_logic.coordinator import CoverLogicCoordinator, evaluate as real_evaluate
 from cover_logic.engine import EngineError
 
@@ -255,19 +256,36 @@ def test_unload_removes_subscription_and_cancels_pending_settle(
 # the bookkeeping; this pins the half only a real Home Assistant can show --
 # that the context this coordinator issues is the one the service call
 # actually arrives under, so a state change stamped with it is recognisably
-# ours. Without this, `is_own` could be perfectly correct about ids that
-# never reach Home Assistant.
+# ours. Without this, `is_own` could be perfectly correct about ids that never
+# reach Home Assistant.
 # ---------------------------------------------------------------------------
+
+# The module-wide `config` fixture's only rule is `position: keep, tilt: keep`,
+# so it commands nothing and could never show a context. This one opens a shut
+# blind, which is a real movement rather than a dead band.
+_MOVING_CONFIG = """
+blinds:
+  - entity: cover.a
+    travel_time: 0.2
+zones:
+  za:
+    members: [cover.a]
+modes:
+  - {id: bezny_den}
+rules:
+  bezny_den.za:
+    - {then: {position: 100, tilt: keep}}
+"""
 
 
 def test_the_context_a_command_is_issued_under_is_recognised_as_our_own(
-    config, hass_factory, runtime_entry
+    hass_factory, runtime_entry
 ):
     """The step manual-intervention detection is built on (spec, step 1).
 
-    Registers a real `cover.close_cover` handler, lets the coordinator
-    dispatch through it, and asks the log about the context the handler
-    actually saw -- not the one the coordinator says it sent.
+    Registers a real `cover.*` handler, lets the coordinator dispatch through
+    it, and asks the log about the context **the handler actually saw** -- not
+    the one the coordinator says it sent.
     """
     seen = []
 
@@ -278,30 +296,31 @@ def test_the_context_a_command_is_issued_under_is_recognised_as_our_own(
             async def _handler(call):
                 seen.append(call.context)
 
-            for service in (
-                "close_cover",
-                "open_cover",
-                "set_cover_position",
-                "set_cover_tilt_position",
-                "close_cover_tilt",
-                "open_cover_tilt",
-            ):
+            for service in ("open_cover", "set_cover_position", "set_cover_tilt_position"):
                 hass.services.async_register("cover", service, _handler)
+            hass.states.async_set(
+                "cover.a", "closed", {"current_position": 0, "current_tilt_position": 0}
+            )
 
-            coordinator = CoverLogicCoordinator(hass, config, runtime_entry({"dry_run": False}))
+            coordinator = CoverLogicCoordinator(
+                hass, load_config(_MOVING_CONFIG), runtime_entry({"dry_run": False})
+            )
             await coordinator.async_setup()
             await asyncio.sleep(_WAIT)
+            await coordinator.runner.async_wait_idle()
 
+            assert coordinator.dry_run is False
             assert seen, "the coordinator dispatched nothing, so there is nothing to attribute"
             for context in seen:
                 assert coordinator.commands.is_own(context.id) is True
             # The counter: a context we did not issue must not be ours, or the
-            # assertion above would pass for an `is_own` that returns True for
-            # everything.
+            # loop above would pass for an `is_own` that returns True for
+            # anything at all.
             assert coordinator.commands.is_own("not-a-context-we-issued") is False
-            # And the property the whole design rests on: our own calls carry
-            # no `user_id`, so "a person did this" cannot be answered by
-            # looking for one -- see `CommandLog.is_own`.
+            # And the premise the whole design rests on: our own calls carry no
+            # `user_id`, which is why "look for a user_id" happens to work
+            # today and why it is the wrong thing to rely on -- see
+            # `CommandLog.is_own`.
             assert all(context.user_id is None for context in seen)
 
             await coordinator.async_unload()
