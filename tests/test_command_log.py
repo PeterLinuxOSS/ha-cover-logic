@@ -66,6 +66,9 @@ def test_a_dispatched_call_is_recorded_with_its_whole_payload():
         "service": "cover.set_cover_position",
         "position": 34,
         "reached_home_assistant": True,
+        # Written even when absent, so a reader can tell "no context issued"
+        # from "this key predates contexts"; see `CommandLog.is_own`.
+        "context_id": None,
     }
 
 
@@ -166,3 +169,75 @@ def test_the_source_mapping_is_not_kept_by_reference():
     log.observe(COMMAND_WOULD_CALL, fields)
     fields["blind"] = "cover.tampered"
     assert log.last["blind"] == "cover.a"
+
+
+# ---------------------------------------------------------------------------
+# Own-context attribution: the foundation manual-intervention detection needs.
+# Today's house automation answers "did a person move this?" with "does the
+# state change carry a `user_id`", which excludes this integration only
+# because Home Assistant gives an integration's own calls no `user_id`. These
+# tests pin the direct answer instead -- ids this log handed out.
+# ---------------------------------------------------------------------------
+
+
+def test_a_dispatched_context_is_recognised_as_our_own():
+    log = _log()
+    log.dispatched("close_cover", {"entity_id": "cover.a"}, context_id="ctx-1")
+
+    assert log.is_own("ctx-1") is True
+    assert log.last["context_id"] == "ctx-1"
+
+
+def test_a_context_we_never_issued_is_not_ours():
+    """The half that matters: a human's movement must not be mistaken for ours."""
+    log = _log()
+    log.dispatched("close_cover", {"entity_id": "cover.a"}, context_id="ctx-1")
+
+    assert log.is_own("ctx-someone-else") is False
+    assert log.is_own(None) is False
+    assert log.is_own(None, None) is False
+
+
+def test_a_child_context_of_ours_is_ours_too():
+    """Home Assistant chains contexts, so one hop down carries our id as parent."""
+    log = _log()
+    log.dispatched("close_cover", {"entity_id": "cover.a"}, context_id="ctx-1")
+
+    assert log.is_own("ctx-child", "ctx-1") is True
+    assert log.is_own("ctx-child", "ctx-unrelated") is False
+
+
+def test_dispatching_without_a_context_still_records_the_line():
+    """A caller that issues no context of its own must not break the record."""
+    log = _log()
+    log.dispatched("close_cover", {"entity_id": "cover.a"})
+
+    assert log.last["blind"] == "cover.a"
+    assert log.last["context_id"] is None
+    assert log.is_own(None) is False
+
+
+def test_the_context_memory_is_bounded_and_forgets_the_oldest_first():
+    """Unbounded would be a leak that also answers `is_own` yes forever.
+
+    Both halves are asserted: the oldest id is gone *and* the newest is still
+    there. Checking only the first would pass on an implementation that
+    cleared everything.
+    """
+    log = CommandLog(context_depth=3)
+    for i in range(4):
+        log.dispatched("close_cover", {"entity_id": "cover.a"}, context_id=f"ctx-{i}")
+
+    assert log.is_own("ctx-0") is False
+    assert [log.is_own(f"ctx-{i}") for i in (1, 2, 3)] == [True, True, True]
+
+
+def test_repeating_one_context_does_not_evict_the_others():
+    """Two calls can share a context; that must not consume three slots of memory."""
+    log = CommandLog(context_depth=2)
+    log.dispatched("close_cover", {"entity_id": "cover.a"}, context_id="ctx-1")
+    log.dispatched("close_cover_tilt", {"entity_id": "cover.a"}, context_id="ctx-1")
+    log.dispatched("close_cover", {"entity_id": "cover.b"}, context_id="ctx-2")
+
+    assert log.is_own("ctx-1") is True
+    assert log.is_own("ctx-2") is True

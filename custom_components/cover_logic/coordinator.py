@@ -45,7 +45,7 @@ import datetime as dt
 import logging
 from typing import TYPE_CHECKING, Any
 
-from homeassistant.core import Event, HomeAssistant, callback
+from homeassistant.core import Context, Event, HomeAssistant, callback
 from homeassistant.helpers.event import (
     EventStateChangedData,
     async_track_point_in_utc_time,
@@ -167,10 +167,25 @@ class CoverLogicCoordinator:
         """
 
         async def _call_cover(service: str, data: dict[str, Any]) -> None:
-            """Issue one `cover.*` call and record it once Home Assistant accepts it."""
+            """Issue one `cover.*` call under our own context, recording it once accepted.
+
+            The context is issued here rather than left for Home Assistant to
+            invent, so the state changes it causes can be recognised as ours
+            *by id* -- see `CommandLog.is_own` for why "the caller has no
+            `user_id`" is the wrong foundation for manual-intervention
+            detection, even though it happens to work today.
+
+            A fresh context per call, not one shared across a recompute: Home
+            Assistant stamps each resulting state change with the context of
+            the call that caused it, so sharing one would only make the record
+            ambiguous about which blind a change belonged to.
+            """
+            context = Context()
             # `blocking=True` -- see `docs/rationale.md`, "Why the service call blocks".
-            await self.hass.services.async_call(COVER_DOMAIN, service, dict(data), blocking=True)
-            self.commands.dispatched(service, data)
+            await self.hass.services.async_call(
+                COVER_DOMAIN, service, dict(data), blocking=True, context=context
+            )
+            self.commands.dispatched(service, data, context_id=context.id)
 
         return CoverRunner(self.hass, self.entry, _call_cover, observer=self.commands.observe)
 

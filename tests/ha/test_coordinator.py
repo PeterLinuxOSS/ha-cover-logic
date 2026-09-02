@@ -248,3 +248,64 @@ def test_unload_removes_subscription_and_cancels_pending_settle(
             await hass.async_stop(force=True)
 
     asyncio.run(_run())
+
+
+# ---------------------------------------------------------------------------
+# Own-context attribution, end to end. `CommandLog.is_own`'s unit tests pin
+# the bookkeeping; this pins the half only a real Home Assistant can show --
+# that the context this coordinator issues is the one the service call
+# actually arrives under, so a state change stamped with it is recognisably
+# ours. Without this, `is_own` could be perfectly correct about ids that
+# never reach Home Assistant.
+# ---------------------------------------------------------------------------
+
+
+def test_the_context_a_command_is_issued_under_is_recognised_as_our_own(
+    config, hass_factory, runtime_entry
+):
+    """The step manual-intervention detection is built on (spec, step 1).
+
+    Registers a real `cover.close_cover` handler, lets the coordinator
+    dispatch through it, and asks the log about the context the handler
+    actually saw -- not the one the coordinator says it sent.
+    """
+    seen = []
+
+    async def _run():
+        hass = hass_factory()
+        try:
+
+            async def _handler(call):
+                seen.append(call.context)
+
+            for service in (
+                "close_cover",
+                "open_cover",
+                "set_cover_position",
+                "set_cover_tilt_position",
+                "close_cover_tilt",
+                "open_cover_tilt",
+            ):
+                hass.services.async_register("cover", service, _handler)
+
+            coordinator = CoverLogicCoordinator(hass, config, runtime_entry({"dry_run": False}))
+            await coordinator.async_setup()
+            await asyncio.sleep(_WAIT)
+
+            assert seen, "the coordinator dispatched nothing, so there is nothing to attribute"
+            for context in seen:
+                assert coordinator.commands.is_own(context.id) is True
+            # The counter: a context we did not issue must not be ours, or the
+            # assertion above would pass for an `is_own` that returns True for
+            # everything.
+            assert coordinator.commands.is_own("not-a-context-we-issued") is False
+            # And the property the whole design rests on: our own calls carry
+            # no `user_id`, so "a person did this" cannot be answered by
+            # looking for one -- see `CommandLog.is_own`.
+            assert all(context.user_id is None for context in seen)
+
+            await coordinator.async_unload()
+        finally:
+            await hass.async_stop(force=True)
+
+    asyncio.run(_run())
