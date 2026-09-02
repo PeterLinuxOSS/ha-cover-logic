@@ -30,6 +30,8 @@ from cover_logic.config_schema import load_config
 from cover_logic.config_store import subentries_from_config
 from cover_logic.const import CONF_CONFIG_PATH
 
+from .conftest import FakeStateMachine
+
 # This checkout's root, so the blocking-I/O guard below can ignore reads that
 # are not ours -- Home Assistant does plenty of its own on the loop.
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -375,3 +377,80 @@ def test_setup_from_subentries_does_no_blocking_file_io_on_the_event_loop(make_e
         asyncio.run(run())
 
     assert offences == []
+
+
+# `_check_referenced_entities`: the one question a fresh install needs
+# answered. Both tests call it directly, for the reason
+# `test_check_fixture_conformance_clears_the_issue_...` gives -- the check
+# touches `hass` only for `.states` and to pass through to `issue_registry`.
+_NAMES_TWO_ENTITIES = """
+blinds:
+  - entity: cover.a
+zones:
+  z:
+    members: [cover.a]
+conditions:
+  dvere:
+    condition: state
+    entity_id: binary_sensor.dvere
+    state: "on"
+modes:
+  - {id: any}
+rules:
+  any.z:
+    - {if: !ref dvere, then: {position: 0, tilt: 0}}
+    - {then: {position: keep, tilt: keep}}
+"""
+
+
+def _run_entity_check(hass, config, *, registered=()):
+    """Run the check with `registered` as the entity registry's contents."""
+    registry = mock.Mock()
+    registry.async_get = lambda entity: mock.Mock() if entity in registered else None
+    with (
+        mock.patch("homeassistant.helpers.entity_registry.async_get", return_value=registry),
+        mock.patch("homeassistant.helpers.issue_registry.async_create_issue") as create,
+        mock.patch("homeassistant.helpers.issue_registry.async_delete_issue") as delete,
+    ):
+        from cover_logic import _check_referenced_entities  # noqa: PLC0415
+
+        asyncio.run(_check_referenced_entities(hass, config))
+    return create, delete
+
+
+def test_an_entity_this_house_does_not_have_raises_a_repair_issue(setup_hass):
+    """Nothing in the state machine and nothing in the registry: both names reported.
+
+    The blind is the important half. `_entity_ids` deliberately does *not*
+    include blinds -- subscribing to them has a cost -- so a `cover.` that
+    does not exist would otherwise be the one thing this check missed, while
+    being the one thing that makes a rule permanently uncarryable.
+    """
+    create, delete = _run_entity_check(setup_hass(), load_config(_NAMES_TWO_ENTITIES))
+
+    delete.assert_not_called()
+    assert create.call_args.kwargs["translation_key"] == "unknown_entities"
+    placeholders = create.call_args.kwargs["translation_placeholders"]
+    assert placeholders["count"] == "2"
+    assert "cover.a" in placeholders["entities"]
+    assert "binary_sensor.dvere" in placeholders["entities"]
+
+
+def test_known_in_either_the_states_or_the_registry_is_known_enough(setup_hass):
+    """One entity present only as state, one present only in the registry: no issue.
+
+    The counter to checking just one of them, and neither direction is
+    hypothetical: a YAML template sensor without a `unique_id` is never in the
+    registry, and an entity whose integration has not been set up yet is not
+    in the state machine. Requiring both would report entities this house
+    does have -- which is worse than not checking, because a repair issue
+    nobody can act on is one everybody learns to dismiss.
+    """
+    hass = setup_hass()
+    hass.states = FakeStateMachine({"binary_sensor.dvere": mock.Mock()})
+    create, delete = _run_entity_check(
+        hass, load_config(_NAMES_TWO_ENTITIES), registered=("cover.a",)
+    )
+
+    create.assert_not_called()
+    delete.assert_called_once_with(hass, "cover_logic", "unknown_entities")

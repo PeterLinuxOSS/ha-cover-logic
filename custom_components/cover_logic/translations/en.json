@@ -671,6 +671,10 @@
     "fixture_drift": {
       "title": "Configuration no longer matches fixtures/dom_peter.yaml",
       "description": "The blinds, zones, modes, conditions, values or rules configured here no longer match `fixtures/dom_peter.yaml` in this checkout -- the file the 92,160-scenario migration gate measures. Differing: {fields}. Re-import that file (the `import_config` service) to bring the two back together, or update the fixture to match the configuration you actually intend, before trusting the gate again."
+    },
+    "unknown_entities": {
+      "title": "Configuration references entities this Home Assistant does not have",
+      "description": "{count} entity or entities named by this configuration exist in neither the state machine nor the entity registry, so nothing here can read or command them: {entities}. A rule, condition or guard that depends on one will behave as though that input were absent, and a blind among them can never be moved. Create the missing helpers and entities, or edit the configuration to name the ones this house actually has. Checked once, after Home Assistant has finished starting."
     }
   },
   "services": {
