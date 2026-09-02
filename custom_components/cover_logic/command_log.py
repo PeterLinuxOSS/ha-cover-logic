@@ -51,6 +51,17 @@ from .const import COMMAND_DISPATCHED, COMMAND_WITHHELD
 # worse copy of something Home Assistant already stores properly.
 DEFAULT_DEPTH = 25
 
+# How many issued context ids `is_own` can still recognise. Separate from
+# `DEFAULT_DEPTH` because it answers a different question and needs a
+# different horizon: the entry ring is for a human reading the last few
+# actions, this is for attributing a state change that may arrive seconds
+# after the call that caused it. One recompute issues at most one call per
+# blind (ten, in the largest house this has run in), so 64 covers several
+# rounds still settling at once -- and it is bounded rather than "keep them
+# all" because a set of ids nobody will ever ask about again is a leak that
+# grows for as long as the integration runs.
+DEFAULT_CONTEXT_DEPTH = 64
+
 
 def _utc_now_iso() -> str:
     """The default clock: an ISO-8601 UTC timestamp, seconds resolution.
@@ -89,20 +100,44 @@ class CommandLog:
     """
 
     def __init__(
-        self, *, depth: int = DEFAULT_DEPTH, clock: Callable[[], str] | None = None
+        self,
+        *,
+        depth: int = DEFAULT_DEPTH,
+        clock: Callable[[], str] | None = None,
+        context_depth: int = DEFAULT_CONTEXT_DEPTH,
     ) -> None:
-        """Keep the newest `depth` entries; timestamp them with `clock`."""
+        """Keep the newest `depth` entries; timestamp them with `clock`.
+
+        `context_depth` separately bounds the memory of issued context ids --
+        see `is_own`.
+        """
         self._entries: deque[dict[str, Any]] = deque(maxlen=depth)
         self._clock = clock if clock is not None else _utc_now_iso
+        # Two structures for one fact, on purpose: the deque gives eviction
+        # order, the set gives an O(1) answer to `is_own` on a path that will
+        # run for every cover state change in the house. `_remember_context`
+        # is the only writer of either, so they cannot drift apart.
+        self._own_contexts: deque[str] = deque(maxlen=context_depth)
+        self._own_context_ids: set[str] = set()
 
-    def dispatched(self, service: str, data: Mapping[str, Any]) -> None:
+    def dispatched(
+        self, service: str, data: Mapping[str, Any], *, context_id: str | None = None
+    ) -> None:
         """Record one `cover.*` call that reached Home Assistant and returned.
 
         Called after the service call, never before: a `dispatched` entry means
         accepted, where the runner's own `called` line means only attempted.
+
+        `context_id` is the id of the `Context` the caller issued the command
+        under, remembered so `is_own` can later recognise the state changes it
+        causes. Optional, so a caller that issues no context of its own still
+        records the line correctly -- it just leaves nothing to attribute
+        against afterwards.
         """
         entity = data.get("entity_id")
         payload = {key: value for key, value in data.items() if key != "entity_id"}
+        if context_id is not None:
+            self._remember_context(context_id)
         self._record(
             COMMAND_DISPATCHED,
             {
@@ -111,7 +146,48 @@ class CommandLog:
                 **payload,
                 # Stated, not implied: this is where a reader sees a command leave the integration.
                 "reached_home_assistant": True,
+                "context_id": context_id,
             },
+        )
+
+    def _remember_context(self, context_id: str) -> None:
+        """Add one issued context id, evicting the oldest at `context_depth`.
+
+        The set entry is dropped *before* the append, never after: a `deque`
+        with a `maxlen` evicts silently on append, so reading its leftmost
+        afterwards would already be the wrong id -- the set would grow without
+        bound *and* keep answering `is_own` yes for a context long finished.
+        """
+        if context_id in self._own_context_ids:
+            return
+        if (
+            self._own_contexts.maxlen is not None
+            and len(self._own_contexts) == self._own_contexts.maxlen
+        ):
+            self._own_context_ids.discard(self._own_contexts[0])
+        self._own_contexts.append(context_id)
+        self._own_context_ids.add(context_id)
+
+    def is_own(self, context_id: str | None, parent_id: str | None = None) -> bool:
+        """Whether a state change under this context came from our own command.
+
+        This is the point of issuing a context at all. The house automation
+        this will eventually replace decides "a person did this" by checking
+        that `context.user_id` is set, which happens to exclude this
+        integration because Home Assistant gives an integration's own service
+        calls no `user_id`. That works, but it is a fact about how Home
+        Assistant labels callers rather than a statement about who acted --
+        and it stops working the day this integration is called with a user's
+        context attached. Matching ids this class handed out answers the
+        question directly instead.
+
+        `parent_id` is checked too: Home Assistant chains contexts, so a state
+        change one hop below our call carries our id as its parent rather than
+        as its own.
+        """
+        return bool(
+            (context_id is not None and context_id in self._own_context_ids)
+            or (parent_id is not None and parent_id in self._own_context_ids)
         )
 
     def observe(self, kind: str, fields: Mapping[str, Any]) -> None:
