@@ -56,10 +56,14 @@ import homeassistant.util.dt as dt_util
 from .command_log import CommandLog
 from .config_schema import referenced_entities
 from .const import (
+    COND_MANUAL_MOVE,
     DEFAULT_DRY_RUN,
     EVAL_SETTLE_MAX_SECONDS,
     EVAL_SETTLE_SECONDS,
+    EVENT_MANUAL_MOVE,
     GUARD_ANY,
+    GUARD_CLOSING,
+    GUARD_OPENING,
     OPT_DRY_RUN,
 )
 from .deferrals import DeferralRegistry, Elapsed
@@ -68,7 +72,14 @@ from .guards import Guarded, guard_blinds, review, screen
 from .ha_world import build_world
 from .model import KEEP, Action, Config
 from .readiness import Readiness, assess
-from .runner import COVER_DOMAIN, CoverRunner, Priority, current_position
+from .runner import (
+    ATTR_CURRENT_TILT_POSITION,
+    COVER_DOMAIN,
+    CoverRunner,
+    Priority,
+    current_position,
+)
+from .world import Event as WorldEvent
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -87,6 +98,38 @@ SOURCE_GUARD_TIMEOUT = "guard-timeout"
 # copied into an instance attribute so a test can shrink them (the *shape* of
 # the timer is what most of `tests/ha/test_settle.py` is about, not its
 # length).
+
+
+def _direction_of(old_state: Any, new_state: Any) -> str | None:
+    """Which way a cover just moved: `GUARD_OPENING`, `GUARD_CLOSING` or `None`.
+
+    The reported state wins when it says `opening`/`closing`: the first update
+    after a command often carries only that, with the position not yet caught
+    up -- and it is the update that carries the caller's context. Position is
+    the first fallback and tilt the second, because a blind already at the top
+    can only be moved by its slats, and that is still somebody moving it.
+
+    `None` when nothing moved readably, so a state change that only touched
+    an unrelated attribute is never reported as a movement.
+    """
+    reported = getattr(new_state, "state", None)
+    if reported in (GUARD_OPENING, GUARD_CLOSING):
+        return reported
+
+    for reader in (current_position, _tilt_of):
+        before, after = reader(old_state), reader(new_state)
+        if before is None or after is None or before == after:
+            continue
+        return GUARD_OPENING if after > before else GUARD_CLOSING
+    return None
+
+
+def _tilt_of(state: Any) -> int | None:
+    """What a cover reports as its slat angle, or `None` when it reports nothing usable."""
+    if state is None:
+        return None
+    value = state.attributes.get(ATTR_CURRENT_TILT_POSITION)
+    return value if isinstance(value, int) else None
 
 
 class CoverLogicCoordinator:
@@ -152,6 +195,11 @@ class CoverLogicCoordinator:
         # slot would let each overwrite the other's dedupe key and re-record
         # every recompute.
         self._unready: dict[str, str] = {}
+        # A manual move detected during the settle window, waiting for the
+        # evaluation that window will run. Held rather than acted on inline,
+        # for the same reason nothing else evaluates inline: the burst may
+        # still be arriving.
+        self._pending_event: WorldEvent | None = None
 
     def _build_runner(self) -> CoverRunner:
         """The executor, with its service caller bound to real `cover.*` services.
@@ -318,18 +366,71 @@ class CoverLogicCoordinator:
         changed, so there is nothing this handler needs from it beyond "some
         watched entity changed, evaluate once the house has stopped writing".
 
-        **This is where a manual move will be recognised, and deliberately not
-        yet.** `world.Event` can carry one (`kind=manual_move`, with the blind
-        and the direction) and `conditions._manual_move` can match it, but
-        nothing produces one, because "not our own command" is not the same as
-        "a person did this": the house's own scripts and its lighting
-        automation would all qualify. Excluding them needs the declared
-        `ignore_scripts` list -- step 3 of
-        `docs/superpowers/specs/2026-09-01-detekcia-rucneho-zasahu-navrh.md`,
-        in the operator's config repo. Wiring it here before that lands would
-        report every automation's movement as manual, silently.
+        It does read the event for one thing: whether somebody just moved one
+        of our blinds by hand -- see `_detect_manual_move`. That is the one
+        question a fresh snapshot cannot answer, because it is about what
+        happened *between* two snapshots.
         """
+        manual = self._detect_manual_move(event)
+        if manual is not None:
+            self._pending_event = manual
         self._schedule_settle()
+
+    def _detect_manual_move(self, event: Event[EventStateChangedData]) -> WorldEvent | None:
+        """Recognise a person moving one of our blinds by hand, or return `None`.
+
+        Three tests, and 14 days of this house's logbook says all three are
+        needed (the operator's own
+        `specs/2026-09-01-detekcia-rucneho-zasahu-navrh.md` carries the
+        numbers):
+
+        1. **A person's context is present.** 53 of 92 movements of the
+           bedroom blinds carried no `user_id` at all -- automations, scripts,
+           and this integration -- so "not our own command" alone would
+           misread roughly four movements a day as somebody's hand. Absence of
+           us is not evidence of a person.
+        2. **Not our own command.** What `CommandLog.is_own` is for, and the
+           one test that got *better*: the alternative is relying on Home
+           Assistant giving an integration's calls no `user_id`, which is a
+           fact about how callers are labelled rather than about who acted.
+        3. **No declared mover is running.** A Home Assistant script inherits
+           the caller's `Context`, `user_id` and all, so a script a person
+           started looks exactly like that person -- 8 of the 39 movements
+           that *did* carry a `user_id` happened during one of this house's
+           own script runs. `manual_detection.ignore_while_on` excludes them.
+
+        **The limit, stated rather than hidden:** while any declared mover is
+        `on` this returns `None` for everything, so a genuine manual move
+        inside such a window is discarded. In this house the applying script
+        ran 954 times in those same 14 days, which is a real fraction of the
+        day. The automation this replaces has the identical blind spot -- so
+        not a regression, but a limit rather than a solved problem.
+        """
+        data = event.data
+        entity = data.get("entity_id")
+        if entity not in self.config.blinds:
+            return None
+        new_state = data.get("new_state")
+        if new_state is None:
+            return None
+        context = getattr(new_state, "context", None)
+        if context is None or context.user_id is None:
+            return None
+        if self.commands.is_own(context.id, context.parent_id):
+            return None
+        if self._a_declared_mover_is_running():
+            return None
+        direction = _direction_of(data.get("old_state"), new_state)
+        if direction is None:
+            return None
+        return WorldEvent(kind=EVENT_MANUAL_MOVE, blind=entity, direction=direction)
+
+    def _a_declared_mover_is_running(self) -> bool:
+        """Whether any `manual_detection.ignore_while_on` entity is currently `on`."""
+        return any(
+            (state := self.hass.states.get(entity)) is not None and state.state == "on"
+            for entity in self.config.manual_detection.ignore_while_on
+        )
 
     @callback
     def _schedule_settle(self) -> None:
@@ -409,7 +510,11 @@ class CoverLogicCoordinator:
         so -- never to fall back to the unguarded decision, which is exactly the
         movement the guard existed to stop.
         """
-        world = build_world(self.hass, self.config)
+        # Consumed, not merely read: an event describes one moment, and
+        # letting it survive into the next evaluation would report the same
+        # movement twice.
+        pending, self._pending_event = self._pending_event, None
+        world = build_world(self.hass, self.config, event=pending)
         try:
             # From this same snapshot, never a second read of `hass.states`:
             # otherwise "was the world readable" and "what did the world say"
@@ -651,13 +756,60 @@ def _entity_ids(config: Config) -> set[str]:
     any attribute (or the state itself) of that entity is what triggers
     re-evaluation.
 
-    `referenced_entities` alone is not the whole answer any more, and this is
-    the gap `_directional_guard_blinds` closes -- see its own docstring.
+    `referenced_entities` alone is not the whole answer any more: two other
+    gaps are closed here, by `_directional_guard_blinds` and
+    `_manual_move_blinds` -- see each one's own docstring.
     """
     watched = {
         entry[0] if isinstance(entry, tuple) else entry for entry in referenced_entities(config)
     }
-    return watched | _directional_guard_blinds(config)
+    return watched | _directional_guard_blinds(config) | _manual_move_blinds(config)
+
+
+def _manual_move_blinds(config: Config) -> set[str]:
+    """Every blind, but only if this configuration actually asks about manual moves.
+
+    `_detect_manual_move` can only see a movement it is subscribed to, and
+    nothing in `referenced_entities` covers a blind's own state. But
+    subscribing to every cover unconditionally is exactly what
+    `_directional_guard_blinds` argues against, and for a good reason: the
+    layer that decides would then be listening to the layer that moves, and a
+    55-second travel would feed back as recomputes for its whole duration.
+
+    So the subscription follows the question. If no rule scopes itself to
+    `events: [manual_move]` and no condition is a `manual_move`, then nothing
+    could act on the answer and there is no reason to watch -- which is the
+    case for a configuration that has not opted in, including this house's own
+    today. Once something does ask, every blind is watched, because the
+    detector's job is precisely to notice a hand on any of them.
+    """
+    if not _asks_about_manual_moves(config):
+        return set()
+    return set(config.blinds)
+
+
+def _asks_about_manual_moves(config: Config) -> bool:
+    """Whether anything in `config` could act on a manual move being reported."""
+    if any(
+        rule.events is not None and EVENT_MANUAL_MOVE in rule.events
+        for rules in config.rules.values()
+        for rule in rules
+    ):
+        return True
+    return any(_mentions_manual_move(body) for body in config.conditions.values()) or any(
+        _mentions_manual_move(rule.when) for rules in config.rules.values() for rule in rules
+    )
+
+
+def _mentions_manual_move(node: Any) -> bool:
+    """Whether a condition tree contains a `manual_move` condition anywhere in it."""
+    if isinstance(node, dict):
+        if node.get("condition") == COND_MANUAL_MOVE:
+            return True
+        return any(_mentions_manual_move(child) for child in node.values())
+    if isinstance(node, (list, tuple)):
+        return any(_mentions_manual_move(child) for child in node)
+    return False
 
 
 def _directional_guard_blinds(config: Config) -> set[str]:
