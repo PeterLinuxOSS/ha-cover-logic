@@ -410,12 +410,20 @@ rules:
   # iná hodnota než čokoľvek tu), takže "*" default pre `bezny_den` by
   # rovnako zdvihol `unreachable_rule` na `kvety` bez ohľadu na obsah --
   # overené rovnako ako pri `dovolenka`. Zostáva explicitné zdvojenie.
+  # 2026-09-02 (fáza 7.6, večerná polovica): vo `vecer` sa dverové žalúzie
+  # zatvárajú s lamelami na 100, dovtedy tu bolo `keep/keep` a robila to
+  # výhradne vetva `light-on` v Lighting SUN. `0/100` je presne to, čo tá
+  # vetva nechávala za sebou (zavri, počkaj na dojazd, lamely 100 — oprava
+  # z 21. 8., aby obývačka nebola potme). V `horucava` to isté platí už od
+  # #41, takže odteraz sa oba režimy vo `vecer` chovajú rovnako.
+  # Pri otvorených terasových dverách žalúzia dole nejde — drží ju force
+  # poistka `terasove dvere otvorene`, nie toto pravidlo.
   bezny_den.terasa:
-    - {if: !ref vecer, then: {position: keep, tilt: keep}}
+    - {if: !ref vecer, then: {position: 0, tilt: 100}}
     - {then: {position: 100, tilt: keep}}
 
   bezny_den.terasa2:
-    - {if: !ref vecer, then: {position: keep, tilt: keep}}
+    - {if: !ref vecer, then: {position: 0, tilt: 100}}
     - {then: {position: 100, tilt: keep}}
 
   bezny_den.peter:
