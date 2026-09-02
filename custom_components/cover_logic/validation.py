@@ -957,21 +957,56 @@ def check_duplicate_rule_order(orders: dict[str, list[tuple[str, int]]]) -> list
     as ambiguous. See `config_store.duplicate_rule_order_problems`, the only
     caller.
     """
+    return _duplicate_order_problems(
+        orders, noun="rule", code="duplicate_rule_order", owner_type="rule"
+    )
+
+
+def check_duplicate_guard_order(orders: list[tuple[str, int]]) -> list[Problem]:
+    """Flag more than one guard subentry claiming the same `order`.
+
+    The guard counterpart of `check_duplicate_rule_order`, for the same
+    reason: guards are first-match-wins too, so the `order` a subentry author
+    types *is* the behaviour -- and once `config_store._ordered_guards` sorts
+    a tie into `Config.guards`'s plain tuple, the tie is gone and
+    indistinguishable from a deliberate sequence.
+
+    Takes a flat list, not a mapping: guards are one ordered list for the
+    whole config, not grouped by `(mode, zone)` the way rules are. See
+    `config_store.duplicate_guard_order_problems`, the only caller.
+    """
+    return _duplicate_order_problems(
+        {"": orders}, noun="guard", code="duplicate_guard_order", owner_type="guard"
+    )
+
+
+def _duplicate_order_problems(
+    groups: dict[str, list[tuple[str, int]]], *, noun: str, code: str, owner_type: str
+) -> list[Problem]:
+    """Shared body of the two `check_duplicate_*_order` checks above.
+
+    One implementation rather than two near-copies: tie detection and the
+    "every tied item is an owner" rule are the same idea for both, and this
+    repo pays repeatedly for two owners of one idea (`MODELS.md` Sec. 9). An
+    empty `key` yields an unprefixed message, which is what the ungrouped
+    guard list wants.
+    """
     out: list[Problem] = []
-    for key, items in orders.items():
+    for key, items in groups.items():
         by_order: dict[int, list[str]] = {}
         for owner_id, order in items:
             by_order.setdefault(order, []).append(owner_id)
-        # One problem per tied `order`, not one per extra rule on it: three
-        # rules sharing an order are a single ambiguity to resolve, and every
+        prefix = f"{key}: " if key else ""
+        # One problem per tied `order`, not one per extra item on it: three
+        # items sharing an order are a single ambiguity to resolve, and every
         # one of them is an owner because editing any of them is a way to
         # resolve it.
         out.extend(
             Problem(
                 ERROR,
-                "duplicate_rule_order",
-                f"{key}: more than one rule has order={order}",
-                owners=frozenset(("rule", owner_id) for owner_id in owner_ids),
+                code,
+                f"{prefix}more than one {noun} has order={order}",
+                owners=frozenset((owner_type, owner_id) for owner_id in owner_ids),
             )
             for order, owner_ids in by_order.items()
             if len(owner_ids) > 1

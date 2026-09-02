@@ -201,24 +201,24 @@ def test_empty_entry_produces_an_empty_config():
     assert config_from_subentries(make_entry([])) == load_config("")
 
 
-def test_guards_from_entry_data_parse_exactly_as_the_same_yaml_would():
+def test_guard_subentries_parse_exactly_as_the_same_yaml_would():
     """The two doors into `Config` must agree about guards, not merely both
     hold "something".
 
-    `entry.data["guards"]` and a YAML `guards:` key are the same list of
-    mappings read by the same parser (`config_schema.parse_guards`) -- that
-    is the whole reason guards can stay in `entry.data` while their schema is
-    real. Asserting equality against the YAML door, rather than against a
-    hand-written expected `Guard`, is what would catch this module growing a
-    second guard parser of its own.
+    A guard subentry and a YAML `guards:` entry are the same mapping read by
+    the same parser (`config_schema.parse_guards`) -- that is what lets guards
+    be a subentry type at all. Asserting equality against the YAML door,
+    rather than against a hand-written expected `Guard`, is what would catch
+    this module growing a second guard parser of its own.
     """
     guard_data = {
         "policy": "skip",
         "applies_to": "closing",
         "stage": "input",
         "targets": ["cover.a"],
+        "order": 0,
     }
-    entry = make_entry([], data={"guards": [guard_data]})
+    entry = make_entry([("guard", guard_data)])
 
     config = config_from_subentries(entry)
 
@@ -229,6 +229,35 @@ def test_guards_from_entry_data_parse_exactly_as_the_same_yaml_would():
         ).guards
     )
     assert config.guards[0].policy == "skip"
+
+
+def test_guards_in_entry_data_are_no_longer_a_config_source():
+    """After the migration, a leftover `entry.data["guards"]` must be inert.
+
+    Two sources for one list is the defect `_grouped_rules` warns about, and
+    the migration deletes the key -- but an entry restored from an old backup
+    could still carry it. It has to be ignored, not merged, or the same guard
+    would apply twice.
+    """
+    stale = {"policy": "skip", "applies_to": "closing", "stage": "input", "targets": ["cover.a"]}
+
+    config = config_from_subentries(make_entry([], data={"guards": [stale]}))
+
+    assert config.guards == ()
+
+
+def test_guard_subentries_sort_by_order_not_by_insertion():
+    """First-match-wins order comes from `order`, exactly as it does for rules."""
+    entry = make_entry(
+        [
+            ("guard", {"policy": "skip", "targets": ["cover.b"], "order": 20}),
+            ("guard", {"policy": "skip", "targets": ["cover.a"], "order": 10}),
+        ]
+    )
+
+    config = config_from_subentries(entry)
+
+    assert [guard.targets for guard in config.guards] == [("cover.a",), ("cover.b",)]
     assert config.guards[0].targets == ("cover.a",)
 
 
@@ -465,7 +494,7 @@ def test_subentries_from_config_round_trips_a_default_rule() -> None:
         )
     )
     items = subentries_from_config(original)
-    rebuilt = config_from_subentries(entry_from_subentry_items(items, guards_to_data(original)))
+    rebuilt = config_from_subentries(entry_from_subentry_items(items))
     assert rebuilt == original
     assert rebuilt.rules["m.*"][0].then.position == 0
 
@@ -698,7 +727,7 @@ def test_tied_order_breaks_ties_by_subentry_id_not_by_subentries_mapping_order()
 def test_subentries_from_config_round_trips_the_yaml_text_config():
     original = load_config(YAML_TEXT)
     items = subentries_from_config(original)
-    rebuilt = config_from_subentries(entry_from_subentry_items(items, guards_to_data(original)))
+    rebuilt = config_from_subentries(entry_from_subentry_items(items))
     assert rebuilt == original
 
 
@@ -724,7 +753,7 @@ def test_subentries_from_config_round_trips_the_real_fixture(fixtures_dir):
     """
     original = load_config_file(fixtures_dir / "dom_peter.yaml")
     items = subentries_from_config(original)
-    rebuilt = config_from_subentries(entry_from_subentry_items(items, guards_to_data(original)))
+    rebuilt = config_from_subentries(entry_from_subentry_items(items))
     assert rebuilt == original
 
 
@@ -815,7 +844,7 @@ guards:
     )
 
     items = subentries_from_config(original)
-    rebuilt = config_from_subentries(entry_from_subentry_items(items, guards_to_data(original)))
+    rebuilt = config_from_subentries(entry_from_subentry_items(items))
 
     assert rebuilt == original
     assert rebuilt.guards[0].max_wait is None
@@ -857,9 +886,9 @@ guards:
 def test_the_round_trip_self_check_sees_a_guard_that_would_be_lost() -> None:
     """`subentries_from_config` rebuilds a `Config` from exactly the pairs it
     is about to return and refuses to hand back anything that does not compare
-    equal. Guards go through that same check via `guards_to_data`, so a future
-    change that dropped or mis-shaped one fails loudly here rather than
-    quietly exporting a house with its interlocks missing.
+    equal. Guards are part of that comparison, so a future change that dropped
+    or mis-shaped one fails loudly here rather than quietly exporting a house
+    with its interlocks missing.
     """
     original = load_config(
         """
@@ -877,10 +906,14 @@ guards:
 """
     )
 
-    # The self-check compares against `config.guards`, so a config whose
-    # guards serialize losslessly round-trips; this is the positive control
-    # for the assertion that guards are part of that comparison at all.
     items = subentries_from_config(original)
-    with_guards = entry_from_subentry_items(items, guards_to_data(original))
-    assert config_from_subentries(with_guards) == original
-    assert config_from_subentries(entry_from_subentry_items(items)) != original
+
+    # Positive control: the guard is in `items`, so the round trip is exact.
+    assert config_from_subentries(entry_from_subentry_items(items)) == original
+
+    # Negative control: drop the guard pair and the comparison must fail. This
+    # is what proves the self-check would actually catch a lost guard -- an
+    # assertion that only ever sees the passing case proves nothing.
+    without = [pair for pair in items if pair[0] != "guard"]
+    assert any(kind == "guard" for kind, _data in items), "fixture has no guard to drop"
+    assert config_from_subentries(entry_from_subentry_items(without)) != original
