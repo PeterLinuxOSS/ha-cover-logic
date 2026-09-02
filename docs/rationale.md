@@ -1284,6 +1284,63 @@ owner's house it changes nothing at all -- 300 s is *rarer* than the 66 s that
 already happens -- which is what made it safe to deploy on the same day the
 integration took over the night.
 
+### Why a configuration change reloads the entry
+
+`async_setup_entry` parses the `Config` **once**, and the coordinator holds
+that object for the entry's lifetime. So every writer of the configuration
+changed what a *future* setup would read and nothing about what the house was
+doing -- and nothing in this integration reloaded, so nothing ever took effect
+until a restart.
+
+Home Assistant does not close the gap either. `ConfigSubentryFlowManager.
+async_finish_flow` calls `async_add_subentry` and returns; there is no implicit
+reload anywhere on that path. So editing a rule in the UI had the identical
+defect, and that is the worse half -- the UI is the path a person actually
+uses, and it silently did nothing.
+
+**Measured on the owner's live house, 2026-09-02**, through the import path.
+An import landed seven new `noc` rule lists in `.storage`; the house went on
+running the previous ones all evening, and the first night this integration
+was meant to own closed on rules replaced hours earlier. The cost was nine
+blinds holding their slats open all night.
+
+What makes it worth fixing in code rather than writing down is that every
+available check said the deployment was done. `diff_configs` was empty, and
+correctly so: it compares `.storage` against `fixtures/dom_peter.yaml`, not
+against what is in memory. The house's own 2067-test suite was green. The one
+thing that disagreed was the diagnostic sensor's `trace`, naming the *default*
+zone (`noc.*#0`) for rules that exist per zone -- which means something only
+to someone who already suspects the answer. Same family as this project's
+other green-signal failures: a check that did not measure what it appeared to.
+
+**A listener on the entry, not a reload at each write site.** `async_add_
+subentry`/`async_update_subentry`/`async_remove_subentry` all reach
+`_async_save_and_notify`, which fires `entry.update_listeners` -- so one
+listener covers the import service, all seven subentry flows, and any writer
+added later. The first version of this fix was an `async_schedule_reload` at
+the end of `_async_import_config`; it was correct and it was a special case,
+and the UI gap above is what it would have left behind.
+
+Two things the listener has to get right, and both are why it is a class:
+
+- **An option write is not a configuration change.** `dry_run` lives in
+  `entry.options` precisely so flipping it reaches `runner.py` *without* a
+  reload (see `options_flow.py`'s docstring). The listener fires for that
+  write too, so it compares the configuration the subentries now spell
+  against the one actually running and returns when they match. A blanket
+  reload would have deleted a deliberate design.
+- **A burst has to coalesce.** `async_schedule_reload` creates a task per
+  call; it is not a debounce. An import rewrites every subentry one at a time
+  -- 141 of them in this house -- so a naive listener would ask for hundreds
+  of sequential reloads. Hence `CONFIG_RELOAD_SETTLE_SECONDS` and the same
+  restart-on-change timer shape the coordinator's settle window uses, for the
+  same underlying reason: writes arrive in bursts.
+
+A malformed intermediate config arms rather than returns. Staying stale is
+the failure being fixed, and if it is still broken when the timer fires,
+`async_setup_entry` reports it as `ConfigEntryNotReady` -- visible, which
+"kept running the old rules" was not.
+
 ## `readiness.py`
 
 ### Why readiness is a veto and not a wait

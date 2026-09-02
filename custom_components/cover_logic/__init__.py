@@ -24,6 +24,7 @@ imports, not just this module's own tests.
 """
 
 from dataclasses import dataclass
+from datetime import timedelta
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -31,7 +32,7 @@ from typing import TYPE_CHECKING
 from .config_schema import ConfigError, load_config_file
 from .config_store import config_from_subentries
 from .conformance import diff_configs, repo_fixture_path
-from .const import CONF_CONFIG_PATH, CONFIG_ENTRY_VERSION, DOMAIN
+from .const import CONF_CONFIG_PATH, CONFIG_ENTRY_VERSION, CONFIG_RELOAD_SETTLE_SECONDS, DOMAIN
 from .model import Config
 from .readiness import name_list
 from .validation import ERROR, validate
@@ -166,6 +167,12 @@ async def async_setup_entry(hass: "HomeAssistant", entry: "CoverLogicConfigEntry
 
     entry.async_on_unload(async_at_started(hass, _at_started))
 
+    # Writing the configuration is not deploying it: the `Config` above is
+    # parsed once and held for this entry's lifetime. See `_ConfigReloader`.
+    reloader = _ConfigReloader(hass, entry)
+    entry.async_on_unload(entry.add_update_listener(reloader.async_entry_updated))
+    entry.async_on_unload(reloader.cancel)
+
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     # Deferred: see the module docstring for why this cannot be a top-level
@@ -260,6 +267,98 @@ async def _check_fixture_conformance(hass: "HomeAssistant", config: Config) -> N
         translation_key=_FIXTURE_DRIFT_ISSUE,
         translation_placeholders={"fields": ", ".join(sorted(diff))},
     )
+
+
+class _ConfigReloader:
+    """Reload the entry once a burst of configuration writes has stopped arriving.
+
+    `async_setup_entry` parses the `Config` **once** and the coordinator holds
+    that object for the entry's lifetime. So every writer of the configuration
+    changes what a *future* setup would read and nothing about what the house
+    is doing -- and nothing in this integration reloaded, so nothing ever took
+    effect until a restart.
+
+    Measured on the owner's live house, 2026-09-02: an import landed seven new
+    `noc` rule lists in `.storage` and the house closed that night on the rules
+    they replaced. Home Assistant does not close this gap either -- its
+    `ConfigSubentryFlowManager.async_finish_flow` calls `async_add_subentry` and
+    returns -- so editing a rule in the UI had the identical defect, which is
+    the worse half: the UI is the path a person actually uses.
+
+    A listener on the entry rather than a `async_schedule_reload` at each write
+    site: `async_add_subentry`/`async_update_subentry`/`async_remove_subentry`
+    all reach `_async_save_and_notify`, so one listener covers every writer
+    there is -- the import service, all seven subentry flows, and any future
+    one, which is the point.
+
+    Two things it must get right, and both are why this is a class and not one
+    line:
+
+    - **An option write is not a configuration change.** `dry_run` lives in
+      `entry.options` precisely so it reaches `runner.py` *without* a reload
+      (see `options_flow.py`'s docstring). A blanket reload here would delete
+      that deliberate design, so this compares the configuration the
+      subentries now spell against the one actually running and returns when
+      they match.
+    - **A burst must coalesce.** `async_schedule_reload` is a task per call,
+      not a debounce, and an import rewrites every subentry one at a time --
+      141 of them in this house, so a naive listener would ask for hundreds of
+      sequential reloads. Hence the same restart-on-change timer shape the
+      coordinator's settle window uses, for the same underlying reason.
+    """
+
+    def __init__(self, hass: "HomeAssistant", entry: "CoverLogicConfigEntry") -> None:
+        """Remember what to reload; arm nothing until a write says to."""
+        self._hass = hass
+        self._entry = entry
+        self._unsub = None
+
+    async def async_entry_updated(
+        self, _hass: "HomeAssistant", entry: "CoverLogicConfigEntry"
+    ) -> None:
+        """`add_update_listener` target: arm a reload if this write changed the config."""
+        if CONF_CONFIG_PATH in entry.data:
+            # A legacy, file-backed entry: its source is the file, not
+            # subentries, so a subentry comparison would be meaningless.
+            # `async_migrate_entry` moves every live entry off this shape.
+            return
+        data = getattr(entry, "runtime_data", None)
+        if data is None:
+            # Written before setup finished; that setup will read it anyway.
+            return
+        try:
+            written = config_from_subentries(entry)
+        except ConfigError:
+            # Mid-burst or malformed. Not a reason to stay stale: arm, and let
+            # `async_setup_entry` report it as `ConfigEntryNotReady` if it is
+            # still broken by the time the timer fires.
+            written = None
+        if written is not None and written == data.config:
+            return
+        self._arm()
+
+    def _arm(self) -> None:
+        """(Re)start the wait, so a burst of writes produces exactly one reload."""
+        # Deferred: see the module docstring for why this cannot be a
+        # top-level import.
+        from homeassistant.helpers.event import async_track_point_in_utc_time  # noqa: PLC0415
+        from homeassistant.util import dt as dt_util  # noqa: PLC0415
+
+        self.cancel()
+        when = dt_util.utcnow() + timedelta(seconds=CONFIG_RELOAD_SETTLE_SECONDS)
+        self._unsub = async_track_point_in_utc_time(self._hass, self._reload, when)
+
+    async def _reload(self, _now) -> None:
+        """The wait ended: ask for the reload that makes the written config the running one."""
+        self._unsub = None
+        _LOGGER.debug("cover_logic: configuration changed, reloading %s", self._entry.entry_id)
+        self._hass.config_entries.async_schedule_reload(self._entry.entry_id)
+
+    def cancel(self) -> None:
+        """Drop a pending wait -- registered on unload, so a teardown leaves no timer."""
+        if self._unsub is not None:
+            self._unsub()
+            self._unsub = None
 
 
 async def _check_referenced_entities(hass: "HomeAssistant", config: Config) -> None:

@@ -267,6 +267,11 @@ async def _async_import_config(hass: HomeAssistant, call: ServiceCall) -> Servic
     # `entry.data` is no longer a config source (see
     # `config_store._ordered_guards`). Writing the old key here would give
     # `config_from_subentries` nothing extra and leave a stale copy behind.
+
+    # No reload here, deliberately: `__init__._ConfigReloader` listens on the
+    # entry, so every writer of the configuration is covered by one mechanism
+    # rather than each remembering. See its docstring for the evening that
+    # made this necessary.
     return summary
 
 

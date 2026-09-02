@@ -454,3 +454,90 @@ def test_known_in_either_the_states_or_the_registry_is_known_enough(setup_hass):
 
     create.assert_not_called()
     delete.assert_called_once_with(hass, "cover_logic", "unknown_entities")
+
+
+# `_ConfigReloader`: writing the configuration is not deploying it. Four tests,
+# because the decision has three wrong answers -- never reload, always reload,
+# and reload once per subentry write.
+def _reloader(hass, entry):
+    from cover_logic import _ConfigReloader  # noqa: PLC0415
+
+    return _ConfigReloader(hass, entry)
+
+
+class _RuntimeData:
+    """Just the `.config` attribute the listener compares against."""
+
+    def __init__(self, config):
+        self.config = config
+
+
+def _armed(hass, entry):
+    """Run the listener with `_arm` recorded rather than performed."""
+    reloader = _reloader(hass, entry)
+    with mock.patch.object(reloader, "_arm") as arm:
+        asyncio.run(reloader.async_entry_updated(hass, entry))
+    return arm.called
+
+
+def test_a_changed_configuration_arms_a_reload(make_entry, setup_hass):
+    """The subentries now spell something other than what is running: reload.
+
+    Nothing in this integration reloaded before, and Home Assistant does not
+    do it either -- `ConfigSubentryFlowManager.async_finish_flow` calls
+    `async_add_subentry` and returns. So editing a rule in the UI changed
+    `.storage` and left the house running the rules it replaced, until a
+    restart. Measured live on 2026-09-02 through the import path, which has
+    the identical cause.
+    """
+    entry = make_entry({}, subentries=_subentries_for(VALID_CONFIG))
+    entry.runtime_data = _RuntimeData(load_config(WARNING_ONLY_CONFIG))
+
+    assert _armed(setup_hass(), entry) is True
+
+
+def test_an_option_write_arms_nothing(make_entry, setup_hass):
+    """The counter to reloading on every entry write, and it protects a design decision.
+
+    `dry_run` lives in `entry.options` precisely so flipping it reaches
+    `runner.py` without a reload (see `options_flow.py`). The listener fires
+    for that write too, so "did the configuration change" has to be asked
+    rather than assumed.
+    """
+    config = load_config(VALID_CONFIG)
+    entry = make_entry({}, subentries=_subentries_for_config(config), options={"dry_run": True})
+    entry.runtime_data = _RuntimeData(config)
+
+    assert _armed(setup_hass(), entry) is False
+
+
+def test_a_file_backed_entry_arms_nothing(make_entry, setup_hass):
+    """A legacy entry reads a file, so comparing its subentries would be meaningless."""
+    entry = make_entry({CONF_CONFIG_PATH: "/nowhere.yaml"})
+    entry.runtime_data = _RuntimeData(load_config(VALID_CONFIG))
+
+    assert _armed(setup_hass(), entry) is False
+
+
+def test_a_burst_of_writes_produces_exactly_one_reload(make_entry, setup_hass, monkeypatch):
+    """Three writes in a row, one reload -- the shape an import needs.
+
+    `async_schedule_reload` is a task per call, not a debounce, and an import
+    rewrites every subentry one at a time (141 of them in the owner's house).
+    Without the restart-on-change wait this would ask for hundreds of
+    sequential reloads.
+    """
+    monkeypatch.setattr("cover_logic.CONFIG_RELOAD_SETTLE_SECONDS", 0.05)
+    entry = make_entry({}, subentries=_subentries_for(VALID_CONFIG))
+    entry.runtime_data = _RuntimeData(load_config(WARNING_ONLY_CONFIG))
+    hass = setup_hass()
+    reloader = _reloader(hass, entry)
+
+    async def run():
+        for _ in range(3):
+            await reloader.async_entry_updated(hass, entry)
+        await asyncio.sleep(0.2)
+
+    asyncio.run(run())
+
+    assert hass.config_entries.scheduled_reloads == [entry.entry_id]
