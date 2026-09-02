@@ -24,7 +24,11 @@ pytest.importorskip("homeassistant")
 from homeassistant.core import EVENT_STATE_CHANGED, Context
 
 from cover_logic.config_schema import load_config
-from cover_logic.coordinator import CoverLogicCoordinator, evaluate as real_evaluate
+from cover_logic.coordinator import (
+    CoverLogicCoordinator,
+    _manual_move_blinds,
+    evaluate as real_evaluate,
+)
 from cover_logic.engine import EngineError
 
 from .conftest import SHORT_SETTLE_SECONDS
@@ -349,6 +353,10 @@ modes:
   - {id: bezny_den}
 rules:
   bezny_den.za:
+    # Asking about manual moves is what subscribes the coordinator to the
+    # blind at all -- see `coordinator._manual_move_blinds`. Without it this
+    # config watches nothing and no evaluation ever happens.
+    - {if: {condition: manual_move}, then: {position: keep, tilt: keep}}
     - {then: {position: keep, tilt: keep}}
 manual_detection:
   ignore_while_on: [script.mover]
@@ -495,3 +503,16 @@ def test_the_event_does_not_survive_into_the_next_evaluation(
         assert (await _event_after(hass, coordinator, worlds)).kind == "state_change"
 
     _detect_case(hass_factory, runtime_entry, monkeypatch, _body)
+
+
+def test_blinds_are_only_watched_when_the_config_asks_about_manual_moves(config):
+    """The subscription follows the question -- see `_manual_move_blinds`.
+
+    Subscribing to every cover unconditionally would make the layer that
+    decides listen to the layer that moves, and a 55-second travel would feed
+    back as recomputes for its whole duration. So a config that never mentions
+    `manual_move` must watch no blind at all, and this house's own does not
+    mention it today.
+    """
+    assert _manual_move_blinds(config) == set()
+    assert _manual_move_blinds(load_config(_DETECT_CONFIG)) == {"cover.a"}

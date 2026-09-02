@@ -56,6 +56,7 @@ import homeassistant.util.dt as dt_util
 from .command_log import CommandLog
 from .config_schema import referenced_entities
 from .const import (
+    COND_MANUAL_MOVE,
     DEFAULT_DRY_RUN,
     EVAL_SETTLE_MAX_SECONDS,
     EVAL_SETTLE_SECONDS,
@@ -755,13 +756,60 @@ def _entity_ids(config: Config) -> set[str]:
     any attribute (or the state itself) of that entity is what triggers
     re-evaluation.
 
-    `referenced_entities` alone is not the whole answer any more, and this is
-    the gap `_directional_guard_blinds` closes -- see its own docstring.
+    `referenced_entities` alone is not the whole answer any more: two other
+    gaps are closed here, by `_directional_guard_blinds` and
+    `_manual_move_blinds` -- see each one's own docstring.
     """
     watched = {
         entry[0] if isinstance(entry, tuple) else entry for entry in referenced_entities(config)
     }
-    return watched | _directional_guard_blinds(config)
+    return watched | _directional_guard_blinds(config) | _manual_move_blinds(config)
+
+
+def _manual_move_blinds(config: Config) -> set[str]:
+    """Every blind, but only if this configuration actually asks about manual moves.
+
+    `_detect_manual_move` can only see a movement it is subscribed to, and
+    nothing in `referenced_entities` covers a blind's own state. But
+    subscribing to every cover unconditionally is exactly what
+    `_directional_guard_blinds` argues against, and for a good reason: the
+    layer that decides would then be listening to the layer that moves, and a
+    55-second travel would feed back as recomputes for its whole duration.
+
+    So the subscription follows the question. If no rule scopes itself to
+    `events: [manual_move]` and no condition is a `manual_move`, then nothing
+    could act on the answer and there is no reason to watch -- which is the
+    case for a configuration that has not opted in, including this house's own
+    today. Once something does ask, every blind is watched, because the
+    detector's job is precisely to notice a hand on any of them.
+    """
+    if not _asks_about_manual_moves(config):
+        return set()
+    return set(config.blinds)
+
+
+def _asks_about_manual_moves(config: Config) -> bool:
+    """Whether anything in `config` could act on a manual move being reported."""
+    if any(
+        rule.events is not None and EVENT_MANUAL_MOVE in rule.events
+        for rules in config.rules.values()
+        for rule in rules
+    ):
+        return True
+    return any(_mentions_manual_move(body) for body in config.conditions.values()) or any(
+        _mentions_manual_move(rule.when) for rules in config.rules.values() for rule in rules
+    )
+
+
+def _mentions_manual_move(node: Any) -> bool:
+    """Whether a condition tree contains a `manual_move` condition anywhere in it."""
+    if isinstance(node, dict):
+        if node.get("condition") == COND_MANUAL_MOVE:
+            return True
+        return any(_mentions_manual_move(child) for child in node.values())
+    if isinstance(node, (list, tuple)):
+        return any(_mentions_manual_move(child) for child in node)
+    return False
 
 
 def _directional_guard_blinds(config: Config) -> set[str]:
