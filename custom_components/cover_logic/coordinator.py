@@ -53,6 +53,7 @@ from homeassistant.helpers.event import (
 )
 import homeassistant.util.dt as dt_util
 
+from .boundaries import next_boundary
 from .command_log import CommandLog
 from .config_schema import referenced_entities
 from .const import (
@@ -540,7 +541,12 @@ class CoverLogicCoordinator:
 
         now = self.last_success.timestamp()
         elapsed = self.deferrals.sync(guarded, decision, now)
-        self._reschedule(self.deferrals.next_recheck(now))
+        # Two answers, one timer: a guard's own deadline and the next instant a
+        # time-derived condition changes answer. See `boundaries.py` for why the
+        # second one needs a clock nothing else was providing.
+        self._reschedule(
+            _soonest(self.deferrals.next_recheck(now), next_boundary(self.config, world))
+        )
         await self._execute(guarded, elapsed, decision.mode, readiness)
 
         # Last, not first: the sensor reads `last_command` and `pending`, and a
@@ -754,6 +760,17 @@ class CoverLogicCoordinator:
         if not self._active or self._unsub_settle is not None:
             return
         await self._async_evaluate()
+
+
+def _soonest(*candidates: float | None) -> float | None:
+    """The nearest of several deadlines, ignoring the ones that are not set.
+
+    A `None` means "this kind of deadline has nothing pending", which must not
+    win a `min` -- and `None` rather than `inf` because `_reschedule` reads it
+    as "nothing but the floor".
+    """
+    known = [c for c in candidates if c is not None]
+    return min(known) if known else None
 
 
 def _entity_ids(config: Config) -> set[str]:

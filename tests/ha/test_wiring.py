@@ -41,6 +41,7 @@ from cover_logic.const import (
     COMMAND_WITHHELD,
     COMMAND_WOULD_CALL,
     OPT_DRY_RUN,
+    RECONCILE_FLOOR_SECONDS,
 )
 from cover_logic.coordinator import SOURCE_GUARD_TIMEOUT, CoverLogicCoordinator, _entity_ids
 from cover_logic.guards import GuardError
@@ -126,6 +127,46 @@ guards:
     on_timeout: proceed
     recheck_every: 5
 """
+
+# A time-derived condition, written as a guard's `when` because `BASE` already
+# spells `conditions:` and `rules:` and a second copy of either key would
+# silently replace the first. The guard is inert -- zone `zb`'s only rule is
+# keep/keep -- and exists so `all_condition_nodes` has a boundary to find.
+#
+# `for:` and not `sun:`, deliberately. A sun boundary is only ahead of `now`
+# for part of the day, so a wiring test built on one passes in the morning and
+# fails after sunset (it did, at 20:21). This one depends on `since`, which the
+# test sets, so it is the same assertion at every hour. `boundaries.py`'s own
+# tests cover the sun arithmetic against a stated `SunTimes`.
+HELD_GUARD = """
+guards:
+  - name: door settled
+    policy: skip
+    applies_to: closing
+    targets: [zb]
+    when:
+      condition: state
+      entity_id: binary_sensor.dvere
+      state: "on"
+      for: 120
+"""
+
+# Both kinds of deadline in ONE `guards:` block, since concatenating two
+# blocks would leave YAML with a duplicate top-level key and silently drop the
+# first (which it did: the deferral vanished and the test read as a wiring bug).
+DEFER_AND_FAR_BOUNDARY = (
+    DEFER_GUARD
+    + """  - name: door settled
+    policy: skip
+    applies_to: closing
+    targets: [zb]
+    when:
+      condition: state
+      entity_id: binary_sensor.dvere
+      state: "on"
+      for: 3600
+"""
+)
 
 DIRECTIONAL_GUARD = """
 guards:
@@ -1056,6 +1097,85 @@ def test_a_command_a_blind_never_heard_is_re_issued_with_nothing_changing(
             await coordinator.runner.async_wait_idle()
 
             assert len(_attempts()) > 1, coordinator.commands.recent
+
+            await coordinator.async_unload()
+        finally:
+            await hass.async_stop(force=True)
+
+    asyncio.run(_run())
+
+
+def _spy_on_reschedule(coordinator):
+    """Record every wait the coordinator asks its recheck timer for.
+
+    Asserting `_unsub_recheck is not None` would prove nothing: since
+    `RECONCILE_FLOOR_SECONDS` the timer is *always* armed, so the interesting
+    fact is the length of the wait, not its existence. (Written the other way
+    first; both mutations below survived it.)
+    """
+    waits = []
+    original = coordinator._reschedule  # noqa: SLF001
+
+    def _record(seconds):
+        waits.append(seconds)
+        original(seconds)
+
+    coordinator._reschedule = _record  # noqa: SLF001
+    return waits
+
+
+def test_a_time_derived_condition_shortens_the_wait_below_the_floor(hass_factory, runtime_entry):
+    """The wiring for `boundaries.py`; without it the module is dead code.
+
+    No deferral here, so the only thing that can bring the wait under
+    `RECONCILE_FLOOR_SECONDS` is `next_boundary` -- and something must, because
+    a `for:` elapsing is an instant no state change announces.
+
+    Both ends of the range matter: above zero because a boundary already behind
+    us must not be reported, and under the floor because that is the claim.
+    """
+
+    async def _run():
+        hass = hass_factory()
+        try:
+            _seed(hass, door="on")
+            coordinator = CoverLogicCoordinator(hass, config(HELD_GUARD), runtime_entry())
+            waits = _spy_on_reschedule(coordinator)
+            await coordinator.async_setup()
+            await _settle(coordinator)
+
+            assert coordinator.pending["deferred"] == {}  # counter: no guard armed it
+            assert waits, "the coordinator never asked for a wait at all"
+            assert 0 < waits[-1] <= 120.0 < RECONCILE_FLOOR_SECONDS, waits
+
+            await coordinator.async_unload()
+        finally:
+            await hass.async_stop(force=True)
+
+    asyncio.run(_run())
+
+
+def test_a_guard_deadline_still_beats_a_far_off_boundary(hass_factory, runtime_entry):
+    """The counter, and the reason `_soonest` is a `min`.
+
+    Two kinds of deadline pending at once: a `max_wait: 1` interlock and a
+    boundary an hour out. Take the wrong one and the interlock releases an hour
+    late -- the class of bug this area exists to prevent, caused by its own fix.
+    """
+
+    async def _run():
+        hass = hass_factory()
+        try:
+            _seed(hass, door="on", zavri="on")
+            coordinator = CoverLogicCoordinator(
+                hass, config(DEFER_AND_FAR_BOUNDARY), runtime_entry()
+            )
+            waits = _spy_on_reschedule(coordinator)
+            await coordinator.async_setup()
+            await _settle(coordinator)
+
+            assert waits, "the coordinator never asked for a wait at all"
+            assert waits[-1] <= 5.0, waits  # the 1 s deadline, not the hour
 
             await coordinator.async_unload()
         finally:
