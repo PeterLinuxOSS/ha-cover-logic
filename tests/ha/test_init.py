@@ -29,6 +29,7 @@ from cover_logic import PLATFORMS, CoverLogicData, async_setup_entry, async_unlo
 from cover_logic.config_schema import load_config
 from cover_logic.config_store import subentries_from_config
 from cover_logic.const import CONF_CONFIG_PATH
+from cover_logic.validation import ERROR, Problem, validate
 
 from .conftest import FakeStateMachine
 
@@ -623,63 +624,78 @@ def test_an_absent_blind_is_not_this_check_s_problem(setup_hass):
     delete.assert_called_once_with(hass, "cover_logic", "blinds_missing_features")
 
 
-def test_a_blind_no_zone_claims_raises_a_repair_issue(setup_hass):
-    """Where the loudness went when this stopped being fatal.
+def test_a_configuration_warning_becomes_a_repair_issue(setup_hass):
+    """Until 2026-09-03 a warning was a log line and nothing else.
 
-    Measured on a clean install, 2026-09-03: adding a blind through the UI and
-    forgetting to put it in a zone sent the whole entry to `setup_retry`, so
-    ten working blinds stopped being decided because an eleventh was
-    incomplete. The engine skips it now; this is what keeps "a blind nobody
-    decides" impossible to miss.
+    Seven kinds of them, and every one means something is quietly not being
+    decided. That is the same class of fault that cost the owner's house nine
+    blinds on 2026-09-02 -- not because nobody had written the check, but
+    because its output went where nobody reads.
     """
     config = load_config("""
 blinds:
-  - {entity: cover.a}
-  - {entity: cover.orphan}
+  - {entity: cover.a, has_tilt: false}
 zones:
   z: {members: [cover.a]}
 modes: [{id: den}]
 rules:
-  den.z: [{then: {position: 0, tilt: 0}}]
+  den.z:
+    - {then: {position: 0, tilt: 50}}
 """)
+    problems = validate(config)
+    assert [p.code for p in problems] == ["tilt_on_tiltless_blind"]  # counter: the fixture warns
 
     with (
         mock.patch("homeassistant.helpers.issue_registry.async_create_issue") as create,
         mock.patch("homeassistant.helpers.issue_registry.async_delete_issue") as delete,
     ):
-        from cover_logic import _check_orphan_blinds  # noqa: PLC0415
+        from cover_logic import _check_config_warnings  # noqa: PLC0415
 
-        asyncio.run(_check_orphan_blinds(setup_hass(), config))
+        asyncio.run(_check_config_warnings(setup_hass(), config, problems))
 
     delete.assert_not_called()
-    assert create.call_args.kwargs["translation_key"] == "blinds_without_zone"
+    assert create.call_args.kwargs["translation_key"] == "config_warnings"
     placeholders = create.call_args.kwargs["translation_placeholders"]
     assert placeholders["count"] == "1"
-    assert "cover.orphan" in placeholders["blinds"]
-    assert "cover.a" not in placeholders["blinds"], "the owned blind is not a fault"
+    assert "tilt_on_tiltless_blind" in placeholders["warnings"]
 
 
-def test_every_blind_in_a_zone_clears_the_orphan_issue(setup_hass):
-    """The counter: it must be quiet on a complete configuration, which is what
-    stops it firing on the owner's own house.
+def test_a_clean_configuration_clears_the_warnings_issue(setup_hass):
+    """The counter, and what keeps it quiet on the owner's own house: its
+    configuration reports no problems at all.
     """
-    config = load_config("""
-blinds: [{entity: cover.a}]
-zones:
-  z: {members: [cover.a]}
-modes: [{id: den}]
-rules:
-  den.z: [{then: {position: 0, tilt: 0}}]
-""")
+    config = load_config(VALID_CONFIG)
 
     with (
         mock.patch("homeassistant.helpers.issue_registry.async_create_issue") as create,
         mock.patch("homeassistant.helpers.issue_registry.async_delete_issue") as delete,
     ):
-        from cover_logic import _check_orphan_blinds  # noqa: PLC0415
+        from cover_logic import _check_config_warnings  # noqa: PLC0415
 
         hass = setup_hass()
-        asyncio.run(_check_orphan_blinds(hass, config))
+        asyncio.run(_check_config_warnings(hass, config, validate(config)))
 
     create.assert_not_called()
-    delete.assert_called_once_with(hass, "cover_logic", "blinds_without_zone")
+    delete.assert_called_once_with(hass, "cover_logic", "config_warnings")
+
+
+def test_an_error_never_reaches_the_warnings_issue(setup_hass):
+    """Errors refuse setup and are reported there; putting them in a warning
+    issue as well would say "this is only a warning" about a fatal fault.
+    """
+    config = load_config(WARNING_ONLY_CONFIG)
+    problems = [
+        *validate(config),
+        Problem(ERROR, "made_up", "an error that must be filtered out"),
+    ]
+
+    with (
+        mock.patch("homeassistant.helpers.issue_registry.async_create_issue") as create,
+        mock.patch("homeassistant.helpers.issue_registry.async_delete_issue"),
+    ):
+        from cover_logic import _check_config_warnings  # noqa: PLC0415
+
+        asyncio.run(_check_config_warnings(setup_hass(), config, problems))
+
+    named = create.call_args.kwargs["translation_placeholders"]["warnings"]
+    assert "made_up" not in named
