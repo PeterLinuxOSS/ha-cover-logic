@@ -102,10 +102,13 @@ def _resolve_mode(config: Config, world: World) -> str:
 
 
 def resolve_ownership(config: Config) -> dict[str, str]:
-    """Exactly one zone owns each blind.
+    """At most one zone owns each blind; a blind no zone owns is simply absent.
 
-    Two owners and no owners are both the bug class this kills: a blind
-    nobody decides is a blind nobody moves, silently, far from this check.
+    **Two owners raise, no owner does not, and the asymmetry is the point.**
+    "Two owners" has no answer -- whose rules apply is unanswerable, and
+    guessing would be worse than refusing. "No owner" has one: skip it, decide
+    everything else, and be loud elsewhere. See docs/rationale.md, "Why an
+    orphan blind is skipped rather than fatal".
 
     Public because `guards.py` needs the same blind -> zone map to build the
     `Target` a guard's `when` is evaluated against, and a second copy of a
@@ -119,12 +122,12 @@ def resolve_ownership(config: Config) -> dict[str, str]:
                 msg = f"blind {entity!r} is in two zones: {owner[entity]!r} and {zone_id!r}"
                 raise EngineError(msg)
             owner[entity] = zone_id
-
-    orphans = set(config.blinds) - set(owner)
-    if orphans:
-        msg = f"blind {min(orphans)!r} is configured but owned by no zone"
-        raise EngineError(msg)
     return owner
+
+
+def orphan_blinds(config: Config) -> tuple[str, ...]:
+    """Blinds this configuration declares and no zone claims, in name order."""
+    return tuple(sorted(set(config.blinds) - set(resolve_ownership(config))))
 
 
 def _apply_rules(

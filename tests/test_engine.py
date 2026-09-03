@@ -155,7 +155,27 @@ rules:
         evaluate(cfg, world({}))
 
 
-def test_a_blind_owned_by_no_zone_is_an_error():
+def test_a_blind_owned_by_no_zone_is_skipped_and_the_rest_still_decided():
+    """One incomplete blind must not stop the house deciding about the others.
+
+    This used to raise, on the argument that "a blind nobody decides is a
+    blind nobody moves, silently". The argument was right about the hazard and
+    wrong about the remedy, and installing this on a clean Home Assistant on
+    2026-09-03 showed why: adding a blind through the UI and forgetting to put
+    it in a zone took the **whole** integration to `setup_retry`, so ten
+    working blinds stopped being decided because an eleventh was incomplete.
+
+    `readiness.py` had already answered this same question the other way, in
+    writing: "the decision is still made, still published and still visible on
+    the diagnostic sensor, because a diagnostic that goes blank when something
+    is wrong is the opposite of useful." When `resolve_ownership` was written
+    there was no way to be loud without being fatal; since the repair-issue
+    diagnostics there is (`__init__._check_orphan_blinds`).
+
+    The silence the old behaviour feared is covered twice over: the orphan is
+    absent from `targets`, which is visible on the sensor, and it is named in
+    a repair issue and by `validate()`.
+    """
     cfg = load_config("""
 blinds:
   - {entity: cover.a}
@@ -168,7 +188,33 @@ values: {}
 rules:
   den.one: [{then: {position: 0}}]
 """)
-    with pytest.raises(EngineError, match=re.escape("cover.orphan")):
+
+    decision = evaluate(cfg, world({}))
+
+    assert "cover.orphan" not in decision.targets
+    assert decision.targets["cover.a"].position == 0, "the rest must still be decided"
+
+
+def test_a_blind_two_zones_claim_is_still_an_error():
+    """The other half of `resolve_ownership` stays fatal, and the asymmetry is
+    the point: "no owner" has an answer (skip it), "two owners" does not --
+    whose rules apply is unanswerable, so guessing would be worse than
+    refusing.
+    """
+    cfg = load_config(
+        """
+blinds: [{entity: cover.a}]
+zones:
+  one: {members: [cover.a]}
+two: {}
+modes: [{id: den}]
+conditions: {}
+values: {}
+rules:
+  den.one: [{then: {position: 0}}]
+""".replace("two: {}", "  two: {members: [cover.a]}")
+    )
+    with pytest.raises(EngineError, match=re.escape("cover.a")):
         evaluate(cfg, world({}))
 
 

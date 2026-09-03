@@ -212,6 +212,11 @@ def screen(config: Config, world: World) -> Screening:
 
     outcomes: dict[str, Outcome] = {}
     for entity, blind in config.blinds.items():
+        if entity not in owners:
+            # A blind no zone owns has no decision to override; `engine.
+            # resolve_ownership` skips it and so must this. `review` gets it
+            # for free -- it iterates the decision, which already omits it.
+            continue
         target = Target(blind=blind, zone=config.zones[owners[entity]])
         for index, guard, covered in staged:
             if entity not in covered:
@@ -225,7 +230,10 @@ def screen(config: Config, world: World) -> Screening:
 
     return Screening(
         outcomes=outcomes,
-        remaining=frozenset(config.blinds) - set(outcomes),
+        # Unowned blinds are excluded, not just unclaimed: `remaining` means
+        # "the output stage may still judge these", and a blind no zone owns
+        # never reaches a decision for it to judge.
+        remaining=frozenset(owners) - set(outcomes),
     )
 
 

@@ -862,6 +862,59 @@ config-time constants are checked because they are the config author's
 mistake to catch early; a helper's live runtime value is not, and parity
 depends on it flowing through unchanged.
 
+### Why an orphan blind is skipped rather than fatal
+
+`resolve_ownership` used to raise on a blind no zone claims, on the argument
+written in its own docstring: "a blind nobody decides is a blind nobody moves,
+silently, far from this check". The argument was right about the hazard and
+wrong about the remedy.
+
+Measured by installing this on a clean Home Assistant, 2026-09-03. Adding a
+blind through the UI and not putting it in a zone sent the whole config entry
+to `setup_retry`: `sensor.cover_logic_mode` went `unavailable` and **every
+other blind stopped being decided** because one was incomplete. In an occupied
+house that is a worse outcome than the one the raise was preventing -- one
+blind that does not move versus a house that stops working.
+
+**This project had already answered the same question the other way, in
+writing.** `readiness.py`: "the decision is still made, still published and
+still visible on the diagnostic sensor, because a diagnostic that goes blank
+when something is wrong is the opposite of useful." The inconsistency was not a
+matter of taste -- when `resolve_ownership` was written there was no way to be
+loud without being fatal. Since the installation diagnostics there is, so the
+loudness moved to `__init__._check_orphan_blinds` and the orphan is skipped.
+
+Three places now carry what one exception used to:
+
+- `engine.resolve_ownership` skips it, so the blind is absent from `targets`
+  -- visible on the sensor a person is already looking at.
+- `validation`'s `blind_without_zone` reports it as a WARNING, logged at setup.
+- a repair issue names it in Settings -> Repairs until it is fixed.
+
+**Two owners stayed fatal, and the asymmetry is the point.** "No owner" has an
+answer: skip it. "Two owners" does not -- whose rules apply is unanswerable, and
+guessing would be worse than refusing.
+
+`guards.screen` skips unowned blinds for the same reason, and `Screening.
+remaining` excludes them rather than merely leaving them unclaimed: that field
+means "the output stage may still judge these", and there is no decision about
+an orphan to judge. `review` needed no change -- it iterates the decision,
+which already omits them.
+
+### Why a warning may still block one form
+
+Downgrading the severity would have lost something real: a `zone` form whose
+`members` edit drops the last zone claiming a blind is a fault that save made
+and that same save can undo, and letting it through means clicking Save to
+silently stop deciding a blind. So `_BLOCKING_WARNINGS` names the handful of
+warnings that block one specific subentry type, while `_CODE_OWNERS` still
+answers which *form* may be blocked at all.
+
+The two questions are deliberately separate. Severity answers "may this refuse
+a save"; ownership answers "could this form have fixed it". Collapsing them is
+what produced the deadlock `_CODE_OWNERS` exists to prevent -- a blind form
+being refused over a problem it has no field to address.
+
 ## `validation.py`
 
 ### Why `_find_cycle_from` is iterative, not recursive
