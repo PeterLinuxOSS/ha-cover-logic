@@ -488,6 +488,40 @@ def test_an_open_door_at_night_still_holds_the_blind_up(config):
     assert result.actions[LIVING_DOOR] == Action(position=100, tilt=KEEP)
 
 
+def test_an_open_door_at_dusk_still_holds_the_blind_up(config):
+    """The same guard, at the other moment the engine now asks for a close.
+
+    New home for the house-side `test_terasa_pri_otvorenych_dverach_nedostane_tilt`,
+    which asserted the same thing about `Lighting SUN`'s `light-on` branch:
+    a blind left up because the door is open must not have its slats turned,
+    since a tilt command is itself a movement. That branch stops moving blinds
+    with phase 7.6's last step, so the invariant belongs here, where the owner
+    now is.
+
+    `vecer` is expressed by the lux reading rather than the sun window: `NOW`
+    is 13:00, so the sun clause is false and only the threshold can say dusk --
+    which also makes the assertion independent of the time of day the suite
+    runs at.
+    """
+    w = world(
+        {("sun.sun", "elevation"): 3.0},
+        **{
+            "binary_sensor.obyvacka_dvere_senzor": "on",
+            "sensor.predsien_dvere_senzor_illuminance": "1500",
+        },
+    )
+    decision = evaluate(config, w)
+
+    # Counter: the engine really wants it shut at dusk since 2026-09-03, so
+    # what follows is about the guard and not about a harmless decision.
+    assert decision.mode == "bezny_den"
+    assert decision.targets[LIVING_DOOR] == Action(position=0, tilt=100)
+
+    result = run(config, w, decision, at(config, 0))
+    assert result.actions[LIVING_DOOR] == Action(position=100, tilt=KEEP)
+    assert result.outcomes[LIVING_DOOR].policy == GUARD_FORCE
+
+
 def test_a_running_sauna_stops_the_force_but_not_the_deferral(config):
     """The live automation's own condition (`sauna_running == off`, replacing
     the 40 degree threshold on 2026-08-29) and the hole its description
