@@ -862,6 +862,32 @@ config-time constants are checked because they are the config author's
 mistake to catch early; a helper's live runtime value is not, and parity
 depends on it flowing through unchanged.
 
+### Why every warning becomes one repair issue
+
+`validate()` has seven WARNING codes and, until 2026-09-03, all seven existed
+only as a log line at setup. Every one of them means something is quietly not
+being decided: a zone with no rules, a rule shadowed by an earlier one, a guard
+that can never fire, a blind no zone claims, tilt asked of a blind that has
+none.
+
+That is the same class of fault that cost the owner's house nine blinds on
+2026-09-02 -- not because nobody had written the check, but because its output
+went somewhere nobody reads. A warning nobody sees is indistinguishable from a
+warning nobody wrote.
+
+**One issue for all of them rather than one per code.** Seven checks each with
+its own issue, translation and pair of tests is a lot of surface for what is a
+list of strings, and the codes are not independent: a single mis-ordered rule
+list produces several at once, and reading them together is what makes it
+obvious they are one mistake rather than five. `blinds_without_zone` was such a
+per-code issue for a few hours and is folded into this one.
+
+The list is filtered by severity even though everything reaching that function
+is already a warning -- the caller raises on errors first. Relying on that is
+the kind of implicit contract that survives one refactor and not two, and
+putting an error into an issue titled "warnings" would say "this is only a
+warning" about a fault that refused setup.
+
 ### Why an orphan blind is skipped rather than fatal
 
 `resolve_ownership` used to raise on a blind no zone claims, on the argument

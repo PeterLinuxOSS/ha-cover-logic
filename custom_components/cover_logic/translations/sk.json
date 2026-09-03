@@ -680,9 +680,9 @@
       "title": "Žalúzia nezvládne to, čo od nej pravidlá žiadajú",
       "description": "Pri {count} žalúziách chýbajú schopnosti, ktoré pravidlá potrebujú: {blinds}. Výber entít v Home Assistant filtruje len domain `cover`, takže sa dajú zvoliť aj garážové dvere alebo markíza — a príkazy, ktoré nezvládnu, Home Assistant ticho zahodí. Buď zvoľ cover, ktorý tie schopnosti má, alebo uprav pravidlá, aby žiadali len to, čo vie (0 a 100 potrebujú len otvoriť a zavrieť, hodnota medzi tým potrebuje nastavenie pozície). Kontroluje sa raz, po nábehu Home Assistant."
     },
-    "blinds_without_zone": {
-      "title": "Žalúzia nepatrí do žiadnej zóny",
-      "description": "{count} žalúzií je nakonfigurovaných a nehlási sa k nim žiadna zóna: {blinds}. Zóna je to, čím sa pravidlo k žalúzii dostane, takže o týchto nerozhoduje nič a nikto im nepošle príkaz — v cieľoch na diagnostickom senzore vôbec nie sú. Daj každú do zóny, alebo ju z konfigurácie odober. Ostatné žalúzie sa medzitým riadia normálne: predtým toto odmietlo celú integráciu, takže jedna neúplná žalúzia zastavila zvyšok."
+    "config_warnings": {
+      "title": "Konfigurácia má varovania",
+      "description": "Počet varovaní o tejto konfigurácii: {count}. {warnings}. Nič z toho integráciu nezastaví, a každé znamená, že sa niečo ticho neriadi — zóna bez pravidiel, pravidlo zatienené skorším, poistka, ktorá nikdy nevystrelí, žalúzia, ku ktorej sa nehlási žiadna zóna, alebo lamely žiadané od žalúzie, ktorá ich nemá. Oprav to v dotknutom subentry, alebo potvrď, že to chovanie je zámer."
     }
   },
   "services": {

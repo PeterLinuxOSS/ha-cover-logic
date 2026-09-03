@@ -35,7 +35,7 @@ from .conformance import diff_configs, repo_fixture_path
 from .const import CONF_CONFIG_PATH, CONFIG_ENTRY_VERSION, CONFIG_RELOAD_SETTLE_SECONDS, DOMAIN
 from .model import Config
 from .readiness import name_list
-from .validation import ERROR, validate
+from .validation import ERROR, WARNING, validate
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -57,9 +57,9 @@ _UNKNOWN_ENTITIES_ISSUE = "unknown_entities"
 # see `_check_blind_capabilities`.
 _MISSING_FEATURES_ISSUE = "blinds_missing_features"
 
-# And for a blind no zone claims, which the engine now skips rather than
-# refusing the whole entry over; see `_check_orphan_blinds`.
-_ORPHAN_BLINDS_ISSUE = "blinds_without_zone"
+# And for every WARNING `validate()` reports, which until 2026-09-03 existed
+# only as a log line; see `_check_config_warnings`.
+_CONFIG_WARNINGS_ISSUE = "config_warnings"
 
 # Plain strings, not `homeassistant.const.Platform.SENSOR` -- an enum import
 # would be one more Home Assistant name at module level, exactly what this
@@ -173,7 +173,7 @@ async def async_setup_entry(hass: "HomeAssistant", entry: "CoverLogicConfigEntry
     async def _at_started(_hass: "HomeAssistant") -> None:
         await _check_referenced_entities(hass, config)
         await _check_blind_capabilities(hass, config)
-        await _check_orphan_blinds(hass, config)
+        await _check_config_warnings(hass, config, problems)
 
     entry.async_on_unload(async_at_started(hass, _at_started))
 
@@ -371,45 +371,51 @@ class _ConfigReloader:
             self._unsub = None
 
 
-async def _check_orphan_blinds(hass: "HomeAssistant", config: Config) -> None:
-    """Which blinds this configuration declares and no zone claims.
+async def _check_config_warnings(hass: "HomeAssistant", config: Config, problems: list) -> None:
+    """Every WARNING `validate()` reported, as one repair issue.
 
-    Until 2026-09-03 this was an `ERROR` that refused the entry, so one
-    incomplete blind stopped the house deciding about all the others --
-    measured on a clean install, where adding a blind through the UI and
-    forgetting the zone took ten working blinds down with it. The engine skips
-    it now (`engine.orphan_blinds`) and this is where the loudness went, so "a
-    blind nobody decides" stays impossible to miss. See docs/rationale.md,
-    "Why an orphan blind is skipped rather than fatal".
+    Until 2026-09-03 a warning existed only as a log line at setup, and there
+    were seven kinds of them. Every one means something is quietly not being
+    decided: a zone with no rules, a rule shadowed by an earlier one, a guard
+    that can never fire, a blind no zone claims, tilt asked of a blind that has
+    none. That is the same class of fault that cost the owner's house nine
+    blinds on 2026-09-02 -- not because nobody had written the check, but
+    because its output went somewhere nobody reads.
 
-    Needs no state machine at all -- it is a fact about the configuration --
-    but it runs alongside the other two so a user gets one pass of
-    installation diagnostics rather than three at different moments.
+    One issue for all of them rather than one per code, deliberately. Seven
+    checks each with its own issue, translation and test is a lot of surface
+    for a list of strings, and the codes are not independent -- a single
+    mis-ordered rule list produces several at once, and reading them together
+    is what makes it obvious they are one mistake.
+
+    `config` is unused for now and stays in the signature to match the other
+    two diagnostics; changing that later should not change every call site.
     """
     # Deferred: see the module docstring for why this cannot be a top-level
     # import.
     from homeassistant.helpers import issue_registry as ir  # noqa: PLC0415
 
-    from .engine import orphan_blinds  # noqa: PLC0415
-
-    orphans = orphan_blinds(config)
-    if not orphans:
-        ir.async_delete_issue(hass, DOMAIN, _ORPHAN_BLINDS_ISSUE)
+    # Filtered by severity even though everything reaching here is already a
+    # warning: relying on the caller having raised on the errors first is the
+    # kind of implicit contract that survives one refactor and not two.
+    warnings = [
+        f"{problem.code}: {problem.message}" for problem in problems if problem.severity == WARNING
+    ]
+    if not warnings:
+        ir.async_delete_issue(hass, DOMAIN, _CONFIG_WARNINGS_ISSUE)
         return
 
-    _LOGGER.warning(
-        "cover_logic: %d blind(s) belong to no zone and will not be commanded: %s",
-        len(orphans),
-        name_list(orphans),
-    )
     ir.async_create_issue(
         hass,
         DOMAIN,
-        _ORPHAN_BLINDS_ISSUE,
+        _CONFIG_WARNINGS_ISSUE,
         is_fixable=False,
         severity=ir.IssueSeverity.WARNING,
-        translation_key=_ORPHAN_BLINDS_ISSUE,
-        translation_placeholders={"count": str(len(orphans)), "blinds": name_list(orphans)},
+        translation_key=_CONFIG_WARNINGS_ISSUE,
+        translation_placeholders={
+            "count": str(len(warnings)),
+            "warnings": name_list(tuple(warnings)),
+        },
     )
 
 

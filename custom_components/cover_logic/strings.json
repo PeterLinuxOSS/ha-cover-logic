@@ -680,9 +680,9 @@
       "title": "A blind cannot do what the rules ask of it",
       "description": "{count} blind(s) named by this configuration lack cover features the rules need: {blinds}. The Home Assistant entity picker filters on the `cover` domain and nothing else, so a garage door or an awning can be chosen as a blind -- and the commands it cannot carry out are dropped silently. Either pick a cover that supports the listed features, or change the rules so they only ask for what it can do: 0 and 100 need only open and close, any value between needs the position setter. Checked once, after Home Assistant has finished starting."
     },
-    "blinds_without_zone": {
-      "title": "A blind belongs to no zone",
-      "description": "{count} blind(s) are configured and no zone claims them: {blinds}. Zones are how a rule reaches a blind, so nothing decides these and nothing will command them -- they are absent from the targets on the diagnostic sensor. Put each one in a zone, or remove it from the configuration. Every other blind keeps being decided meanwhile: this used to refuse the whole integration, which meant one incomplete blind stopped the rest working."
+    "config_warnings": {
+      "title": "The configuration has warnings",
+      "description": "{count} warning(s) about this configuration: {warnings}. None of these stop the integration, and each one means something is quietly not being decided -- a zone with no rules, a rule shadowed by an earlier one, a guard that can never fire, a blind no zone claims, or tilt asked of a blind that has none. Fix them in the affected subentry, or confirm the behaviour is what you intended."
     }
   },
   "services": {
