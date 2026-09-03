@@ -541,3 +541,76 @@ def test_a_burst_of_writes_produces_exactly_one_reload(make_entry, setup_hass, m
     asyncio.run(run())
 
     assert hass.config_entries.scheduled_reloads == [entry.entry_id]
+
+
+def test_a_blind_that_cannot_do_what_the_rules_ask_raises_a_repair_issue(setup_hass):
+    """A garage door as a blind: measured on a clean install, 2026-09-03.
+
+    The entity picker filters on the `cover` domain and nothing else, so
+    `cover.garage_door` was offered and accepted. Nothing refused it, and the
+    commands it cannot carry out would be dropped for as long as it existed.
+    """
+    config = load_config(
+        _NAMES_TWO_ENTITIES.replace("{position: 0, tilt: 0}", "{position: 34, tilt: 50}")
+    )
+    hass = setup_hass()
+    hass.states = FakeStateMachine({"cover.a": mock.Mock(attributes={"supported_features": 3})})
+
+    with (
+        mock.patch("homeassistant.helpers.issue_registry.async_create_issue") as create,
+        mock.patch("homeassistant.helpers.issue_registry.async_delete_issue") as delete,
+    ):
+        from cover_logic import _check_blind_capabilities  # noqa: PLC0415
+
+        asyncio.run(_check_blind_capabilities(hass, config))
+
+    delete.assert_not_called()
+    assert create.call_args.kwargs["translation_key"] == "blinds_missing_features"
+    named = create.call_args.kwargs["translation_placeholders"]["blinds"]
+    assert "cover.a" in named
+    assert "SET_POSITION" in named
+    assert "SET_TILT_POSITION" in named
+
+
+def test_a_capable_blind_clears_the_issue(setup_hass):
+    """The counter, and it is what stops this firing on the owner's own house:
+    all ten of its blinds report 191, which covers everything the rules ask.
+    """
+    config = load_config(
+        _NAMES_TWO_ENTITIES.replace("{position: 0, tilt: 0}", "{position: 34, tilt: 50}")
+    )
+    hass = setup_hass()
+    hass.states = FakeStateMachine({"cover.a": mock.Mock(attributes={"supported_features": 191})})
+
+    with (
+        mock.patch("homeassistant.helpers.issue_registry.async_create_issue") as create,
+        mock.patch("homeassistant.helpers.issue_registry.async_delete_issue") as delete,
+    ):
+        from cover_logic import _check_blind_capabilities  # noqa: PLC0415
+
+        asyncio.run(_check_blind_capabilities(hass, config))
+
+    create.assert_not_called()
+    delete.assert_called_once_with(hass, "cover_logic", "blinds_missing_features")
+
+
+def test_an_absent_blind_is_not_this_check_s_problem(setup_hass):
+    """One fault, one issue: `_check_referenced_entities` already reports a
+    blind this house does not have, and reporting it twice would put the same
+    fault in two places for the user to fix separately.
+    """
+    config = load_config(
+        _NAMES_TWO_ENTITIES.replace("{position: 0, tilt: 0}", "{position: 34, tilt: 50}")
+    )
+    hass = setup_hass()  # empty state machine: the cover does not exist
+
+    with (
+        mock.patch("homeassistant.helpers.issue_registry.async_create_issue") as create,
+        mock.patch("homeassistant.helpers.issue_registry.async_delete_issue") as delete,
+    ):
+        from cover_logic import _check_blind_capabilities  # noqa: PLC0415
+
+        asyncio.run(_check_blind_capabilities(hass, config))
+
+    create.assert_not_called()
+    delete.assert_called_once_with(hass, "cover_logic", "blinds_missing_features")

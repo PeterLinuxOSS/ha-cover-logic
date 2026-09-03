@@ -675,6 +675,10 @@
     "unknown_entities": {
       "title": "Configuration references entities this Home Assistant does not have",
       "description": "{count} entity or entities named by this configuration exist in neither the state machine nor the entity registry, so nothing here can read or command them: {entities}. A rule, condition or guard that depends on one will behave as though that input were absent, and a blind among them can never be moved. Create the missing helpers and entities, or edit the configuration to name the ones this house actually has. Checked once, after Home Assistant has finished starting."
+    },
+    "blinds_missing_features": {
+      "title": "A blind cannot do what the rules ask of it",
+      "description": "{count} blind(s) named by this configuration lack cover features the rules need: {blinds}. The Home Assistant entity picker filters on the `cover` domain and nothing else, so a garage door or an awning can be chosen as a blind -- and the commands it cannot carry out are dropped silently. Either pick a cover that supports the listed features, or change the rules so they only ask for what it can do: 0 and 100 need only open and close, any value between needs the position setter. Checked once, after Home Assistant has finished starting."
     }
   },
   "services": {
