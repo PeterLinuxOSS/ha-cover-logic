@@ -647,10 +647,12 @@
         "title": "Execution",
         "description": "Whether this integration actually moves the covers, or only writes to the log what it would have moved. Dry run is the safe setting: every command is logged with the service and payload it would have used, so a day of it can be compared against the automations it replaces. Turning it off gives this integration hands.",
         "data": {
-          "dry_run": "Dry run (log commands, move nothing)"
+          "dry_run": "Dry run (log commands, move nothing)",
+          "fixture_path": "Fixture to compare against"
         },
         "data_description": {
-          "dry_run": "On: nothing is moved, every intended command is written to the log. Off: covers really move. This takes effect immediately, with no reload."
+          "dry_run": "On: nothing is moved, every intended command is written to the log. Off: covers really move. This takes effect immediately, with no reload.",
+          "fixture_path": "Optional. Path to the YAML fixture the drift check compares the live configuration against, for a house that keeps its checkout somewhere else. Leave empty to compare against a fixtures/ directory next to custom_components/, or against nothing if there is none."
         }
       },
       "check_matrix": {

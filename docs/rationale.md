@@ -862,6 +862,42 @@ config-time constants are checked because they are the config author's
 mistake to catch early; a helper's live runtime value is not, and parity
 depends on it flowing through unchanged.
 
+### Why the fixture path is an option
+
+`conformance._REPO_FIXTURE` derives the fixture location from
+`Path(__file__).resolve().parents[2]`, and its own comment explains why that
+worked: `/config/custom_components/cover_logic` was a **symlink** into the
+checkout, so `resolve()` landed inside it and `parents[2]` was the repo root.
+
+Phase 7.1 replaced the symlink with a deploy script that copies. From that day
+the derived path was `/config/fixtures/dom_peter.yaml`, which does not exist,
+so `repo_fixture_path()` returned `None` and the drift check became a silent
+no-op **on the one house it was written for**. The house's own notes recorded
+the fact ("po zrušení symlinku už v dome nebeží") without treating it as a
+defect to fix.
+
+Measured 2026-09-03, and the cost was concrete. A deployment restarted Home
+Assistant with new `.py` files but never imported the fixture, so `.storage`
+kept 86 rules where the fixture had 90 -- the four missing ones being exactly
+the `vecer` rows that make six blinds close at dusk. Every check available was
+green: `matica_diff: []`, no errors, no repair issues. This is the check whose
+whole job is to notice that, and it was switched off.
+
+So the path is an entry option: set it, and the check compares against the
+fixture that actually exists; leave it empty, and the derived path applies as
+before. A house with no fixture at all stays silent, which is what the
+"universal integration" goal requires -- most installations have nothing to
+drift from.
+
+An empty string clears the option rather than being stored, since a stored
+`""` would read as a setting and behave as its absence. A configured path is
+handed on **without** an existence check, unlike the derived one:
+`_read_repo_fixture` calls `load_config_file` next and turns its `OSError`
+into "no reference", so checking here would be a second answer to a question
+one layer already answers. That redundancy was in the first version of this
+change and mutation testing found it -- removing the check changed no
+observable behaviour.
+
 ### Why every warning becomes one repair issue
 
 `validate()` has seven WARNING codes and, until 2026-09-03, all seven existed

@@ -35,6 +35,12 @@ CONFIG_ENTRY_VERSION = 3
 OPT_DRY_RUN = "dry_run"
 DEFAULT_DRY_RUN = True
 
+# Where the fixture the drift check compares against lives, when it is not a
+# sibling of `custom_components/`. See `conformance.repo_fixture_path` for why
+# the derived path stopped working, and `docs/rationale.md` -- "Why the fixture
+# path is an option".
+OPT_FIXTURE_PATH = "fixture_path"
+
 # ---------------------------------------------------------------------------
 # The settle window: how long `coordinator.py` waits after the *last* watched
 # state change before it evaluates.
