@@ -332,6 +332,7 @@ class _ConfigReloader:
         self._hass = hass
         self._entry = entry
         self._unsub = None
+        self._fixture_path = entry.options.get(OPT_FIXTURE_PATH)
 
     async def async_entry_updated(
         self, _hass: "HomeAssistant", entry: "CoverLogicConfigEntry"
@@ -345,6 +346,16 @@ class _ConfigReloader:
         data = getattr(entry, "runtime_data", None)
         if data is None:
             # Written before setup finished; that setup will read it anyway.
+            return
+        if entry.options.get(OPT_FIXTURE_PATH) != self._fixture_path:
+            # An option read only at setup, unlike `dry_run` which `runner.py`
+            # reads live. Leaving it out was the same "writing is not
+            # deploying" defect one layer up: the option saved, the drift
+            # check kept comparing against the old path, and only a manual
+            # reload applied it -- measured 2026-09-03 while proving the check
+            # had come back to life at all.
+            self._fixture_path = entry.options.get(OPT_FIXTURE_PATH)
+            self._arm()
             return
         try:
             written = config_from_subentries(entry)

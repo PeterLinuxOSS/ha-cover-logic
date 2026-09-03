@@ -771,3 +771,42 @@ def test_a_configured_path_that_does_not_exist_is_no_fixture_at_all(setup_hass, 
 
     create.assert_not_called()
     delete.assert_called_once_with(hass, "cover_logic", "fixture_drift")
+
+
+def test_changing_the_fixture_path_arms_a_reload(make_entry, setup_hass):
+    """`fixture_path` is read at setup, so saving it has to reload.
+
+    The same "writing is not deploying" defect one layer up, and measured
+    2026-09-03 while proving the drift check had come back to life at all: the
+    option saved, the check kept comparing against the old path, and only a
+    manual `reload_config_entry` applied it.
+
+    Unlike `dry_run`, which `runner.py` reads live on every command -- which is
+    the whole reason that one lives in options.
+    """
+    entry = make_entry({}, subentries=_subentries_for(VALID_CONFIG))
+    entry.runtime_data = _RuntimeData(load_config(VALID_CONFIG))
+    hass = setup_hass()
+    reloader = _reloader(hass, entry)
+
+    entry.options = {"fixture_path": "/somewhere/else.yaml"}
+    with mock.patch.object(reloader, "_arm") as arm:
+        asyncio.run(reloader.async_entry_updated(hass, entry))
+
+    assert arm.called
+
+
+def test_changing_only_dry_run_still_arms_nothing(make_entry, setup_hass):
+    """The counter, and it protects the reason `dry_run` is an option at all:
+    flipping it must reach `runner.py` without a reload.
+    """
+    entry = make_entry({}, subentries=_subentries_for(VALID_CONFIG))
+    entry.runtime_data = _RuntimeData(load_config(VALID_CONFIG))
+    hass = setup_hass()
+    reloader = _reloader(hass, entry)
+
+    entry.options = {"dry_run": True}
+    with mock.patch.object(reloader, "_arm") as arm:
+        asyncio.run(reloader.async_entry_updated(hass, entry))
+
+    assert not arm.called
