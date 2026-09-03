@@ -434,7 +434,14 @@ rules:
   # ---- BEŽNÝ DEŇ -------------------------------------------------------
   # `teplotna_ochrana` je tu z definície režimu OFF, takže starý fallback
   # `pozicia_tilt_ciel` (= 100 keď je ochrana off) je konštanta 100.
-  bezny_den.spolocne: [{then: {position: keep, tilt: 100}}]
+  # 2026-09-03 (fáza 7.6, dokončenie): vo `vecer` sa zatvárajú aj tieto,
+  # dovtedy tu bolo `keep` a robila to výhradne vetva `light-on`, ktorá
+  # zatvára KAŽDÝ tiltový cover s pozíciou > 10. `0/100` je presne to, čo tá
+  # vetva nechávala za sebou. Neodporuje to 7.7 („cez deň výšku neriadiť") --
+  # to meranie bolo o dennom okne 9-18, súmrak doňho nepatrí.
+  bezny_den.spolocne:
+    - {if: !ref vecer, then: {position: 0, tilt: 100}}
+    - {then: {position: keep, tilt: 100}}
 
   bezny_den.kvety:
     - {if: !ref rucne_kuchyna, then: {position: keep, tilt: keep}}
@@ -466,16 +473,31 @@ rules:
   bezny_den.peter:
     - {events: [arrival], then: {position: keep, tilt: 100}}
     - {if: [!ref doma_peter, !ref nie_akt_peter], then: {position: keep, tilt: keep}}
+    # Súmrak ZA odovzdaním, nie pred ním: `light-on` zatvára bez ohľadu na
+    # príznak izby, ale matica do neodovzdanej izby nesiaha. Rozdiel nastane
+    # len keď je žalúzia v neodovzdanej izbe hore -- a to podľa modelu
+    # ručného zásahu znamená, že izba odovzdaná byť mala.
+    - {if: !ref vecer, then: {position: 0, tilt: 100}}
     - {then: {position: keep, tilt: 100}}
 
   bezny_den.mimka:
     - {events: [arrival], then: {position: keep, tilt: 100}}
     - {if: [!ref doma_mimka, !ref nie_akt_mimka], then: {position: keep, tilt: keep}}
+    # Súmrak ZA odovzdaním, nie pred ním: `light-on` zatvára bez ohľadu na
+    # príznak izby, ale matica do neodovzdanej izby nesiaha. Rozdiel nastane
+    # len keď je žalúzia v neodovzdanej izbe hore -- a to podľa modelu
+    # ručného zásahu znamená, že izba odovzdaná byť mala.
+    - {if: !ref vecer, then: {position: 0, tilt: 100}}
     - {then: {position: keep, tilt: 100}}
 
   bezny_den.spalna:
     - {events: [arrival], then: {position: keep, tilt: 100}}
     - {if: [!ref doma_spalna, !ref nie_akt_spalna], then: {position: keep, tilt: keep}}
+    # Súmrak ZA odovzdaním, nie pred ním: `light-on` zatvára bez ohľadu na
+    # príznak izby, ale matica do neodovzdanej izby nesiaha. Rozdiel nastane
+    # len keď je žalúzia v neodovzdanej izbe hore -- a to podľa modelu
+    # ručného zásahu znamená, že izba odovzdaná byť mala.
+    - {if: !ref vecer, then: {position: 0, tilt: 100}}
     - {then: {position: keep, tilt: 100}}
 
 # ---- POISTKY ----------------------------------------------------------
