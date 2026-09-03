@@ -459,11 +459,18 @@ def _check_ownership(config: Config) -> list[Problem]:
             else:
                 owner[entity] = zone_id
 
+    # WARNING, not ERROR, since 2026-09-03: an `ERROR` here refused the whole
+    # entry, so one incomplete blind stopped the house deciding about all the
+    # others. `engine.resolve_ownership` skips it instead and
+    # `__init__._check_orphan_blinds` raises a repair issue -- loud without
+    # being fatal. See docs/rationale.md, "Why an orphan blind is skipped
+    # rather than fatal".
     out.extend(
         Problem(
-            ERROR,
+            WARNING,
             "blind_without_zone",
-            f"blind {entity!r} belongs to no zone, so no rule decides it",
+            f"blind {entity!r} belongs to no zone, so no rule decides it and it will "
+            f"not be commanded; put it in a zone or remove it",
         )
         for entity in config.blinds
         if entity not in owner

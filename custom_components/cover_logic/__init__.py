@@ -57,6 +57,10 @@ _UNKNOWN_ENTITIES_ISSUE = "unknown_entities"
 # see `_check_blind_capabilities`.
 _MISSING_FEATURES_ISSUE = "blinds_missing_features"
 
+# And for a blind no zone claims, which the engine now skips rather than
+# refusing the whole entry over; see `_check_orphan_blinds`.
+_ORPHAN_BLINDS_ISSUE = "blinds_without_zone"
+
 # Plain strings, not `homeassistant.const.Platform.SENSOR` -- an enum import
 # would be one more Home Assistant name at module level, exactly what this
 # file's own docstring rules out. Home Assistant's platform-forwarding calls
@@ -169,6 +173,7 @@ async def async_setup_entry(hass: "HomeAssistant", entry: "CoverLogicConfigEntry
     async def _at_started(_hass: "HomeAssistant") -> None:
         await _check_referenced_entities(hass, config)
         await _check_blind_capabilities(hass, config)
+        await _check_orphan_blinds(hass, config)
 
     entry.async_on_unload(async_at_started(hass, _at_started))
 
@@ -364,6 +369,48 @@ class _ConfigReloader:
         if self._unsub is not None:
             self._unsub()
             self._unsub = None
+
+
+async def _check_orphan_blinds(hass: "HomeAssistant", config: Config) -> None:
+    """Which blinds this configuration declares and no zone claims.
+
+    Until 2026-09-03 this was an `ERROR` that refused the entry, so one
+    incomplete blind stopped the house deciding about all the others --
+    measured on a clean install, where adding a blind through the UI and
+    forgetting the zone took ten working blinds down with it. The engine skips
+    it now (`engine.orphan_blinds`) and this is where the loudness went, so "a
+    blind nobody decides" stays impossible to miss. See docs/rationale.md,
+    "Why an orphan blind is skipped rather than fatal".
+
+    Needs no state machine at all -- it is a fact about the configuration --
+    but it runs alongside the other two so a user gets one pass of
+    installation diagnostics rather than three at different moments.
+    """
+    # Deferred: see the module docstring for why this cannot be a top-level
+    # import.
+    from homeassistant.helpers import issue_registry as ir  # noqa: PLC0415
+
+    from .engine import orphan_blinds  # noqa: PLC0415
+
+    orphans = orphan_blinds(config)
+    if not orphans:
+        ir.async_delete_issue(hass, DOMAIN, _ORPHAN_BLINDS_ISSUE)
+        return
+
+    _LOGGER.warning(
+        "cover_logic: %d blind(s) belong to no zone and will not be commanded: %s",
+        len(orphans),
+        name_list(orphans),
+    )
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        _ORPHAN_BLINDS_ISSUE,
+        is_fixable=False,
+        severity=ir.IssueSeverity.WARNING,
+        translation_key=_ORPHAN_BLINDS_ISSUE,
+        translation_placeholders={"count": str(len(orphans)), "blinds": name_list(orphans)},
+    )
 
 
 async def _check_blind_capabilities(hass: "HomeAssistant", config: Config) -> None:

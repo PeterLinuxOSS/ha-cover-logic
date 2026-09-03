@@ -26,7 +26,7 @@ from cover_logic.const import (
     GUARD_STAGE_INPUT,
     GUARD_STAGE_OUTPUT,
 )
-from cover_logic.engine import Decision, EngineError, evaluate
+from cover_logic.engine import Decision, evaluate
 from cover_logic.guards import NO_GUARD, GuardError, Screening, guard_blinds, review, screen
 from cover_logic.model import KEEP, Action, Ref
 from cover_logic.validation import ERROR, validate
@@ -730,7 +730,16 @@ def test_an_input_guard_may_still_say_any(house):
     assert screen(config, World(states={})).outcomes["cover.a"].guard == 0
 
 
-def test_a_guard_naming_a_blind_no_zone_owns_is_the_engines_error_not_a_silent_pass():
+def test_a_guard_sees_the_blinds_a_zone_owns_and_not_the_orphan():
+    """Guards read the same ownership map the engine does, so an orphan blind
+    is outside their reach too -- and that is the consistent answer, not a
+    gap: a guard exists to override a decision, and there is no decision about
+    a blind no rule reaches.
+
+    This used to assert an `EngineError`. See
+    `test_engine.py::test_a_blind_owned_by_no_zone_is_skipped_and_the_rest_still_decided`
+    for why that changed and where the loudness went.
+    """
     config = load_config("""
 blinds:
   - entity: cover.a
@@ -743,8 +752,13 @@ rules:
   m.z:
     - then: { position: 0 }
 """)
-    with pytest.raises(EngineError, match="owned by no zone"):
-        screen(config, World(states={}))
+
+    result = screen(config, World(states={}))
+
+    # No guards here, so nothing is *claimed*; what matters is which blinds the
+    # output stage is still allowed to judge.
+    assert "cover.a" in result.remaining, "the owned blind is still in reach"
+    assert "cover.orphan" not in result.remaining
 
 
 def test_guards_never_invent_a_blind(house):

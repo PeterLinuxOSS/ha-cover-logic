@@ -74,17 +74,26 @@ rules:
     - {then: {position: keep, tilt: keep}}
 """
 
-# cover.a belongs to no zone -- validate()'s `blind_without_zone`, ERROR severity.
+# `cover.a` is claimed by two zones -- `validate()`'s `blind_in_two_zones`,
+# ERROR severity. It was `blind_without_zone` until 2026-09-03, when that
+# became a WARNING because refusing the whole entry over one incomplete blind
+# stopped the house deciding about all the others (docs/rationale.md, "Why an
+# orphan blind is skipped rather than fatal"). Two owners stayed fatal -- whose
+# rules apply is unanswerable -- so it is the shape this fixture needs now.
 ERROR_CONFIG = """
 blinds:
   - entity: cover.a
 zones:
   z:
-    members: []
+    members: [cover.a]
+  z2:
+    members: [cover.a]
 modes:
   - {id: any}
 rules:
   any.z:
+    - {then: {position: keep, tilt: keep}}
+  any.z2:
     - {then: {position: keep, tilt: keep}}
 """
 

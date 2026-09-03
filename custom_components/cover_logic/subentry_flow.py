@@ -107,7 +107,7 @@ _LOGGER = logging.getLogger(__name__)
 _NEW_SUBENTRY_ID = "__new__"
 
 
-# Every ERROR-severity `validation.Problem.code` mapped to the subentry
+# Every blocking `validation.Problem.code` mapped to the subentry
 # type(s) whose *own form* is where a user actually resolves it -- not the
 # type that happened to be open when `validate()` noticed it. A blind's form
 # has no `members` field, so saving a blind can never fix `blind_without_zone`
@@ -116,9 +116,15 @@ _NEW_SUBENTRY_ID = "__new__"
 # validation problem should block a form only if that form could fix it."
 # `_blocks_on`, below, is the one place this is read.
 #
+# Since 2026-09-03 this maps every *blocking* code, not only every `ERROR`:
+# `blind_without_zone` became a WARNING (it no longer refuses the whole entry
+# -- docs/rationale.md, "Why an orphan blind is skipped rather than fatal") and
+# still blocks a `zone` save, because that form is where it is caused. Which
+# severities may block is `_BLOCKING_WARNINGS` below; which *form* may be
+# blocked is still this dict.
+#
 # Every code left in this dict has exactly one owning *type*, and every
-# subentry of that type is interchangeable for fixing it: `blind_without_zone`
-# is fixed by putting the blind in *some* zone, and
+# subentry of that type is interchangeable for fixing it:
 # `no_fallback_mode`/`fallback_mode_not_last` are statements about the mode
 # list as a whole, which any single mode's `order` (or its condition being
 # cleared) can settle. Knowing the type is therefore enough.
@@ -147,9 +153,9 @@ _CODE_OWNERS: dict[str, frozenset[str]] = {
     # nothing else to exist first, so the offending blind can always be
     # edited.)
     "bad_travel_time": frozenset({BLIND}),
+    "blind_without_zone": frozenset({ZONE}),
     "zone_member_unknown": frozenset({ZONE}),
     "blind_in_two_zones": frozenset({ZONE}),
-    "blind_without_zone": frozenset({ZONE}),
     "no_fallback_mode": frozenset({MODE}),
     "fallback_mode_not_last": frozenset({MODE}),
     # Guards now own a subentry type, so their problems block guard saves.
@@ -190,6 +196,19 @@ _ATTRIBUTED_CODES = frozenset(
         "guard_unreachable",
     }
 )
+
+
+# Warnings that still block one specific form, because that form is exactly
+# where they are caused and where they are fixed. A `zone` form's `members` is
+# what decides a blind's zone membership, so an edit that drops the last zone
+# claiming a blind is a fault that save made and that same save can undo --
+# and letting it through would mean clicking Save to silently stop deciding a
+# blind. The table stays tiny on purpose: a warning blocking a form that could
+# not fix it is the deadlock `_CODE_OWNERS` exists to prevent, and a warning
+# blocking *setup* is the fatality this stopped being.
+_BLOCKING_WARNINGS: dict[str, frozenset[str]] = {
+    "blind_without_zone": frozenset({ZONE}),
+}
 
 
 def _blocks_on(subentry_type: str, subentry_id: Any, problem: Problem) -> bool:
@@ -452,8 +471,18 @@ class _SubentryFlowBase(config_entries.ConfigSubentryFlow):
         return [
             f"{problem.code}: {problem.message}"
             for problem in problems
-            if problem.severity == ERROR and _blocks_on(self.subentry_type, candidate_id, problem)
+            if self._counts(problem) and _blocks_on(self.subentry_type, candidate_id, problem)
         ]
+
+    def _counts(self, problem: Problem) -> bool:
+        """Whether this problem is one a save may be refused over.
+
+        Every `ERROR`, plus the handful of warnings `_BLOCKING_WARNINGS` says
+        this form both causes and fixes.
+        """
+        if problem.severity == ERROR:
+            return True
+        return self.subentry_type in _BLOCKING_WARNINGS.get(problem.code, frozenset())
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None

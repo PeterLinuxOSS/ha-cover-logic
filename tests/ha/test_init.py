@@ -79,19 +79,26 @@ modes:
   - {id: any}
 """
 
-# cover.a is declared but no zone claims it as a member -- validate()'s
-# `blind_without_zone` check, ERROR severity. This is the exact shape the
-# task brief names: "a blind belonging to no zone".
+# `cover.a` is claimed by two zones -- `validate()`'s `blind_in_two_zones`,
+# ERROR severity. It was `blind_without_zone` until 2026-09-03, when that
+# became a WARNING because refusing the whole entry over one incomplete blind
+# stopped the house deciding about all the others (docs/rationale.md, "Why an
+# orphan blind is skipped rather than fatal"). Two owners stayed fatal -- whose
+# rules apply is unanswerable -- so it is the shape this fixture needs now.
 ERROR_CONFIG = """
 blinds:
   - entity: cover.a
 zones:
   z:
-    members: []
+    members: [cover.a]
+  z2:
+    members: [cover.a]
 modes:
   - {id: any}
 rules:
   any.z:
+    - {then: {position: keep, tilt: keep}}
+  any.z2:
     - {then: {position: keep, tilt: keep}}
 """
 
@@ -131,7 +138,7 @@ def test_setup_forwards_the_sensor_platform(tmp_path, make_entry, setup_hass):
 def test_setup_raises_config_entry_not_ready_on_error_problem(tmp_path, make_entry, setup_hass):
     entry = _entry(make_entry, _write(tmp_path, ERROR_CONFIG))
 
-    with pytest.raises(ConfigEntryNotReady, match="blind_without_zone"):
+    with pytest.raises(ConfigEntryNotReady, match="blind_in_two_zones"):
         asyncio.run(async_setup_entry(setup_hass(), entry))
 
 
@@ -614,3 +621,65 @@ def test_an_absent_blind_is_not_this_check_s_problem(setup_hass):
 
     create.assert_not_called()
     delete.assert_called_once_with(hass, "cover_logic", "blinds_missing_features")
+
+
+def test_a_blind_no_zone_claims_raises_a_repair_issue(setup_hass):
+    """Where the loudness went when this stopped being fatal.
+
+    Measured on a clean install, 2026-09-03: adding a blind through the UI and
+    forgetting to put it in a zone sent the whole entry to `setup_retry`, so
+    ten working blinds stopped being decided because an eleventh was
+    incomplete. The engine skips it now; this is what keeps "a blind nobody
+    decides" impossible to miss.
+    """
+    config = load_config("""
+blinds:
+  - {entity: cover.a}
+  - {entity: cover.orphan}
+zones:
+  z: {members: [cover.a]}
+modes: [{id: den}]
+rules:
+  den.z: [{then: {position: 0, tilt: 0}}]
+""")
+
+    with (
+        mock.patch("homeassistant.helpers.issue_registry.async_create_issue") as create,
+        mock.patch("homeassistant.helpers.issue_registry.async_delete_issue") as delete,
+    ):
+        from cover_logic import _check_orphan_blinds  # noqa: PLC0415
+
+        asyncio.run(_check_orphan_blinds(setup_hass(), config))
+
+    delete.assert_not_called()
+    assert create.call_args.kwargs["translation_key"] == "blinds_without_zone"
+    placeholders = create.call_args.kwargs["translation_placeholders"]
+    assert placeholders["count"] == "1"
+    assert "cover.orphan" in placeholders["blinds"]
+    assert "cover.a" not in placeholders["blinds"], "the owned blind is not a fault"
+
+
+def test_every_blind_in_a_zone_clears_the_orphan_issue(setup_hass):
+    """The counter: it must be quiet on a complete configuration, which is what
+    stops it firing on the owner's own house.
+    """
+    config = load_config("""
+blinds: [{entity: cover.a}]
+zones:
+  z: {members: [cover.a]}
+modes: [{id: den}]
+rules:
+  den.z: [{then: {position: 0, tilt: 0}}]
+""")
+
+    with (
+        mock.patch("homeassistant.helpers.issue_registry.async_create_issue") as create,
+        mock.patch("homeassistant.helpers.issue_registry.async_delete_issue") as delete,
+    ):
+        from cover_logic import _check_orphan_blinds  # noqa: PLC0415
+
+        hass = setup_hass()
+        asyncio.run(_check_orphan_blinds(hass, config))
+
+    create.assert_not_called()
+    delete.assert_called_once_with(hass, "cover_logic", "blinds_without_zone")
