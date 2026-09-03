@@ -647,10 +647,12 @@
         "title": "Vykonávanie",
         "description": "Či integrácia žalúziami naozaj hýbe, alebo len zapisuje do logu, čím by pohla. Suchý beh je bezpečné nastavenie: každý príkaz sa zaloguje aj so službou a dátami, ktoré by použil, takže sa dá deň porovnať s automatizáciami, ktoré nahrádza. Vypnutím dostane integrácia ruky.",
         "data": {
-          "dry_run": "Suchý beh (príkazy len zapisovať, nehýbať ničím)"
+          "dry_run": "Suchý beh (príkazy len zapisovať, nehýbať ničím)",
+          "fixture_path": "Fixture na porovnanie"
         },
         "data_description": {
-          "dry_run": "Zapnuté: nič sa nehýbe, každý zamýšľaný príkaz ide do logu. Vypnuté: žalúzie sa naozaj hýbu. Prejaví sa okamžite, bez reloadu."
+          "dry_run": "Zapnuté: nič sa nehýbe, každý zamýšľaný príkaz ide do logu. Vypnuté: žalúzie sa naozaj hýbu. Prejaví sa okamžite, bez reloadu.",
+          "fixture_path": "Nepovinné. Cesta k YAML fixture, proti ktorej kontrola driftu porovnáva živú konfiguráciu — pre dom, ktorý má checkout inde. Prázdne znamená porovnávať proti adresáru fixtures/ vedľa custom_components/, alebo proti ničomu, ak taký nie je."
         }
       },
       "check_matrix": {

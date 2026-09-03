@@ -32,7 +32,13 @@ from typing import TYPE_CHECKING
 from .config_schema import ConfigError, load_config_file
 from .config_store import config_from_subentries
 from .conformance import diff_configs, repo_fixture_path
-from .const import CONF_CONFIG_PATH, CONFIG_ENTRY_VERSION, CONFIG_RELOAD_SETTLE_SECONDS, DOMAIN
+from .const import (
+    CONF_CONFIG_PATH,
+    CONFIG_ENTRY_VERSION,
+    CONFIG_RELOAD_SETTLE_SECONDS,
+    DOMAIN,
+    OPT_FIXTURE_PATH,
+)
 from .model import Config
 from .readiness import name_list
 from .validation import ERROR, WARNING, validate
@@ -142,7 +148,7 @@ async def async_setup_entry(hass: "HomeAssistant", entry: "CoverLogicConfigEntry
         # Only meaningful once subentries are the source of truth -- see
         # that function's own docstring for why a still-legacy, path-based
         # entry (the `if` branch above) has nothing of this kind to check.
-        await _check_fixture_conformance(hass, config)
+        await _check_fixture_conformance(hass, entry, config)
 
     problems = validate(config)
     errors = [problem for problem in problems if problem.severity == ERROR]
@@ -198,8 +204,8 @@ async def async_setup_entry(hass: "HomeAssistant", entry: "CoverLogicConfigEntry
     return True
 
 
-def _read_repo_fixture() -> tuple[Path | None, Config | None]:
-    """Resolve and parse this checkout's own fixture. Blocking: executor only.
+def _read_repo_fixture(configured: str | None = None) -> tuple[Path | None, Config | None]:
+    """Resolve and parse the fixture to compare against. Blocking: executor only.
 
     Both halves touch the filesystem -- `repo_fixture_path` stats the path,
     `load_config_file` reads and parses it -- so they travel to the executor
@@ -209,7 +215,7 @@ def _read_repo_fixture() -> tuple[Path | None, Config | None]:
     `_check_fixture_conformance` for why that is treated exactly like "no
     fixture here at all".
     """
-    fixture = repo_fixture_path()
+    fixture = repo_fixture_path(configured)
     if fixture is None:
         return None, None
     try:
@@ -218,7 +224,9 @@ def _read_repo_fixture() -> tuple[Path | None, Config | None]:
         return fixture, None
 
 
-async def _check_fixture_conformance(hass: "HomeAssistant", config: Config) -> None:
+async def _check_fixture_conformance(
+    hass: "HomeAssistant", entry: "CoverLogicConfigEntry", config: Config
+) -> None:
     """Raise or clear the `fixture_drift` repair issue for this checkout's own fixture.
 
     A no-op everywhere `conformance.repo_fixture_path()` returns `None` -- see
@@ -253,7 +261,9 @@ async def _check_fixture_conformance(hass: "HomeAssistant", config: Config) -> N
     # import.
     from homeassistant.helpers import issue_registry as ir  # noqa: PLC0415
 
-    fixture, reference = await hass.async_add_executor_job(_read_repo_fixture)
+    fixture, reference = await hass.async_add_executor_job(
+        _read_repo_fixture, entry.options.get(OPT_FIXTURE_PATH)
+    )
     if reference is None:
         # No fixture here at all, or one that no longer parses -- the
         # fixture's own health is `tests/test_fixture_dom_peter.py`'s job, and

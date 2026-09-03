@@ -25,7 +25,13 @@ pytest.importorskip("homeassistant")
 from homeassistant.config_entries import ConfigSubentry
 from homeassistant.exceptions import ConfigEntryNotReady
 
-from cover_logic import PLATFORMS, CoverLogicData, async_setup_entry, async_unload_entry
+from cover_logic import (
+    PLATFORMS,
+    CoverLogicData,
+    _check_fixture_conformance,
+    async_setup_entry,
+    async_unload_entry,
+)
 from cover_logic.config_schema import load_config
 from cover_logic.config_store import subentries_from_config
 from cover_logic.const import CONF_CONFIG_PATH
@@ -301,7 +307,7 @@ def test_setup_creates_fixture_drift_issue_when_subentries_diverge(make_entry, s
 
 
 def test_check_fixture_conformance_clears_the_issue_when_config_matches_the_real_fixture(
-    setup_hass,
+    setup_hass, make_entry
 ):
     """This checkout's own `fixtures/dom_peter.yaml`, loaded back as a `Config`, must
     compare equal to itself: proof this conformance check does not fire on a
@@ -318,7 +324,6 @@ def test_check_fixture_conformance_clears_the_issue_when_config_matches_the_real
     its executor and to pass it through to the two mocked `issue_registry`
     calls below.
     """
-    from cover_logic import _check_fixture_conformance  # noqa: PLC0415
     from cover_logic.config_schema import load_config_file  # noqa: PLC0415
     from cover_logic.conformance import repo_fixture_path  # noqa: PLC0415
 
@@ -331,7 +336,7 @@ def test_check_fixture_conformance_clears_the_issue_when_config_matches_the_real
         mock.patch("homeassistant.helpers.issue_registry.async_create_issue") as create,
         mock.patch("homeassistant.helpers.issue_registry.async_delete_issue") as delete,
     ):
-        asyncio.run(_check_fixture_conformance(hass, config))
+        asyncio.run(_check_fixture_conformance(hass, make_entry({}), config))
 
     create.assert_not_called()
     delete.assert_called_once_with(hass, "cover_logic", "fixture_drift")
@@ -699,3 +704,70 @@ def test_an_error_never_reaches_the_warnings_issue(setup_hass):
 
     named = create.call_args.kwargs["translation_placeholders"]["warnings"]
     assert "made_up" not in named
+
+
+def test_a_configured_fixture_path_is_what_gets_compared(setup_hass, make_entry, tmp_path):
+    """The drift check reads the fixture the entry names, not a derived path.
+
+    Measured 2026-09-03: the derived path was correct only while
+    `/config/custom_components/cover_logic` was a symlink into the checkout,
+    so `Path.resolve()` landed inside it. Phase 7.1 replaced the symlink with
+    a script that copies, and from that day the path pointed at
+    `/config/fixtures/dom_peter.yaml`, which does not exist -- so the check
+    silently became a no-op on the one house it was written for, and did not
+    report a real drift the day this test was written.
+    """
+    fixture = tmp_path / "elsewhere.yaml"
+    fixture.write_text(WARNING_ONLY_CONFIG, encoding="utf-8")
+    entry = make_entry({}, options={"fixture_path": str(fixture)})
+
+    with (
+        mock.patch("homeassistant.helpers.issue_registry.async_create_issue") as create,
+        mock.patch("homeassistant.helpers.issue_registry.async_delete_issue") as delete,
+    ):
+        # A config that differs from that fixture: drift must be reported.
+        asyncio.run(_check_fixture_conformance(setup_hass(), entry, load_config(VALID_CONFIG)))
+
+    delete.assert_not_called()
+    assert create.call_args.kwargs["translation_key"] == "fixture_drift"
+
+
+def test_a_configured_fixture_path_that_matches_clears_the_issue(setup_hass, make_entry, tmp_path):
+    """The counter: it must be quiet when the two agree, or the option is just
+    a way to make a permanent warning.
+    """
+    fixture = tmp_path / "elsewhere.yaml"
+    fixture.write_text(VALID_CONFIG, encoding="utf-8")
+    entry = make_entry({}, options={"fixture_path": str(fixture)})
+
+    with (
+        mock.patch("homeassistant.helpers.issue_registry.async_create_issue") as create,
+        mock.patch("homeassistant.helpers.issue_registry.async_delete_issue") as delete,
+    ):
+        hass = setup_hass()
+        asyncio.run(_check_fixture_conformance(hass, entry, load_config(VALID_CONFIG)))
+
+    create.assert_not_called()
+    delete.assert_called_once_with(hass, "cover_logic", "fixture_drift")
+
+
+def test_a_configured_path_that_does_not_exist_is_no_fixture_at_all(setup_hass, make_entry):
+    """A typo in the option must not become a permanent drift warning.
+
+    Asserted on behaviour, not on which layer produces it: `repo_fixture_path`
+    hands the path on unchecked and `_read_repo_fixture` turns the resulting
+    `OSError` into "no reference". Written the other way first, with an
+    `is_file()` check in both places -- mutation showed removing one changed
+    nothing, which is how the redundancy was found.
+    """
+    entry = make_entry({}, options={"fixture_path": "/nowhere/at/all.yaml"})
+
+    with (
+        mock.patch("homeassistant.helpers.issue_registry.async_create_issue") as create,
+        mock.patch("homeassistant.helpers.issue_registry.async_delete_issue") as delete,
+    ):
+        hass = setup_hass()
+        asyncio.run(_check_fixture_conformance(hass, entry, load_config(VALID_CONFIG)))
+
+    create.assert_not_called()
+    delete.assert_called_once_with(hass, "cover_logic", "fixture_drift")

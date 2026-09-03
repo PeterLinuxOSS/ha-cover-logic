@@ -112,7 +112,13 @@ from .config_store import (
     effective_rule_items,
 )
 from .conformance import diff_configs, repo_fixture_path
-from .const import DEFAULT_CONFIG_PATH, DEFAULT_DRY_RUN, OPT_DRY_RUN, RULE_DEFAULT_ZONE
+from .const import (
+    DEFAULT_CONFIG_PATH,
+    DEFAULT_DRY_RUN,
+    OPT_DRY_RUN,
+    OPT_FIXTURE_PATH,
+    RULE_DEFAULT_ZONE,
+)
 from .model import Config
 from .services import (
     ATTR_DRY_RUN,
@@ -1078,17 +1084,30 @@ class CoverLogicOptionsFlow(OptionsFlow):
         """
         entry = self.config_entry
         if user_input is not None:
-            self.hass.config_entries.async_update_entry(
-                entry,
-                options={**dict(entry.options), OPT_DRY_RUN: bool(user_input[OPT_DRY_RUN])},
-            )
+            # An empty string clears the option rather than storing `""`,
+            # which `repo_fixture_path` would treat as "not configured"
+            # anyway -- storing it would leave a value that reads as a
+            # setting and behaves as its absence.
+            path = (user_input.get(OPT_FIXTURE_PATH) or "").strip()
+            options = {**dict(entry.options), OPT_DRY_RUN: bool(user_input[OPT_DRY_RUN])}
+            if path:
+                options[OPT_FIXTURE_PATH] = path
+            else:
+                options.pop(OPT_FIXTURE_PATH, None)
+            self.hass.config_entries.async_update_entry(entry, options=options)
             return await self._show_main_menu()
 
         current = entry.options.get(OPT_DRY_RUN, DEFAULT_DRY_RUN)
         return self.async_show_form(
             step_id="execution",
             data_schema=vol.Schema(
-                {vol.Required(OPT_DRY_RUN, default=bool(current)): selector.BooleanSelector()}
+                {
+                    vol.Required(OPT_DRY_RUN, default=bool(current)): selector.BooleanSelector(),
+                    vol.Optional(
+                        OPT_FIXTURE_PATH,
+                        description={"suggested_value": entry.options.get(OPT_FIXTURE_PATH, "")},
+                    ): selector.TextSelector(),
+                }
             ),
         )
 

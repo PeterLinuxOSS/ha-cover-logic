@@ -69,8 +69,28 @@ def diff_configs(live: Config, reference: Config) -> list[str]:
 _REPO_FIXTURE = Path(__file__).resolve().parents[2] / "fixtures" / "dom_peter.yaml"
 
 
-def repo_fixture_path() -> Path | None:
-    """The on-disk `fixtures/dom_peter.yaml` this checkout ships, or `None` elsewhere.
+def repo_fixture_path(configured: str | None = None) -> Path | None:
+    """The fixture to compare against: `configured` if given, else this checkout's.
+
+    `configured` is the entry's `fixture_path` option, and it exists because
+    the derived path below stopped being right. It was correct only while
+    `/config/custom_components/cover_logic` was a symlink into the checkout,
+    so that `Path.resolve()` landed inside it; phase 7.1 replaced the symlink
+    with a deploy script that copies, and from that day the derived path
+    pointed at `/config/fixtures/dom_peter.yaml`, which does not exist -- so
+    the drift check silently became a no-op on the one house it was written
+    for. Measured 2026-09-03, after a deployment where exactly the drift it
+    watches for went unreported.
+
+    A configured path is returned without a `is_file()` check, unlike the
+    derived one. That is not an oversight: `_read_repo_fixture` calls
+    `load_config_file` next and turns its `OSError` into "no reference", so
+    stating the path exists here would be a second answer to a question one
+    layer already answers -- verified by mutation, where removing the check
+    changed no observable behaviour. The derived path keeps its check because
+    it has no configured intent behind it: for an installation that simply has
+    no sibling `fixtures/`, "there is nothing here" is the answer, not a read
+    that fails.
 
     `diff_configs` above is a general-purpose comparison a different house's
     own fixture (if it ever has one) could use instead; this function is the
@@ -81,8 +101,10 @@ def repo_fixture_path() -> Path | None:
     (`MODELS.md` Sec. 1) means that has to stay a silent no-op, not a startup
     failure for every other house that ever installs this integration.
 
-    Blocking (one stat): an event-loop caller must use an executor.
+    Blocking (one or two stats): an event-loop caller must use an executor.
     """
+    if configured:
+        return Path(configured)
     return _REPO_FIXTURE if _REPO_FIXTURE.is_file() else None
 
 
