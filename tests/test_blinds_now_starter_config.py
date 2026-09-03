@@ -33,6 +33,7 @@ config once already had (`sun_hits_target` reading the azimuth from
 instead of `sun.sun`'s own `azimuth` attribute).
 """
 
+from cover_logic.config_schema import referenced_entities
 from cover_logic.engine import evaluate
 from cover_logic.starter_config import (
     _OPEN_POSITION,
@@ -76,3 +77,66 @@ def test_the_starter_config_stays_open_when_the_sun_is_on_the_far_side():
 
     assert decision.targets["cover.a"].position == _OPEN_POSITION
     assert decision.targets["cover.a"].tilt == _OPEN_TILT
+
+
+# Entities every Home Assistant has without the user creating anything. `sun`
+# is set up by `default_config`, and `sun.sun` carries `azimuth`/`elevation` as
+# attributes rather than as separate entities -- which is the whole reason
+# `starter_config` reads it there instead of `sensor.sun_solar_azimuth`, an
+# entity stock Home Assistant ships **disabled** (see this module's docstring).
+_ENTITIES_EVERY_HOUSE_HAS = frozenset({"sun.sun"})
+
+# Domains a user has to create by hand, one entity at a time, in Settings ->
+# Devices & Services -> Helpers. A fresh install naming any of these is a
+# fresh install that does not work until the user does homework.
+_HELPER_DOMAINS = ("input_boolean", "input_number", "input_text", "input_select", "input_datetime")
+
+
+def test_a_fresh_install_needs_no_entity_the_user_has_to_create():
+    """Phase 7's definition of done #1, made measurable instead of manual.
+
+    The criterion is "a fresh install from HACS into an empty Home Assistant
+    passes the config flow and decides, without the user creating so much as
+    one automation or helper". The install *mechanics* are covered elsewhere
+    (`hassfest`/HACS validation, and `tests/ha/test_setup_journeys.py` walks
+    flow -> setup); what nothing measured until now is the *configuration*
+    half -- that what the flow generates reads nothing a user would have to
+    make first.
+
+    This is the counter to the owner's own house, whose configuration reads
+    eight helpers. All eight are deliberate (commands and settings, not
+    derived state), but a starter configuration that reached for even one of
+    them would make the criterion unreachable while every other test stayed
+    green.
+    """
+    config = _build_starter_config(
+        ["cover.a", "cover.b", "cover.c", "cover.d"],
+        {"cover.a": "south", "cover.b": "west", "cover.c": "east", "cover.d": "north"},
+    )
+
+    read = {
+        entry[0] if isinstance(entry, tuple) else entry for entry in referenced_entities(config)
+    }
+
+    assert read <= _ENTITIES_EVERY_HOUSE_HAS, (
+        f"a fresh install reads {sorted(read - _ENTITIES_EVERY_HOUSE_HAS)}, which an empty "
+        "Home Assistant does not have -- definition of done #1 is unreachable while this is true"
+    )
+    assert read, "counter: it must read *something*, or the assertion above is vacuous"
+
+
+def test_a_fresh_install_names_no_helper():
+    """The same criterion from the other side, and deliberately not a subset test.
+
+    The check above would also pass if `referenced_entities` ever stopped
+    reporting some kind of read -- a silent narrowing there would make it
+    green for the wrong reason. This one asks the blunt question instead, on
+    the raw configuration rather than on a derived set, so the two fail
+    independently.
+    """
+    config = _build_starter_config(["cover.a"], {"cover.a": "south"})
+
+    spelled = repr(config)
+    named = [domain for domain in _HELPER_DOMAINS if f"{domain}." in spelled]
+
+    assert not named, f"the starter configuration names helper domains {named}"
