@@ -1,0 +1,1785 @@
+# Rationale
+
+Design decisions and hard-won debugging traps that used to live inline as
+long docstrings or comment blocks. They are collected here, organised by
+module, so the source can follow PEP 257 / Google-style docstrings (a
+one-line summary first, a short body only where needed) without losing the
+"why" -- several of these paragraphs record traps that already cost real
+debugging time once. Every place this content moved from carries a short
+pointer back to its section here.
+
+Most of what is below is not new: each section was the original comment or
+docstring text, moved rather than rewritten. Where a decision's reasoning
+previously lived only in a test's comment (not in the production module
+itself), that is noted in the section. Sections written after 2026-08-31 are
+new prose, written here in the first place -- a comment in this repository is
+one sentence long, so anything longer belongs in this file with a pointer above
+the code.
+
+## `world.py`
+
+### Why `World` takes a defensive copy
+
+`frozen=True` stops the fields being re-assigned; it does nothing about a
+caller mutating the dict it passed in. This module exists to guarantee that
+one evaluation sees one consistent state, so that guarantee is enforced here
+rather than left to callers.
+
+## Manual movements: an event, not a state
+
+"Somebody moved that blind, and which way" cannot be an entity read. `World`
+is a snapshot on purpose -- the same snapshot always yields the same decision,
+which is what removes the whole race-condition class -- and a movement is what
+happened *between* two snapshots. So it arrives on the one input that already
+means "what prompted this evaluation": `Event`, with a `blind` and a
+`direction` beside the `person` an arrival carries.
+
+That was a decision with a real alternative. A separate input would have
+needed its own lifetime rules (how long is a manual move "current"?) and would
+have given two answers to the one question `Event` already answers. What a
+manual move *additionally* needs is memory -- "this room is handed over until
+dawn" -- and that is a different concern from reporting the movement. Keeping
+them apart is the point: the memory is a latch, and a latch belongs nowhere
+near a snapshot.
+
+`conditions.manual_move` is relative to the target, exactly as
+`sun_hits_target` and `event_targets_zone` are, so one rule works in every
+room without naming entities -- and it checks the event *kind*, not only the
+blind, so it cannot start matching an arrival the day another event kind grows
+a `blind` field.
+
+**Nothing produces this event yet, and that is not an oversight.** "Not our
+own command" is not "a person did this": the house's own scripts and its
+lighting automation are not us either. Telling them apart needs a declared
+list of callers to ignore, which is a later step; wiring the detector before
+that would report every automation's movement as manual, and it would do it
+silently. `coordinator._handle_state_change` is where it will go and says so.
+
+
+## The `je_noc` condition
+
+### Why there is no "somebody is in bed" interlock
+
+One was written on 2026-09-01 and removed the same evening. Both reasons it
+was wrong are worth keeping, because the second one is the interesting one.
+
+**It was keyed on the wrong room.** The condition read
+`binary_sensor.postel_occupancy_postel_2` and the guard targeted zone
+`spalna`, the parents' room. That entity's friendly name is *"Peter postel"*:
+it is in Peter's bed, and the house has **no** bed sensor in the parents' room
+and none in Mimka's. So the guard protected one room using another room's
+evidence, and -- far worse than being useless -- it **failed open exactly when
+it mattered**, the morning Peter gets up before his parents do. An entity id
+that reads like "the bed" is not evidence of whose bed it is.
+
+**And the house already solves this, better -- and it was already written
+down.** Every bedroom has an explicit hand-over, and until it happens the room
+is `keep` by construction:
+
+| room | what hands it to the matrix |
+|---|---|
+| parents | `script."Spálňa otvorenie"` (their morning routine), `"Spálňa žalúzie otvoriť"` |
+| Mimka | `Mimka Button`, or the app via the detector below |
+| Peter | `Sleeping Peter izba` (his bed sensor) |
+| any | raising the blind **by hand** -- see below |
+
+`automation.Žalúzie - detekcia ručného zásahu` watches every bedroom blind,
+checks the movement came from a person *directly* (`context.user_id` set,
+`parent_id` unset, and none of the four bedroom scripts running), and switches
+that room's `zaluzie_aktivna_<room>` by **direction**: raising by hand hands
+the room over, lowering takes it back. `svitanie` resets all of them at dawn.
+
+That is the protection a room without a sensor can actually have, and it needs
+no sensor at all. The owner pointed at it in one sentence; it cost an evening
+to rediscover, and the lesson is the cheap one: read what the house already
+does before adding a mechanism to it.
+
+Against that, the interlock was not merely redundant. For Peter's own room it
+was **actively wrong**: raising the blind by hand is how he hands the room to
+the matrix, and a guard keyed on his bed would have blocked the matrix while he
+lay in it -- overriding the handover he had just performed.
+
+The failure that prompted it (slats to 100 while people slept, 2026-09-01) was
+a lost race, not a missing interlock: a 2 s settle window let the matrix read
+yesterday's room flags before `svitanie` reset them. The window is 8 s now,
+which is the fix. Reaching for an interlock was reaching past the cause.
+
+
+### Why the manual raise is read off the blind
+
+`kvety_rucny_override` was a helper an automation set when somebody pulled the
+flower blinds up past 45. It is now the position itself, over both kitchen
+blinds. That is not only one helper fewer -- it is the more correct of the two,
+and the measurement says so.
+
+Fourteen days of history, the blind's position at each of the helper's own
+transitions:
+
+| when | helper | position |
+|---|---|---|
+| 20.08 10:19 | on | 51 |
+| 20.08 10:20 | off | 51 |
+| 20.08 10:21 | on | **34** |
+| 20.08 18:49 | on | **29** |
+| 20.08 18:50 | off | **100** |
+| 31.08 11:49 | on | 88 |
+| 31.08 13:48 | off | **100** |
+| 01.09 08:47 | on | 96 |
+
+The flag means "somebody raised it". **Three of those eight transitions leave
+it in a state the position contradicts**, and twice it cleared while the blind
+was still at 100 -- the protection ended while the raise it was protecting was
+still in force. The cause is that it clears on *any* change of matrix mode, so
+a raise at 09:00 can be discarded by the first mode flip of the morning. A
+condition read from the position cannot disagree with the blind it describes.
+
+**Why 45 is safe as a constant.** No rule in this configuration ever sends the
+flowers above `kvety_poz`, whose live value is 34, so a position over 45 is by
+construction not this integration's doing. The dependency is real though:
+raising `input_number.kvety_pozicia_zaluzie` above 45 would make the guard fire
+on the integration's own target. The old automation carried the same unstated
+assumption; it is written down here rather than inherited silently. Comparing
+against the target instead of a constant would need conditions to read
+`values:`, which they cannot.
+
+**On watching two more covers.** `referenced_entities` now names
+`cover.kuchyna_zaluzia_1_4`/`_2_5`, so the coordinator subscribes to them and
+the integration's own movement can trigger a recompute. That is the loop
+`_directional_guard_blinds` documents at length -- and it is already accepted
+for two other blinds, which directional guards watch for exactly the same
+reason. The bound is the same one: the settle window coalesces a travelling
+blind's stream of positions, and the planner's dead band stops the recompute
+turning into a second command. What that docstring rules out is watching
+*every* cover; four named ones are not that.
+
+There is a pleasing consequence. While the blind is above 45 the guard skips
+it, so the integration never moves it down through the threshold itself -- only
+something else can, and when it does, control resumes on its own. The condition
+latches and unlatches by physics rather than by anybody remembering to clear a
+flag.
+
+
+### Why night is derived but the brake stays a helper
+
+`input_boolean.cover_down` was two unrelated things sharing one entity: the
+automation's "it is night now", and the user's own **"close everything, now"**
+— reachable by voice, and the highest-priority override in the whole matrix.
+Deriving the whole thing would have put the integration in competition with
+the person for their own emergency brake. So `je_noc` is an OR of the two: the
+sky, computed here, and the helper, which stays exactly as it was.
+
+That split is the point, and `test_the_manual_brake_still_forces_night_in_broad_daylight`
+exists to keep it: if `noc` ever starts depending on the sky alone, the user
+has lost the brake.
+
+**The two directions do not use the same sensor.** Measured over 14 days:
+the flag goes on at 19:26-19:32 — sunset to the minute, with lux still at
+2100-2400, so the sunset trigger wins the evening — and off 11-25 minutes
+*before* sunrise, on the lux threshold.
+
+The dawn offset was re-measured on 2026-09-02, and the first measurement had
+been wrong: it compared against `astral.sun.sunrise` with this location's
+**elevation** (1066 m), which is not what Home Assistant's own `sun.sun`
+reports. Against HA's values, over 15 dawns, the flag went off a median of
+**20.9 minutes** before sunrise (range 11.3-24.9), so the condition uses
+`sunrise - 21min`, not the `sunrise - 15min` the first pass produced.
+
+For *this* house the offset barely matters, because `je_noc` is an OR and
+night therefore ends at whichever of the two comes **later** — never before
+the helper does, which is what keeps the mode change from overtaking
+`svitanie`'s flag reset. It matters for a house with **no** such helper,
+where this clause is the whole answer: at `-15min` that house's dawn would
+land about six minutes later than this one's. In the dawn
+window both the set and the reset condition hold at once, so the old flag is
+genuinely history-dependent there: at dusk that same combination means night,
+at dawn it means day. No AND/OR of conditions can express "whichever fired
+most recently".
+
+What resolves it without a latch is that the reset is *predictable in time*:
+sunrise−15min reproduces it. Replaying the same 14 days:
+
+| morning boundary | disagreement | risky minutes | longest risky run |
+|---|---|---|---|
+| sunrise−10min | 0.88 % | 24 | 3 min |
+| **sunrise−15min** | **0.58 %** | **28** | **3 min** |
+| sunrise−20min | 0.37 % | 40 | 8 min |
+| sunrise−25min | 0.49 % | 84 | 13 min |
+
+−20min has the lowest total and was **not** chosen. The two error directions
+are not symmetric: saying "night" when the old flag said otherwise makes every
+zone `keep`, so nothing moves, while saying "day" too early lets the mode
+change before the house is meant to wake. Only the second can move a blind.
+−15min keeps that direction capped at three minutes; −20min lets it reach
+eight for a lower headline number.
+
+**The lux clause is absent here, and that is measured, not assumed.** Adding
+it changed the result by nothing at all (0.58 % either way), because the
+evening is decided by sunset and the morning by a threshold that
+sunrise−15min already reproduces. This is the opposite finding to `vecer`
+above, where dropping lux would have cost four overcast evenings — which is
+why each flag got its own replay rather than one conclusion applied to both.
+
+### Why the brake is gated on trusting the lux sensor
+
+`Lighting SUN` writes `input_boolean.cover_down` **from the lux sensor**
+(`cover-down` fires below 500 lx for 5 min). So a lux sensor frozen at a low
+value turns the brake on in broad daylight, `je_noc` answers `noc`, and the
+house stays shut all day with lights that never go off. The owner has lived
+through exactly that: "začali mrznúť hodnoty ... v celom dome sa mi
+neoťahovali žalúzie, nezhasínalo sa mi cez deň svetlo".
+
+**Only the brake is gated, and that is the whole design decision.** The first
+attempt inverted the condition entirely -- lux as the sole decider, the sky as
+a pure fallback, which is how the owner describes his own intent for
+`Lighting SUN` (every branch there carries a lux trigger and a sun trigger
+under one `id`, and the sun is insurance for a dead battery). That attempt was
+stopped by `test_night_is_derived_from_the_sky_not_from_the_helper`, and the
+test was right: a house with no `cover_down` helper and no lux sensor would
+then have no night at all, which is the portability this phase exists to buy.
+Trigger-OR takes the *earlier* of two triggers, so lux leads there and the sun
+really is a backup; condition-OR takes the *later*, so the same shape here
+would let the fallback override. Gating only the brake gets the failure fixed
+without trading the derivation away.
+
+Measured cost of not inverting it: the sun boundary wins the morning 3 times
+in 10 (September, 10 dawns), by at most 2.6 min. Modelled, not measured: the
+twilight lead grows from ~32 min in September to ~42 min at the solstice, so
+in summer the sun would hold night ~10 min past what the lux said. Three
+minutes today is not worth a portability regression, and the same reasoning
+kept `vecer`'s sun window primary too.
+
+### Why the check is plausibility and not liveness
+
+"Use the sun when the lux cannot answer" wants a freshness test. There is
+none to be had, and this was measured rather than assumed on 2026-09-02:
+
+- `last_changed` is useless -- the sensor legitimately holds one value for
+  **9.2 hours** (0 overnight, saturated at ~3030 by day; it is mounted
+  outdoors on the roof despite being named after the hallway door).
+- `last_reported` is useless too -- it reports **only on change**. Observed
+  live: 22 minutes without advancing, on a healthy sensor.
+- `sensor.predsien_dvere_senzor_last_seen` reads **7 August**. It is itself
+  frozen, so the device offers no heartbeat.
+- `unavailable`/`unknown` happens **57 times in 14 days**, in bursts of ~12 s,
+  so that state alone would flap the fallback in and out.
+
+What works is a contradiction with the sun's own height. `sun.sun` carries
+`elevation` and `numeric_state` takes `attribute:`, so this is configuration
+rather than code -- and elevation is *seasonally self-correcting*, unlike a
+time offset that has to be recalibrated. Cross-checking against another lux
+sensor is deliberately not an option: the owner's instruction is that this one
+is the only accurate one of the dozen in the house.
+
+Thresholds measured over 14 days of history, with **zero false positives**:
+
+| when | samples | worst reading | threshold | margin |
+|---|---|---|---|---|
+| sun above +10 deg (clear day) | 298 | lux **2872** | below 500 | 2372 lx |
+| sun below -10 deg (clear night) | 85 | lux **50** | above 2800 | 2750 lx |
+
+Any freeze is caught within half a day: stuck low shows up by day, stuck high
+shows up at night. A freeze at a mid value escapes both, and the thresholds
+stay that loose on purpose -- the data is from late summer, and a winter noon
+could read far below 2872.
+
+`vecer` gets the same gate for the opposite reason. Its OR takes the *earlier*
+of the two, so a lux frozen low would make it dusk every day from 12:30 and
+the sun could not rescue it; behind the gate, the sun window alone decides.
+On healthy data that changes nothing, which is what makes it deployable
+without waiting for an evening to watch.
+
+## The `vecer` condition
+
+### Why `vecer` reads the sky, and what the gate stops proving
+
+`vecer` used to read `input_boolean.lighting_on`, a helper written by the
+house's `Lighting SUN` automation. That is the single largest reason this
+integration could not be installed anywhere else: the flag is not something
+the integration computes, it is something another automation has to exist to
+feed it. It now derives the same fact itself, from `condition: sun` OR a lux
+threshold -- the same two mechanisms the automation used, in the same
+first-to-fire arrangement.
+
+**The dark window is one stateless condition, not a latch.** This is why
+`condition: sun`'s odd OR case matters: `before: sunrise` with `after: sunset`
+turns on at sunset−20min, is held across midnight by the `before` half, and
+turns off at sunrise+10min. No memory, no debounce, nothing to persist, and
+nothing a restart can lose.
+
+A latch was designed first and rejected on measurement. Replaying 14 days of
+history minute by minute against the helper's real state (20 159 minutes):
+
+| | disagreement | runs |
+|---|---|---|
+| stateless condition | **0.35 %** (68 min) | 20, all ≤ 12 min |
+| latch + hysteresis + `for: 5 min` | 0.18 % (34 min) | 6 |
+
+34 minutes per fortnight does not buy a new config section, a stateful pure
+module, and a set of restart-persistence decisions. All 20 disagreements are
+in one direction -- on up to five minutes early, which is exactly the missing
+`for: 5 min` -- and `vecer` only ever makes a zone `keep`, so arriving early
+means the matrix stops managing two zones a few minutes sooner while the
+automation that takes them over is already running. The consequence is
+inaction, not movement.
+
+**The stronger argument is self-healing.** On 18 Aug the helper's transitions
+were `11:00 -> off` and then nothing until `19:31` the following day: the flag
+never turned on that evening and the matrix did not know it was dusk all
+night. A latch shares that single point of failure with the helper -- both
+need an automation to fire, and neither notices when it does not. A condition
+re-derived from scratch on every evaluation cannot fail that way. It is the
+same reasoning `deferrals.py` documents at length: a derived fact, not an
+in-flight execution.
+
+**What the migration gate stops proving.** The gate renders the live Jinja
+matrix, which still reads the helper, so an engine that no longer reads it
+would differ by construction -- not by accident. Rather than exempting
+scenarios, `tests/parity/mapping.py` translates the scenario's `lighting_on`
+axis into `World.sun`: the axis still means "it is dusk", it just reaches the
+engine the way the engine now asks for it. All 92 160 scenarios still run and
+still have to match, so everything the gate ever proved about the *decision*
+it still proves. What it no longer covers is the *derivation* of dusk, whose
+evidence is the replay above. Coverage that quietly lapses is worse than
+coverage deliberately narrowed and written down.
+
+## `conditions.py`
+
+### Why `condition: state` takes `for:`
+
+Home Assistant's conditions have no `for:` -- only its triggers do, which is
+a documented pitfall of the YAML this dialect otherwise mirrors. This one has
+it anyway, because for some flags the debounce *is* the flag.
+
+`vstali` ("everyone is up") was read off a helper that
+`automation.Sleeping` derived from `binary_sensor.postel_occupancy_postel_2`
+after a two-minute `for:`. Reading the sensor directly retires the helper, but
+naively it would also retire the debounce -- and measured over 14 days that
+sensor produced 20 episodes shorter than two minutes, 16 of them brief
+"off"s. `vstali` gates exactly one rule, the one that opens the terrace fully,
+so a thirty-second flicker would have moved that blind twice. The raw sensor
+tracks the helper to 0.25 % of minutes with every disagreement exactly two
+minutes long, which is the debounce and nothing else.
+
+`for:` is honest about what it can measure. It reads `World.since`, filled
+from `state.last_changed` -- deliberately not `last_updated`, so an
+attribute-only write cannot restart a countdown that is about how long the
+*state* has held. That makes it exact for a binary sensor and it is why the
+same trick is not offered for `numeric_state`: a reading moving 2790 -> 2780
+restarts `last_changed` while never leaving the threshold, so a threshold
+`for:` would silently under-report and the honest implementation of that is a
+latch with its own memory.
+
+**A missing `since` entry ignores `for:` rather than failing the condition.**
+Absence of timing information should not change what a condition means, and
+answering `False` instead would silently disable every rule behind a `for:`
+the moment that fill regressed. `ha_world` fills `since` for every entity it
+snapshots, pinned by its own test, so the fallback never runs in a live house
+-- it exists for hand-built test worlds and for the migration gate, which
+varies what the house looks like and never how long it has looked that way.
+
+
+### Why `condition: sun` takes seconds and skips the polar rollover
+
+The flag this is groundwork for is set by whichever of two triggers fires
+first: a lux threshold held for five minutes, or a sun event. Measured on the
+live house over 14 days of history, both genuinely win:
+
+| | lux first | sun first |
+|---|---|---|
+| dusk (on) | 4 of 13 | 9 of 13 |
+| dawn (off) | 11 of 14, to the minute | 3 of 14 |
+
+The lux branch is what makes dusk sensitive to weather -- on two overcast
+evenings it fired 14 and 23 minutes ahead of sunset-20min -- and astronomy
+cannot do that. The sun branch, added as a fallback for a flat sensor
+battery, carries most clear evenings on its own.
+
+So this condition is one of two halves, not a replacement for both. It earns
+its own condition type by being the half that needs no house-specific entity:
+a foreign install with no lux sensor still gets a working dark window from it,
+just one that no longer adapts to cloud cover -- a documented degradation,
+not an equivalent.
+
+An earlier revision of this section claimed the lux threshold decided nothing
+and astronomy alone sufficed. That was wrong twice over, and both mistakes are
+worth naming because neither is specific to this project. The check asked
+whether lux ever fell below its threshold *during daylight hours*, where of
+course it never does -- the threshold does its work at dusk. And the
+supporting evidence was that the transitions drift ~1.9 min/day in step with
+the sun, which *both* hypotheses predict: daylight follows the sun, so a
+daylight threshold crossing drifts identically. When two competing
+explanations predict the same measurement, the measurement is evidence for
+neither. The question that discriminates is which condition was satisfied
+**first**, and that needs both timelines reconstructed rather than one value
+sampled at the moment of the transition.
+
+**Astronomy stays in `ha_world`.** `get_astral_event_date` needs `hass`, and
+`conditions.py` is on `tests/test_purity.py`'s list precisely so the decision
+model can be tested as plain Python. So the seam resolves today's sunrise and
+sunset to naive local datetimes -- the shape `World.now` already is -- and
+this condition is pure datetime arithmetic over them. A test can therefore
+state any sun of any latitude without building a `hass`.
+
+**Offsets are seconds**, not HA's `"-00:20:00"` string, because every other
+duration in this schema (`max_wait`, a guard's `for`) is already seconds, and
+one dialect is worth more than literal copy-paste from HA's YAML.
+
+Two behaviours are HA's, kept deliberately even though they look wrong:
+
+- **`before` includes its boundary** (`now > sunrise + offset` is what fails
+  the condition, so *at* sunrise it still passes), asymmetric with
+  `condition: time`, where `before` excludes it. These bodies get copied out
+  of HA's UI, so matching HA beats matching our own other condition.
+- **`before: sunrise` with `after: sunset` is an OR**, not the usual AND of
+  two bounds. Read as an AND it would be empty every day of the year; it
+  names the dark window around midnight.
+
+Both are pinned by `tests/ha/test_sun_condition_parity.py`, which runs this
+implementation and HA's own `components.sun.condition.sun` over the same grid
+of times, offsets and shapes and requires every answer to match. Differential
+rather than a restatement of my reading of HA's code, because the port *is* a
+reading of someone else's code. Verified by mutation: flipping the boundary to
+`>=` fails it, and turning the OR into an AND fails 13 cases.
+
+**Not ported:** HA's rollover to tomorrow's event when
+`today > as_local(sunrise).date()`. It guards a polar/timezone case where a
+same-day astral computation resolves to an earlier date, and reproducing it
+purely would mean handing the engine tomorrow's times too, plus the
+condition's own knowledge of which event it asked about. A missing event
+already answers `False`, so a polar install degrades to "this condition is
+never satisfied" rather than to a wrong answer.
+
+### Why `_ref_chain` must be threaded through every recursive call
+
+`_ref_chain` is private: it tracks the names of `ref` conditions currently
+being resolved, so a `ref` cycle raises a clear error instead of recursing
+until Python's stack limit. Every recursive call in `evaluate_condition` must
+thread it through, or the cycle guard silently stops working for that branch.
+
+### Why `numeric_state` requires an explicit `default`
+
+`default` mirrors Jinja's `| float(999)` fallback. A dead sensor must fall on
+the safe side, and which side that is depends on the rule -- so the default
+is always explicit in the config, never implied.
+
+### Why the sun sector is half-open `[facade-tolerance, facade+tolerance)`
+
+The template being replaced used `az >= 45 and az < 135`, and the scenario
+axis contains 45/135/225/315 on purpose, so an inclusive upper bound breaks
+parity on exactly those points.
+
+### Why autoescape stays off
+
+CodeQL's `py/jinja2/autoescape-false` is a false positive here: that rule
+assumes the output reaches a browser. This environment renders one thing
+only -- a boolean guard from the operator's own configuration -- and the
+result is compared against a fixed set of truthy strings and discarded. No
+HTML is produced, nothing is served, and the template author is the system
+operator, so there is no privilege boundary to cross. Escaping would only
+alter `<`, `>` and `&`, which a boolean expression does not contain.
+
+### Why a broken template raises instead of evaluating False
+
+StrictUndefined is deliberate: an undefined name must raise rather than
+render empty, because an empty render would read as False, and False here
+can mean "leave the house open during a heatwave". A broken user template
+must not silently evaluate to False for the same reason -- "false" can mean
+"leave the house open during a heatwave". This must never be wrapped in a
+`try`/`except`: a future change that swallows the error would fail silently
+in exactly the situation the strictness exists to catch.
+
+### Why the wrap-around time window is an OR, not an AND
+
+For a same-day window (e.g. 08:00-18:00), `after <= now < before` is correct.
+For a wrap-around window (e.g. 22:00-06:00), `after` is later in the clock
+than `before`, so the intended window crosses midnight. ANDing the two
+one-sided checks (as a naive port of the native HA schema would) is wrong
+here -- it always yields an empty set, since no time is both >= 22:00 and <
+06:00 on the same clock face. The window is everything from `after` to
+midnight PLUS everything from midnight to `before`, i.e. an OR of the two
+checks.
+
+## `config_schema.py`
+
+### Why a mode or zone id must not contain a dot
+
+`engine.evaluate` builds a rule key as `f"{mode}.{zone}"`, joining the two
+with a plain string concatenation; `validation._check_rule_keys` recovers
+them with `key.partition(".")`, which always splits on the FIRST dot. If
+either id itself contains a dot, that join is not reversible: e.g. mode
+"a.b" + zone "c" and mode "a" + zone "b.c" both produce the identical key
+"a.b.c", so a rules entry meant for one pair silently applies to the other --
+and `_check_rule_keys` accepts it, because splitting on the first dot happens
+to name two ids that both exist. Rejecting the dot at parse time is cheaper
+than making the join unambiguous.
+
+### Why `load_config_file` stays blocking and the caller owns the executor hop
+
+Home Assistant's `block_async_io` caught this integration reading its own
+configuration on the event loop: two `Detected blocking call` warnings on every
+start, for `read_text` and for the `open` beneath it, both naming
+`fixtures/dom_peter.yaml`. The obvious repair -- make `load_config_file` async
+and hop internally -- is the wrong one, and for the reason the whole project is
+built around: this module has no `homeassistant` import, `tests/test_purity.py`
+enforces that, and the executor lives on `hass`. Taking `hass` here to fix a
+warning would trade the property that lets the decision model be tested as
+plain Python for a matter of convenience.
+
+So the split follows ownership: the pure side stays blocking and says so, and
+every event-loop caller wraps it in `hass.async_add_executor_job`. The same
+holds for `conformance.repo_fixture_path` and `repo_example_config_path`, which
+look free but each `stat` the filesystem -- HA counts those too, and being one
+syscall rather than a read makes them easier to miss, not cheaper.
+
+One consequence worth naming: `__init__._read_repo_fixture` deliberately
+bundles the `stat` and the read into a *single* executor hop instead of two.
+They concern one file and one question ("does this checkout ship a fixture, and
+what is in it"), and two hops would let the file change between them -- a race
+that buys nothing.
+
+The regression test guards the *calling thread*, not a call count:
+`Path.read_text`, `Path.is_file` and `builtins.open` record any invocation that
+reaches them on the thread awaiting setup. It is scoped to paths inside this
+checkout, because `builtins.open` is patched process-wide while the guard is
+armed and Home Assistant does plenty of legitimate loop I/O of its own -- an
+unscoped guard would fail for reasons that have nothing to do with this
+integration.
+
+### Why condition bodies are exempt from strict key checking
+
+`_check_keys` is only ever called on structures this module owns the schema
+of: blind, zone, mode, rule, value, action and guard entries, plus the top
+level. It is never called on a condition body (native HA condition schema,
+not ours). `guards` was exempt too for as long as there was no guard schema
+to check against; it is now checked like everything else this module owns,
+because a mistyped key in a safety interlock is the one place a silently
+ignored line is least affordable.
+
+### Why a `!ref` default is range-checked exactly like a literal
+
+A `default` is a config-time constant exactly like a literal action axis, so
+it must pass the same 0..100 range check `_parse_axis` applies to literals --
+otherwise `position: !ref` with an out-of-range fallback validates clean
+while the same value written literally as `position: 250` would raise. This
+cannot affect parity: parity depends on the helper's runtime value, never on
+the fallback used when it is missing or unparsable.
+
+## The `guards:` schema
+
+Spread over four modules by design -- the vocabularies in `const.py`, the
+`Guard` type in `model.py`, parsing and dumping in `config_schema.py`,
+every semantic check in `validation.py` -- so each of the sections below is
+pointed at from whichever of them the decision actually shows up in. The
+whole schema exists because the house being migrated re-implements one rule
+("do not drive a door blind down onto an open door or a running sauna")
+**seven** independent times, with conditions and timeouts that no longer
+agree; the smallest change to it is currently a sevenfold task, and one of
+the seven has already been missed once.
+
+### Why a guard's `when` is the ordinary condition dialect
+
+`conditions.py` and the `COND_*` types already express states, numeric
+thresholds, time, the sun and a target-relative azimuth -- everything the
+thirteen real interlocks key on. A second condition language living inside
+guards would give one idea two owners, and two owners of the same idea in
+this codebase have already diverged once silently (`config_store`'s rule
+grouping). So a guard is a condition, a policy and a target, and nothing
+more; `!ref` works in a guard's `when` exactly as it does in a mode's `when`
+or a rule's `if`, and `validation._condition_sites` yields guard bodies to
+the same two checks every other condition slot goes through rather than to
+guard-specific copies of them.
+
+### Why direction is a guard field and not a `skip_close` policy
+
+Nine of the house's thirteen interlocks block *closing* only: raising a
+blind is never the hazard. That could be modelled as two policies (`skip`
+and `skip_close`), and then every policy added later would face the same
+fork and double too. One `skip` plus an `applies_to` field does not.
+
+`closing` is a **decreasing position**, not the slats. For a blind with
+slats, "closing it" in ordinary speech is two-dimensional, and reading it
+that way here would make those nine guards start refusing tilt commands they
+have always allowed. The intent behind every one of them is unambiguous --
+do not drive it down onto an open door -- so the axis is the position axis.
+
+### Why `defer` states both `max_wait` and `on_timeout`
+
+The house contains both variants, and they do **opposite** things: two
+three-hour waits with `continue_on_timeout: false` (abandon the rest of the
+sequence) and 90-second waits with `true` (do it anyway). A default for
+`on_timeout` would silently pick one of two opposites, so there is none.
+
+`max_wait: null` -- wait indefinitely -- is a legitimate value, not a missing
+one: two of the five defers in the house wait without a limit on purpose.
+That is why absence has its own spelling (`model.UNSET`) rather than being
+folded into `None`; without the distinction, `validation` could not tell a
+guard that deliberately waits forever from one whose author never said.
+
+### Why restart resilience is a guard field, not a second automation
+
+`wait_for_trigger` does not survive a Home Assistant restart. Of the five
+deferred waits in the house, exactly one has a watchdog automation paired
+with it, and the second one (the bedroom's) had to be built by hand on
+2026-08-29 after the gap was found -- the incident it protects against had
+already happened to the living room a fortnight earlier. When remembering to
+pair two objects is a human's job, one day it will not be done.
+
+So `recheck_every` is a field on the guard, filled in by the parser for
+every `defer` whether its author wrote one or not (`const.GUARD_DEFAULT_
+RECHECK`, 900 s -- the interval the house's one working watchdog actually
+runs at). A runner reads `guard.recheck_every`; it never has to derive the
+interval or invent a fallback, and there is nothing to forget to write.
+
+### Why guards are ordered, first match wins, with no priorities
+
+The inventory records a real, unrefereed collision: the holiday-disarm branch
+can force the terrace blind open at exactly the moment wind protection is
+force-closing it, or while the sauna guard sits in its three-hour wait on the
+same blind. None of those automations checks whether the others are running,
+so which one wins depends on the order the events happened to arrive in.
+
+Order in the list decides, first match wins -- the same semantics rules
+already have, so there is one fewer concept to learn and one fewer way to
+express the same intent. Numeric priorities were rejected for the usual
+reason: they are a second, global ordering that nobody can keep consistent
+once there are more than a handful, and they make "what actually runs first"
+unanswerable without collecting every guard in the house first.
+
+The cost is that a guard written after an unconditional one covering the same
+blinds is dead, silently -- and unlike a dead rule, a dead interlock looks
+present right up until the day it was needed. `validation._check_guard_
+reachability` is what answers for that, the exact counterpart of
+`_check_unreachable_within` for rules.
+
+### Why a guard has a `stage`
+
+Two of the house's interlocks do not override a decided action at all: the
+flower-blind keeper and `script.zaluzie_zavriet`/`otvorit` drop a target from
+the list *before* the decision is made (`zony_kvety`, `chranene`/`na_dole`/
+`na_hore`). A schema modelling a guard only as "inspect the answer and
+override it" cannot express either of them, and they would vanish from the
+rewrite without anyone noticing -- which is precisely how an inventory of
+thirteen turns into an implementation of eleven.
+
+`stage: input` is that shape: the target is removed and no decision is made
+for it. `stage: output` is the other. They are separate moments, which is
+also why `_check_guard_reachability` never lets a guard at one stage shadow
+a guard at the other, however broadly the first is written.
+
+## `guards.py`
+
+The schema above says what a guard *is*; this section is what evaluating one
+had to decide, and every one of these is a place a later reader would
+otherwise "simplify" in the wrong direction.
+
+### Why the stage is two entry points and never a parameter
+
+`screen(config, world)` runs the `input` guards; `review(config, world,
+decision, positions, screening)` runs the `output` ones. The stage is not an
+argument to either, and cannot be: `screen` has no `Decision` parameter to
+pass one through, because at that moment there is none. `review` in turn
+*requires* the `Screening` — the only thing that can produce one is `screen`,
+so "input stage first" is a fact about the signature rather than a sentence in
+a docstring, and a blind an input guard already claimed cannot be judged a
+second time because `review` is holding the record that it was.
+
+The alternative — one entry point taking `stage=` — is one keyword away from
+running the interlocks that drop a target at the moment the target has already
+been decided for, which is not an error any test would obviously catch: the
+result would still be a plausible action for every blind.
+
+### Why an `input` guard may not name a direction
+
+An `input` guard removes its target *before* anything has been decided for it.
+There is therefore no candidate command, and `applies_to` — which is a
+statement about a command — has nothing to be about. Both ways of guessing are
+bad, and in opposite directions:
+
+- honour it as `any` and the guard drops the blind from decisions its author
+  never meant to touch. That is the same harm `const.GUARD_CLOSING` warns
+  about (nine of the house's interlocks refusing commands they have always
+  allowed), reached through the stage rather than the axis;
+- ignore the guard at that stage and a safety interlock silently does nothing
+  — the failure this whole schema exists to end.
+
+So it is a configuration error: `validation`'s `guard_input_direction`
+(`ERROR`), and `guards.GuardError` if one reaches evaluation anyway. The
+house's real input-stage interlocks (the flower keeper's `zony_kvety`, the
+bedroom routing in `zaluzie_zavriet`) are all direction-agnostic, so nothing
+real is lost. The house's *directional* door filters — `zavriet_bezpecne` and
+friends — read the decided command and belong at the output stage, which is
+also where they are written today, inside the executor.
+
+### Why an unreadable position makes a directional guard fire
+
+Deciding "would this decrease the position" needs to know where the blind is.
+When the caller cannot say (no entry in `positions`, or an explicit `None` for
+an `unavailable` cover), the guard fires.
+
+This is the opposite polarity to `planner.plan`, where an unknown current
+position means "send the command anyway", and deliberately so: the planner is
+deciding whether an action is worth performing, and refusing to act on a
+missing reading is the worse of its two mistakes. A guard is deciding whether
+an action is *safe*, and an interlock switched off by a dead sensor is exactly
+the hazard it was installed against — the house has the case on file: every
+one of its door interlocks asks `is_state('binary_sensor.…_dvere_senzor',
+'on')`, so an `unavailable` door sensor is not "open" and the blind comes
+down onto whatever the door is doing. `fixtures/dom_peter.yaml`'s guards
+therefore ask the opposite question ("is it *closed*?"), which is the one
+place they deliberately differ from the config they were transcribed from.
+
+Not every sensor in that house has this polarity, and the difference is worth
+knowing before writing a guard against one: `binary_sensor.sauna_running` is
+a template helper that is **fail-closed** by construction — both its sources
+(`sensor.isauna_mode_2`, `sensor.isauna_temperature_2`) dying reads as `on` —
+so a guard may test its state directly and needs nothing behind it.
+
+### Why a guard that fires governs the whole action, not half of it
+
+Direction *selects* whether the guard has anything to say. Once it does, a
+`skip` suppresses the entire `Action`, tilt axis included, rather than
+blocking the position and letting the slats through.
+
+Letting the tilt half survive would send the slats to a blind still standing
+where it was — the "lamely sa stratia" failure the house's own scripts already
+work around by waiting for arrival before tilting (`planner.py`'s
+`WaitForPosition`/`Settle` pair exists for it). A half-applied safety decision
+is also not a thing anyone can reason about later from a trace.
+
+`planner.DEAD_BAND` is likewise not consulted when judging the direction. A
+guard judges what a command *means*; the planner judges whether it is worth
+sending. Blocking a command the planner would have skipped anyway costs
+nothing, while a guard that stopped protecting inside the dead band would be a
+silent hole exactly where the two layers meet.
+
+### Why `Deferral` carries the deadline instead of `guards.py` waiting
+
+`guards.py` is pure and has no clock, so a `defer` cannot be executed here at
+all — but "cannot wait" is not the same as "cannot say what the wait is". The
+`Deferral` a deferred outcome carries names the guard, its `max_wait` (with
+`None` meaning indefinitely, a value and not an omission), its `on_timeout`,
+its `recheck_every`, and `held`: the action that "proceed" would perform.
+
+`held` is `None` for an input-stage defer, and that is the whole difference
+between the two stages once a wait is over. At the output stage a decision was
+made and held back, so proceeding means performing it. At the input stage no
+decision was ever made, so proceeding means asking the engine again — with
+whatever the world looks like by then, which three hours later is the right
+answer anyway.
+
+Without those fields on the outcome, `runner.py` would have to re-derive which
+guard deferred and re-read its configuration to find out how long for. That is
+the same "the explanation must travel with the answer" rule `Decision.trace`
+and `Problem.owners` already follow.
+
+### Why an unhonourable guard stops everything, loudly
+
+`_check_honourable` walks every guard — both stages, whether or not it would
+fire in this world — before either entry point does anything, and raises
+`GuardError` on an unknown policy, an unknown stage or direction, a `force`
+with no `then`, a `defer` missing `max_wait` or `on_timeout`, or the
+`input`+direction pair above.
+
+Every one of those is also an `ERROR` from `validate()`, so a configuration
+reaching this point failing one has skipped validation entirely — the same
+contract `planner.plan` has with an unresolved `Ref`. Checking all of them
+up front, rather than at the moment a guard would have fired, is deliberate:
+a check that only trips on some worlds is a check that ships broken and
+surfaces on the day the guard was needed.
+
+The tempting alternative — skip the broken guard and carry on — reproduces
+verbatim the defect the inventory found in the house: a `continue_on_timeout:
+true` with no `timeout` key, a line that looks like it bounds a wait and does
+nothing at all.
+
+### One owner, again
+
+Three things `guards.py` needs already existed, and all three are shared
+rather than re-written: `engine.resolve_action` (so a `force` guard's `!ref`
+resolves with the same truncation a rule's does), `engine.resolve_ownership`
+(so the `Target` a guard's `when` sees is built from the same blind→zone map
+the engine decides with), and `guards.guard_blinds`, which
+`validation._check_guard_reachability` now reads instead of its own copy — a
+static answer and a runtime answer to "which blinds does this guard cover"
+that could disagree is precisely the drift `MODELS.md` §9 records happening
+once already.
+
+## `engine.py`
+
+### Why `EngineError` must propagate uncontained out of `_evaluate_zone`
+
+`_evaluate_zone` decides every blind in one zone, contained: a broken rule
+anywhere in this zone must not lose the decision for every other zone's
+blinds. `EngineError` is deliberately let through uncontained -- both the one
+raised inside the loop (a zone naming a blind the config does not have) and
+any raised earlier by mode resolution or the ownership check before this
+function is ever called. Those mean there is no valid decision to make at
+all, not that one zone's rules misbehaved, so masking them as keep/keep would
+hide a config that cannot be evaluated behind a decision that looks normal.
+Only a failure from evaluating this zone's *rules* -- everything that is not
+an `EngineError` -- is contained here.
+
+### Why the `#none` trace label is ambiguous on purpose
+
+The trace label `#none` is deliberately ambiguous between two causes: no
+rules were configured at all for this (mode, zone) key, and rules were
+configured but none of them matched this blind. Both end in "keep, keep" and
+both are represented the same way. Debugging a `#none` means checking for
+either cause -- first whether `mode.zone` exists in `config.rules` at all,
+then, if it does, why every rule in it fell through.
+
+### Why `_resolve_value` truncates instead of rounding
+
+This reasoning previously lived only in `tests/test_engine.py`
+(`test_ref_truncates_toward_zero_like_jinjas_int_filter`), not in the
+production module. Parity-critical: the Jinja template this engine replaces
+uses `| int(34)`, which truncates toward zero, not `round()`. 50.7 must
+resolve to 50. This must NOT be "improved" to rounding -- that would silently
+break parity against the live system across a whole scenario class.
+
+The durable reason, beyond parity: cover positions are coarse, and truncation
+is the conservative direction for a closing blind.
+
+### Why the engine does not clamp resolved values to 0..100
+
+This reasoning previously lived only in `tests/test_engine.py`
+(`test_ref_value_above_100_passes_through_unclamped`,
+`test_ref_negative_value_passes_through_unclamped`) and
+`tests/test_properties.py` (`test_action_axes_are_always_an_int_or_keep`),
+not in the production module. Deliberate: the engine does not clamp
+out-of-range helper values, because the template being replaced does not
+clamp either -- clamping here would itself break parity. Clamping belongs in
+the execution layer that issues the hardware call, where it is a safety
+concern, not a decision-fidelity one. Helpers really do drift outside their
+intended range (see the root `CLAUDE.md` on `float(8)` defaults vs. actual
+helper state after a restart), so this is pinning real behaviour, not a
+hypothetical. The only honest guarantee at this layer is "KEEP or an int".
+
+Note this is a different decision from `config_schema._parse_axis`, which
+*does* range-check a literal or a `!ref` default at config-parse time (see
+"Why a `!ref` default is range-checked exactly like a literal" above) --
+config-time constants are checked because they are the config author's
+mistake to catch early; a helper's live runtime value is not, and parity
+depends on it flowing through unchanged.
+
+### Why the fixture path is an option
+
+`conformance._REPO_FIXTURE` derives the fixture location from
+`Path(__file__).resolve().parents[2]`, and its own comment explains why that
+worked: `/config/custom_components/cover_logic` was a **symlink** into the
+checkout, so `resolve()` landed inside it and `parents[2]` was the repo root.
+
+Phase 7.1 replaced the symlink with a deploy script that copies. From that day
+the derived path was `/config/fixtures/dom_peter.yaml`, which does not exist,
+so `repo_fixture_path()` returned `None` and the drift check became a silent
+no-op **on the one house it was written for**. The house's own notes recorded
+the fact ("po zrušení symlinku už v dome nebeží") without treating it as a
+defect to fix.
+
+Measured 2026-09-03, and the cost was concrete. A deployment restarted Home
+Assistant with new `.py` files but never imported the fixture, so `.storage`
+kept 86 rules where the fixture had 90 -- the four missing ones being exactly
+the `vecer` rows that make six blinds close at dusk. Every check available was
+green: `matica_diff: []`, no errors, no repair issues. This is the check whose
+whole job is to notice that, and it was switched off.
+
+So the path is an entry option: set it, and the check compares against the
+fixture that actually exists; leave it empty, and the derived path applies as
+before. A house with no fixture at all stays silent, which is what the
+"universal integration" goal requires -- most installations have nothing to
+drift from.
+
+An empty string clears the option rather than being stored, since a stored
+`""` would read as a setting and behave as its absence. A configured path is
+handed on **without** an existence check, unlike the derived one:
+`_read_repo_fixture` calls `load_config_file` next and turns its `OSError`
+into "no reference", so checking here would be a second answer to a question
+one layer already answers. That redundancy was in the first version of this
+change and mutation testing found it -- removing the check changed no
+observable behaviour.
+
+### Why every warning becomes one repair issue
+
+`validate()` has seven WARNING codes and, until 2026-09-03, all seven existed
+only as a log line at setup. Every one of them means something is quietly not
+being decided: a zone with no rules, a rule shadowed by an earlier one, a guard
+that can never fire, a blind no zone claims, tilt asked of a blind that has
+none.
+
+That is the same class of fault that cost the owner's house nine blinds on
+2026-09-02 -- not because nobody had written the check, but because its output
+went somewhere nobody reads. A warning nobody sees is indistinguishable from a
+warning nobody wrote.
+
+**One issue for all of them rather than one per code.** Seven checks each with
+its own issue, translation and pair of tests is a lot of surface for what is a
+list of strings, and the codes are not independent: a single mis-ordered rule
+list produces several at once, and reading them together is what makes it
+obvious they are one mistake rather than five. `blinds_without_zone` was such a
+per-code issue for a few hours and is folded into this one.
+
+The list is filtered by severity even though everything reaching that function
+is already a warning -- the caller raises on errors first. Relying on that is
+the kind of implicit contract that survives one refactor and not two, and
+putting an error into an issue titled "warnings" would say "this is only a
+warning" about a fault that refused setup.
+
+### Why an orphan blind is skipped rather than fatal
+
+`resolve_ownership` used to raise on a blind no zone claims, on the argument
+written in its own docstring: "a blind nobody decides is a blind nobody moves,
+silently, far from this check". The argument was right about the hazard and
+wrong about the remedy.
+
+Measured by installing this on a clean Home Assistant, 2026-09-03. Adding a
+blind through the UI and not putting it in a zone sent the whole config entry
+to `setup_retry`: `sensor.cover_logic_mode` went `unavailable` and **every
+other blind stopped being decided** because one was incomplete. In an occupied
+house that is a worse outcome than the one the raise was preventing -- one
+blind that does not move versus a house that stops working.
+
+**This project had already answered the same question the other way, in
+writing.** `readiness.py`: "the decision is still made, still published and
+still visible on the diagnostic sensor, because a diagnostic that goes blank
+when something is wrong is the opposite of useful." The inconsistency was not a
+matter of taste -- when `resolve_ownership` was written there was no way to be
+loud without being fatal. Since the installation diagnostics there is, so the
+loudness moved to `__init__._check_orphan_blinds` and the orphan is skipped.
+
+Three places now carry what one exception used to:
+
+- `engine.resolve_ownership` skips it, so the blind is absent from `targets`
+  -- visible on the sensor a person is already looking at.
+- `validation`'s `blind_without_zone` reports it as a WARNING, logged at setup.
+- a repair issue names it in Settings -> Repairs until it is fixed.
+
+**Two owners stayed fatal, and the asymmetry is the point.** "No owner" has an
+answer: skip it. "Two owners" does not -- whose rules apply is unanswerable, and
+guessing would be worse than refusing.
+
+`guards.screen` skips unowned blinds for the same reason, and `Screening.
+remaining` excludes them rather than merely leaving them unclaimed: that field
+means "the output stage may still judge these", and there is no decision about
+an orphan to judge. `review` needed no change -- it iterates the decision,
+which already omits them.
+
+### Why a warning may still block one form
+
+Downgrading the severity would have lost something real: a `zone` form whose
+`members` edit drops the last zone claiming a blind is a fault that save made
+and that same save can undo, and letting it through means clicking Save to
+silently stop deciding a blind. So `_BLOCKING_WARNINGS` names the handful of
+warnings that block one specific subentry type, while `_CODE_OWNERS` still
+answers which *form* may be blocked at all.
+
+The two questions are deliberately separate. Severity answers "may this refuse
+a save"; ownership answers "could this form have fixed it". Collapsing them is
+what produced the deadlock `_CODE_OWNERS` exists to prevent -- a blind form
+being refused over a problem it has no field to address.
+
+## `validation.py`
+
+### Why `_find_cycle_from` is iterative, not recursive
+
+Iterative (an explicit stack) rather than recursive so that a long-but-legal
+reference chain is bounded by heap, not by the interpreter's frame limit -- a
+config with a few thousand chained conditions must still validate, not
+crash.
+
+`visited` marks every node whose references have been (or are being)
+explored; `on_path` is the subset of `visited` currently on the DFS path from
+`start_name`. A reference into a visited-but-not-on-path node is a legal
+cross-edge (e.g. the shared bottom of a diamond); a reference into a node
+that is on the current path is a back-edge, i.e. a cycle. Each stack frame
+pairs a node with an iterator over its outgoing references, so resuming a
+frame after a child is fully explored is a plain `next()` on that same
+iterator rather than a recursive call.
+
+### Why `_walk_condition_nodes` is the single traversal
+
+`node` is a condition body (a dict), a bare list of conditions (this
+dialect's list-as-AND shorthand), or None. It recurses into the
+`conditions:` list of an `and`/`or`/`not` combinator. This is the single
+traversal behind every check that needs to visit each condition dict in a
+config once -- the circular-ref check, the unknown-ref check, and the
+condition-shape check (issue #3) all read from it instead of each re-walking
+the tree its own way.
+
+### Why `_check_unknown_condition_refs` exists despite YAML-time checking
+
+The YAML parser only catches an unknown condition ref for refs written with
+the `!ref` tag. A hand-written literal `{condition: ref, name: ...}` dict
+passes `load_config` unchecked -- condition bodies are deliberately exempt
+from strict key checking (see `config_schema._check_keys`) -- and would
+otherwise surface as a bare unhandled `KeyError` deep inside `conditions.py`
+at evaluation time instead of a validation report.
+
+### Why `_check_condition_shape` only checks known types and required keys
+
+It checks one condition dict's own shape, not its children (the caller walks
+those separately). Only unknown types and missing *required* keys are
+reported; extra keys this dialect does not know about (`alias`, `enabled`,
+whatever Home Assistant adds next) are deliberately ignored, since condition
+bodies are native Home Assistant dicts this project does not own the full
+schema of.
+
+### Why `_check_condition_shapes` exists as a separate check
+
+`config_schema._check_keys` deliberately exempts condition bodies from strict
+key checking (they are native Home Assistant condition dicts, a schema this
+project does not own), and `_check_unknown_condition_refs` only checks ref
+*names*. Nothing else validates a condition body's shape -- so an unknown
+`condition:` value or a missing required key would otherwise pass
+`validate()` clean and only surface as a bare `ValueError` or `KeyError`
+deep inside `conditions.py` at evaluation time, far from the config that
+caused it.
+
+### Why `numeric_state` cannot take `for:`
+
+`conditions._state` honours `for:`; every other condition type accepts the key
+and ignores it, and `validation`'s `for_ignored` warns about that. The warning
+says "cannot", not "does not yet", and the distinction is the point: the
+obvious implementation is silently wrong.
+
+`for:` here is measured from `World.since`, which records **when the entity
+last changed state**. For a state that is a single value ("bed is `off`") that
+is the right clock. For a threshold it is the wrong one: a sensor that keeps
+rewriting its value resets `since` while the threshold stays crossed.
+
+Measured on the owner's roof-mounted lux sensor, the evening of 2026-09-02
+between 17:00 and 20:00: it rewrites its value **every 120 seconds, exactly**,
+and did so 22 times while below the 2800 lx threshold. So `since` never
+exceeded 120 s during a descent that lasted three quarters of an hour, and a
+`for: 300` implemented off `since` would have been false the entire time --
+while looking, in the configuration, exactly like a five-minute debounce.
+
+Doing it properly needs "when did this value last cross this threshold", which
+is per-condition state that has to survive between evaluations. `World` is a
+snapshot on purpose (see "Why `World` takes a defensive copy"), and the one
+place this project keeps between-evaluation state is `deferrals.py`, which is
+about guards and their deadlines rather than about condition history. Adding a
+second such place to debounce a threshold would be a large change for a small
+gain, and the gain is available already: debounce the trigger that writes the
+entity, or read a helper that latches the answer -- which is what
+`Lighting SUN` does with its own `for: 5 min` on the lux trigger.
+
+The live consequence is measured and small. A lux dropout at dusk flips
+`vecer` false for the length of the dropout, and the terrace would be told to
+open; the settle window (8 s) does not absorb it, since dropouts run 55-132 s.
+Over 14 days there were 33 dropouts and **none** fell in the 45 minutes before
+sunset -- they cluster in daylight hours. After sunset `vecer` is held by the
+sun window, so only the lux-led dusk of an overcast evening is exposed at all.
+
+## `planner.py`
+
+### Why the plan is a sequence with an explicit wait, not two service calls
+
+These motors (`supported_features: 191`) *ignore* a tilt command that arrives
+while the blind is still travelling down. The working sequence, in the house's
+own scripts, is `close_cover` -> wait until the blind reports arrival -> a
+short settle pause -> `close_cover_tilt`. A fixed delay is not a substitute: a
+full run takes about 55 s, so any delay short enough to be tolerable is short
+enough to land mid-travel. This shipped wrong more than once, most recently on
+2026-08-29 in the bedroom door automation, where the slats simply never ended
+up where they were meant to. That is why `WaitForPosition` is a command in its
+own right rather than a `Settle` with a bigger number: only the executor can
+know when the blind arrived, and the plan has to be able to say "here".
+
+`Settle` still exists on top of the wait because these motors report position 0
+slightly *before* they physically stop, so a tilt fired the instant the state
+arrives can still be discarded. The house's scripts wait 2 s; so does
+`SETTLE_SECONDS`.
+
+`blind.tilt_after_arrival` is what turns the wait off. A blind that does not
+need it gets `SetPosition` followed straight by `SetTilt`, with no wait
+between them -- that is the whole meaning of the flag.
+
+### Why the dead band is five points, and why the wait uses the same number
+
+Idempotence here is a safety requirement, not an optimisation. The matrix
+recomputes on every weather update, roughly every ten minutes; without a skip,
+each recompute would push commands at ten motors.
+
+Equality is not enough for that skip, because a repeated *absolute* command is
+itself a movement. The motor changes the slat angle **by moving**, so closing
+the slats shifts the reported position: the kitchen blinds drift from 34 to
+29-30 on their own, and re-sending 34 makes them visibly jump. `Lighting SUN`
+did exactly that twice in one evening on 2026-08-27, from two different
+branches, both sending `input_number.kvety_pozicia_zaluzie` verbatim.
+
+Five is the number the house's own scripts settled on rather than a round
+guess: the living-room terrace blind seats at 3%, and with a tighter band every
+run considered it "not closed yet" and drove it again (2026-08-06). The same
+five points also covers `set_cover_tilt_position: 100` landing on 99 on these
+motors.
+
+`WaitForPosition.tolerance` is deliberately the same constant. `scripts.yaml`
+spells out why in its own comment ("Prahy su ZAMERNE zhodne"): if the threshold
+that decides "close enough, do not send the command" and the threshold that
+decides "it has arrived" ever differ, a blind can be simultaneously close
+enough to be skipped and never close enough to finish.
+
+### Why a clamp is reported on the `Plan`, not on the command
+
+The engine deliberately does not clamp (see "Why the engine does not clamp
+resolved values to 0..100" above) -- clamping there would break parity with the
+Jinja template, and parity is the project's central guarantee. Clamping is
+hardware safety, not decision fidelity, so it belongs here.
+
+A clamp must be visible, though: a blind that was told -5 is a fact, not a
+detail. This module is pure and cannot log through Home Assistant, so it
+follows the precedent the pure core already sets -- `validation.Problem` and
+`Decision.trace` both return the explanation *alongside* the answer, in the
+same value, instead of writing it somewhere. `Plan.clamps` is that same shape.
+
+It is a separate field rather than an attribute of the command it belongs to
+because a clamp can outlive its command: a blind already at 100 that is told
+105 clamps to 100 and then emits nothing at all. That is precisely the case
+worth surfacing -- something in the configuration is producing an impossible
+number, and the only evidence is the clamp. Hanging it off a command would
+throw it away exactly when it matters.
+
+### Why there is no top threshold (and why there was one)
+
+For two commits this module had a `TOP_THRESHOLD = 95` and skipped the tilt
+command for any blind that would end up at or above it, on the reasoning that
+the angle is only ever set by movement, so from the fully open position the
+tilt cannot be set at all. That is a deliberate reversal, and this section is
+the reversal, not a tidy-up of it.
+
+**The hardware claim may well be true.** The house's own memory says it
+outright (`zaluzie-motor-uhol-pohybom`: "z hornej polohy sa uhol nastavit
+nedá"), and nothing here contradicts it. The problem is what follows from it.
+If it is true, then the motor is the thing that ignores the command, and the
+house has been sending that harmless no-op for years: `/config/scripts.yaml`'s
+tilt filters -- `tilt100_f`, `tilt50_f`, `zavriet_t0_f`, `zavriet_t50_f`,
+`zavriet_t100_f`, `pozicia_tilt_f` -- read `current_tilt_position` and
+*nothing else*; not one of them looks at `current_position`. And
+`zaluzie_otvorit` drives to 100, waits for arrival, and *then* sends
+`open_cover_tilt` three times over, to every target, including the blinds
+that have just reached the top. Encoding the skip here therefore does not
+reproduce the house's behaviour, it diverges from it: `Action(KEEP, 50)`
+against a blind reporting 97 made this module emit nothing while the house
+sends `set_cover_tilt_position: 50`. "Parity first, improvements later"
+(MODELS.md §9) points squarely at removing it, and the migration gate cannot
+referee the question -- it compares *decisions*, and this band lives entirely
+below them.
+
+The skip also had a cost that was not theoretical. It let a tolerance on one
+axis silently kill the command on the *other*:
+`plan(blind, 99, 100, Action(position=94, tilt=0))` returned an empty plan.
+The dead band skipped the position (|99-94| is 5, not >5), so the "where will
+it end up" position fell back to the current 99, which read as "at the top",
+which killed the tilt as collateral -- a blind nowhere near either target
+receiving no command at all, and `Plan`'s own docstring ("empty means already
+where it should be") made into a lie. Nothing corrects it afterwards:
+`config_schema.referenced_entities(fixtures/dom_peter.yaml)` contains no
+`cover.*` entity, so a blind's own state change triggers no recompute. That
+is the same failure class as an `if` in `automations.yaml` that ANDs "what
+triggered this" with "what state it is in" and thereby mutes branches that
+had nothing to do with the state.
+
+So the tilt axis is now decided by the tilt axis alone: the axis is set (not
+`KEEP`) and the reported angle is outside the dead band. What settles the
+hardware question is the live `dry_run` day, not this file -- and if it turns
+out the motor really does ignore a tilt near the top, the correct place to
+learn that is from a real blind, with the house's own no-op as the baseline.
+
+`None` on either axis is deliberately not treated as any particular value.
+The safe direction throughout the house's scripts is to send a command rather
+than silently drop it when an attribute cannot be read ("Bezpecny smer je
+prikaz radsej poslat nez ho ticho zahodit"), so an unknown current value
+means the command goes out.
+
+### Why an unresolved `Ref` raises instead of being ignored
+
+`engine._resolve_action` resolves every `Ref` before a `Decision` is built, so
+one reaching this layer means a caller skipped the engine. Resolving it here is
+impossible -- that needs a `World`, which the planner does not have and should
+never grow. Treating it as `KEEP` would turn a wiring mistake into a blind that
+silently never moves, which is the failure this project keeps finding in the
+system it replaces.
+
+It raises on *either* axis of *any* blind, including the tilt axis of a
+`has_tilt: false` one, where no tilt command could be emitted anyway. It did
+not, once: the tilt axis was simply not resolved at all for such a blind, so
+the identical mistake raised on the position axis and vanished on the tilt
+axis. A guarantee that holds or not depending on the blind's capabilities is
+not a guarantee. The two facts are deliberately kept apart in `plan()`: the
+`Ref` raises, while an out-of-range *integer* on that same unreachable axis
+stays silent (below).
+
+### Why `bool` is rejected rather than clamped
+
+`bool` is a subclass of `int`, so `max(0, min(100, True))` returns `True`
+itself -- the clamp comparison `applied != value` is then False and
+`SetPosition(entity, True)` goes out with no `Clamp` to show for it.
+`config_schema._parse_axis` already guards this at the config door, with its
+own comment about `position: true` silently becoming 1. Neither configuration
+door can produce a bool axis today, so this is not a live bug; `plan()` is a
+public function of a pure module and this hardens its own contract one layer
+closer to the motor, where the failure would be a blind at 1%.
+
+### What this module deliberately does not decide
+
+Which Home Assistant service realises a command is the runner's business, not
+the planner's, even though the house knows the mapping (position 0 is
+`close_cover`, 100 is `open_cover`, tilt 100 is `open_cover_tilt` because
+`set_cover_tilt_position: 100` lands on 99 on these motors -- documented
+2026-07-29). Keeping service names out of a pure module is what lets the whole
+sequence be tested without Home Assistant; putting them in would buy nothing,
+since `SetPosition(entity, 0)` already carries everything the choice needs.
+
+Retrying a discarded tilt (the house's scripts repeat it up to three times) is
+also not here. A retry is a reaction to what the cover did after the command
+was sent, and this module never observes anything -- it is handed a single
+snapshot and returns a sequence. That belongs to the executor.
+
+A blind with `has_tilt: false` that is nonetheless given a tilt value is
+dropped silently rather than reported -- including an out-of-range one, which
+produces no `Clamp`: `validation.py` is where a configuration mistake belongs,
+and a per-recompute report of a standing config error would be noise on every
+evaluation. (An unresolved `Ref` on that axis is not a configuration mistake
+and does still raise -- see above.)
+
+Whether a blind's `travel_time` is a usable number is likewise not decided
+here, for the same reason, even though this module is where the consequence
+lands: `travel_time: 0` yields `WaitForPosition(..., timeout=0.0)`, an arrival
+wait that expires instantly, a `Settle(2.0)` against a ~55 s run, and a tilt
+discarded mid-travel -- precisely what this module exists to prevent. That is
+a standing configuration error, so `validation._check_blinds` reports it once,
+statically, and `subentry_flow`'s own `travel_time` selector will not offer a
+non-positive value in the first place. `plan()` does not second-guess the
+number it is handed.
+
+## `coordinator.py`
+
+### Why the service call blocks
+
+`_build_runner` calls `hass.services.async_call(..., blocking=True)`. Three
+things depend on it, and none of them is style.
+
+**A sequence is an order, and `blocking=False` does not keep one.** A plan is
+`SetPosition` -> `WaitForPosition` -> `Settle` -> `SetTilt`, and every step
+after the first is only meaningful once the previous one has actually been
+handed to the cover integration. Without blocking, `async_call` returns as soon
+as the call is queued on the bus, so the arrival wait can start before the
+motor has been told to move -- and these motors discard a tilt that lands
+during travel (`planner.py`'s whole reason for existing). The wait would still
+expire eventually, so the failure is not a crash: it is a blind that ends its
+run with untouched slats, which is the 2026-08-21 incident.
+
+**`HomeAssistantError` only propagates when the call blocks.** `runner._execute`
+catches it, stops that one blind's sequence, and names every command that will
+now never be issued (`_log_abandoned`). With `blocking=False` the exception is
+raised inside Home Assistant's own task instead, that `except` clause becomes
+dead code, and a cover that refused a command looks in the log exactly like one
+that accepted it. `ServiceNotFound` is a `HomeAssistantError` too, so a
+misconfigured entity takes the same, already-tested path.
+
+**The cost is bounded by design.** Blocking makes the runner's task wait for the
+service to finish -- but there is one task per blind (`_BlindQueue`), so this
+serialises exactly what the runner already serialises deliberately, and nothing
+wider. A house-wide wait is the thing per-blind queues exist to prevent, and
+blocking here does not create one. Home Assistant's own script engine blocks on
+a service call in a sequence for the same reason.
+
+`return_response` stays at its default: a `cover.*` service returns nothing,
+and asking for a response from a service that has none is an error.
+
+### Why the settle window must outlast the house's own `for:`
+
+The settle window was two seconds because `svitanie`'s own trigger is
+`for: {seconds: 2}` and copying the house's number seemed safer than inventing
+one. It is the opposite. Two reactions to the same event with the same delay
+are not ordered by anything; they are a coin flip, decided by whichever timer
+the event loop happens to reach first. On 2026-09-01, on the live house, it
+lost:
+
+    05:34:33  input_boolean.cover_down             on -> off  (fires `svitanie`)
+    05:34:35  input_boolean.zaluzie_aktivna_spalna on -> off  (`svitanie` resets it)
+    05:34:35  cover_logic  SetTilt(100) -> cover.open_cover_tilt, both bedroom blinds
+
+The mode was `horucava`, where `spalna` rule 4 (`nie_akt_spalna ->
+{position: keep, tilt: keep}`) means "the room is in use, do not touch it". At
+the instant the window expired the room flag was still `on`, rule 4 did not
+match, and evaluation fell through to rule 5 (`pocasie_otvorene -> tilt: 100`).
+One second later the same evaluation would have moved nothing. This is the
+2026-08-31 defect again, at a longer gap: the window is not a debounce, it is
+the thing that decides *which world* the engine is asked about.
+
+**The rule, which is what actually generalises:** the settle window must be
+strictly longer than the longest `for:` on any automation that writes an entity
+this integration reads. A window equal to that `for:` is a tie; a window shorter
+than it guarantees the wrong world. Nothing about "two seconds" was ever the
+reason — the reason was "long enough to be second".
+
+Measured on the house's own writer, `automation.zaluzie_prepocet_a_uplatnenie`
+(id `1785400000001`), which is what produces every entity `fixtures/dom_peter.yaml`
+reads. Its triggers carry, by `for:`:
+
+- **2 s** — `svitanie`, `ochrana`, `alarm` (x2), `pocasie`, `slnko`, `priznak`,
+  `strana` (x4)
+- **5 s** — `kvety` (`input_number.kvety_pozicia_zaluzie`)
+- 30 s — the four `prichod-*`; 5 min — `odchod`, `postel`
+
+`const.SETTLE_MUST_OUTLAST_SECONDS` is that 5, named rather than commented so
+`tests/ha/test_settle.py` can assert the relationship instead of a future reader
+having to re-derive it.
+
+**The 30 s and 5 min triggers are deliberately not in this class, and a future
+reader must not "fix" the window up to five minutes.** What makes a `for:`
+collide is that it delays a write *about the event this integration is also
+reacting to* — the two clocks start together and can therefore tie. A trigger
+that waits 30 s for a presence flag, or 5 minutes for "everyone left", is not
+writing about the state change we are settling; its write is its own event, and
+it starts its own window when it lands. Raising the window to cover those would
+buy nothing and make every reaction in the house five minutes late.
+
+**Eight seconds, not six.** The write we must outlast lands at
+`for:` + the writing automation's own run time — a template recompute, a
+`choose`, and a service call, which on this host is comfortably under a second
+but is not zero and is not bounded by anything we control. Five plus three is a
+margin over that, not over the `for:` alone. The upper bound is what it costs
+(below), and eight seconds is far under one blind's ~55 s travel and the
+~10-minute weather recompute cadence, so nothing physical waits on it.
+
+**Thirty seconds for the cap, not ten.** The cap is measured from the *first*
+change of a burst and never moves, so a cap close to the window makes the cap —
+a fixed window from the first write — the thing that decides when evaluation
+happens, which is precisely the shape `_schedule_settle` exists to avoid. At the
+old 10 s a single restart of an 8 s window already hits it. The case the cap has
+to clear is the chained one: a write, a `for:`-delayed write behind it, and a
+full window after that — 8 + 5 + 8 = 21 s. Thirty clears it with margin.
+The original comment's "five windows" ratio would give 40; the ratio was never
+the reason, and the extra ten seconds buy no additional covered case while
+paying for themselves in deafness under a flapping sensor.
+
+**What this costs, stated plainly.** Every reaction to a state change is now up
+to 8 s later than it was, and up to 30 s while an input is flapping. The
+diagnostic sensor is blank for one window after every reload rather than two
+seconds. Against that: the alternative is a coin flip whose losing side opens
+the slats over sleeping people, which the house has now paid twice.
+
+### Why startup is no longer exempt from the settle window
+
+The settle window landed with one exemption, written into `async_setup`'s own
+docstring: "the window exists to keep a state change from being read
+mid-transition, and there is no transition at startup -- only a world that
+already is what it is."
+
+That sentence is false, and the live house proved it on 2026-08-31. Startup is
+the *largest* burst of state writes the house ever has: Home Assistant restores
+hundreds of entities over several seconds, and the world half a second into
+that restore is one that never existed. `cover_logic` was set up at 11:45:34.995
+and evaluated at 11:45:35.0xx, before a single one of the entities it reads had
+a value. Mode resolution fell through to the `bezny_den` catch-all and every one
+of the ten blinds got `SetPosition(100)`.
+
+The exemption's stated benefits were real but small, and both are now paid:
+
+- **The diagnostic sensor is unavailable for one window after every reload.**
+  `sensor.cover_logic_mode` reports `available` only once a `Decision` exists,
+  so for `EVAL_SETTLE_SECONDS` after a reload there is nothing to show. Two
+  seconds of a blank diagnostic against a house-wide movement on a world nobody
+  saw is not a close trade.
+- **A pending deferral's recheck timer is armed one window later.** This costs
+  nothing real, for the reason `deferrals.py` already states about a restart
+  resetting its elapsed seconds: every consequence of a deferral being
+  re-derived late is *later*, never sooner. A guard releases at worst one window
+  after it could have; no interlock releases early.
+
+Removing the exemption is not the fix on its own -- it makes the bad decision
+*late* rather than *unactionable*, and a restore slower than the window would
+produce the identical decision two seconds later. The fix is the readiness gate
+below. But an exemption whose justification was wrong does not get to stay on
+the strength of a justification nobody rechecked.
+
+### Why a live command logs at INFO
+
+`runner._log_fields` used to pick its level from `sequence.dry_run`: `INFO` for
+a dry run, `DEBUG` when live. The reasoning was that a dry-run day's whole
+product is those lines, while the same volume in normal operation would be
+noise.
+
+Measured on the live house on 2026-08-31: **1468 log lines, every one of them
+`cover_logic[dry_run]`, and not a single `cover_logic[live]` line** -- while
+blinds moved and the runner logged an `ERROR` for a `SetPosition` a cover
+refused. A suppressed command was visible; a real one was not. On the day this
+integration runs the house, that log is the only record of what the house was
+told to do, and it recorded everything except that.
+
+The volume argument was also simply wrong. A live sequence writes the same
+handful of lines a dry-run sequence writes -- one per command, and only when a
+command exists -- so nothing was being saved by hiding the live ones. Both are
+`INFO` now, and the `dry_run`/`live` prefix `_format_line` puts on every line is
+what tells them apart, which is what it was always for.
+
+`_log_timeout` keeps its own asymmetry (`DEBUG` in a dry run, `WARNING` live)
+and it is correct in the way this one was not: a dry run's arrival waits
+*always* expire, because nothing is moving, so at `WARNING` they would drown out
+the real ones.
+
+### Why `in_flight` only lists a sequence that has commands
+
+`runner.in_flight` exists to answer one question: **which blind is hanging, and
+on what.** Measured on the live house on 2026-09-01 it answered a different one.
+`sensor.cover_logic_mode`'s `pending.queued` listed all eight to ten blinds, on
+every read, each as `running: SCHEDULED/coordinator, step: 0/0` -- while nothing
+was moving and every sequence had finished. Two reads 45 seconds apart shared not
+one `seq` id: the entries were not stuck, they were *newborn*.
+
+The cause is when the attribute is read, not what it holds. The coordinator
+builds `pending` inside the same evaluation that has just handed ten requests to
+the runner, so `in_flight` is read while every one of those sequences is still a
+task that has been created and not yet scheduled. `_Sequence.__init__` starts
+with `Plan()` and `index = 0`, so each of them reports `0/0` and then vanishes a
+tick later. The same `0/0` is also what a genuinely empty plan reports -- a dead
+band that suppressed both axes, or `keep`/`keep` -- and that sequence dispatches
+nothing and blocks nobody either.
+
+Both of those are the same fact from the reader's side: **a sequence with no
+commands to send is not something anyone needs to see in a queue view.** So
+`in_flight` lists a running sequence only once `_run` has computed its plan
+(`_Sequence.planned`) *and* that plan has at least one command. What remains
+listed is exactly what the attribute promised: a sequence that has real commands
+and has not finished them.
+
+That is only half of it, because "is this stuck?" was never answerable from a
+membership test alone -- an entry looks identical at one second old and at three
+hours old. Every entry therefore carries its own age: `age` for the running
+sequence, from the moment it started, and `waiting_age` for the request in the
+one waiting slot, from the moment it was queued. Both are strings (`12s`) rather
+than numbers, because this view is `dict[str, dict[str, str]]` by contract and a
+single typed exception would be the more surprising shape. Both clocks are
+`time.monotonic()`: an age that can go backwards when the host's wall clock is
+corrected is worse than no age at all, and a `hass`-free stdlib clock keeps this
+module importable without Home Assistant, which its own docstring requires.
+
+One duplication was removed in passing, because it was the same defect one
+function over: `_grace_for` also read "has this planned yet?" off
+`sequence.plan.commands` being empty, and so gave a planned-but-empty sequence
+the full 30-second shutdown cap on the reasoning that it had not started. It
+asks `sequence.planned` now. The grace is a *timeout*, and a sequence with
+nothing left to send returns immediately either way.
+
+### Why evaluation has a floor
+
+Every evaluation is triggered by a referenced entity changing. Nothing was
+wrong with that until phase 7.6 made this integration the only thing that
+closes the house at night, and then one property of it started to matter: it
+makes the *convergence time of a lost command* a fact about the configuration
+rather than about the integration.
+
+The design is reconciling, not event-driven, and deliberately so.
+`planner._off_target` compares a target against the blind's **reported**
+position, and answers "command it" when that position is unreadable -- so a
+blind that was `unavailable` when the sun set, or one whose radio dropped the
+message, is commanded again by the next evaluation, and the next, until it
+reports arrival. Readiness does not withhold it either: a blind is blocked by
+the entities *its own decision reads*, and its own position is not one of them.
+So the repair mechanism was already there. What was missing was a guarantee
+that a next evaluation ever comes.
+
+Measured on the owner's house on 2026-09-02: of the 27 entities the
+configuration references, `sensor.sun_solar_azimuth` changes roughly every
+66 s. That is the only reason this house recomputes continuously -- an
+accident of it using sun shading. A configuration with no sun-position
+condition references only slow entities (helpers, a weather entity, door
+sensors) and can sit still for hours. The same code would then repair a lost
+close by morning instead of within the minute, in the one direction that
+costs a night.
+
+`RECONCILE_FLOOR_SECONDS` is the guarantee: `_reschedule` arms the timer it
+already had for deferral deadlines even when no deferral is pending. It is a
+`min` and not a fallback, so a guard's own deadline still wins -- a
+`max_wait: 30` released five minutes late because the floor was armed first
+would be this fix causing the class of bug it is fixing.
+
+Five minutes, and not tighter, because an evaluation is idempotent (the dead
+band turns "already there" into no command at all) but not free, and the
+faults it repairs are minutes-scale. It is also comfortably longer than one
+blind's ~55 s travel, so it never lands repeatedly inside a move. In the
+owner's house it changes nothing at all -- 300 s is *rarer* than the 66 s that
+already happens -- which is what made it safe to deploy on the same day the
+integration took over the night.
+
+### Why a configuration change reloads the entry
+
+`async_setup_entry` parses the `Config` **once**, and the coordinator holds
+that object for the entry's lifetime. So every writer of the configuration
+changed what a *future* setup would read and nothing about what the house was
+doing -- and nothing in this integration reloaded, so nothing ever took effect
+until a restart.
+
+Home Assistant does not close the gap either. `ConfigSubentryFlowManager.
+async_finish_flow` calls `async_add_subentry` and returns; there is no implicit
+reload anywhere on that path. So editing a rule in the UI had the identical
+defect, and that is the worse half -- the UI is the path a person actually
+uses, and it silently did nothing.
+
+**Measured on the owner's live house, 2026-09-02**, through the import path.
+An import landed seven new `noc` rule lists in `.storage`; the house went on
+running the previous ones all evening, and the first night this integration
+was meant to own closed on rules replaced hours earlier. The cost was nine
+blinds holding their slats open all night.
+
+What makes it worth fixing in code rather than writing down is that every
+available check said the deployment was done. `diff_configs` was empty, and
+correctly so: it compares `.storage` against `fixtures/dom_peter.yaml`, not
+against what is in memory. The house's own 2067-test suite was green. The one
+thing that disagreed was the diagnostic sensor's `trace`, naming the *default*
+zone (`noc.*#0`) for rules that exist per zone -- which means something only
+to someone who already suspects the answer. Same family as this project's
+other green-signal failures: a check that did not measure what it appeared to.
+
+**A listener on the entry, not a reload at each write site.** `async_add_
+subentry`/`async_update_subentry`/`async_remove_subentry` all reach
+`_async_save_and_notify`, which fires `entry.update_listeners` -- so one
+listener covers the import service, all seven subentry flows, and any writer
+added later. The first version of this fix was an `async_schedule_reload` at
+the end of `_async_import_config`; it was correct and it was a special case,
+and the UI gap above is what it would have left behind.
+
+Two things the listener has to get right, and both are why it is a class:
+
+- **An option write is not a configuration change.** `dry_run` lives in
+  `entry.options` precisely so flipping it reaches `runner.py` *without* a
+  reload (see `options_flow.py`'s docstring). The listener fires for that
+  write too, so it compares the configuration the subentries now spell
+  against the one actually running and returns when they match. A blanket
+  reload would have deleted a deliberate design.
+- **A burst has to coalesce.** `async_schedule_reload` creates a task per
+  call; it is not a debounce. An import rewrites every subentry one at a time
+  -- 141 of them in this house -- so a naive listener would ask for hundreds
+  of sequential reloads. Hence `CONFIG_RELOAD_SETTLE_SECONDS` and the same
+  restart-on-change timer shape the coordinator's settle window uses, for the
+  same underlying reason: writes arrive in bursts.
+
+A malformed intermediate config arms rather than returns. Staying stale is
+the failure being fixed, and if it is still broken when the timer fires,
+`async_setup_entry` reports it as `ConfigEntryNotReady` -- visible, which
+"kept running the old rules" was not.
+
+### Why the integration needs a clock for its own conditions
+
+Every evaluation is triggered by a referenced entity changing. `conditions.py`
+answers `state`'s `for:`, `time` and `sun` by comparing against `World.now` --
+so those three change answer at an instant that produces **no state change**,
+and therefore woke nothing up.
+
+Measured on the owner's live house, 2026-09-02. Nine of its conditions are
+time-derived, and exactly one of the boundaries they name coincides with a
+state change:
+
+| boundary | what announces it |
+|---|---|
+| `sunset` | `sun.sun` flips -- covered |
+| `sunrise - 21 min`, `sunset - 20 min`, `sunrise + 10 min`, `12:30`, bed `off for 120` | nothing |
+
+What made the house look correct anyway is the same accident the evaluation
+floor exists for: its configuration reads `sensor.sun_solar_azimuth`, which
+changes every ~66 s, so every boundary was crossed within the minute by a
+re-evaluation that had nothing to do with it. This also revises an earlier
+reading -- the 8 s between the derived `vecer` and the old helper was recorded
+as the settle window, and part of it was waiting for the azimuth to tick.
+
+`RECONCILE_FLOOR_SECONDS` bounds the error for a house with no such entity, but
+bounding it to five minutes is not the same as being on time: a house that
+should open at `sunrise - 21 min` should not open at `sunrise - 16 min`. So
+`boundaries.next_boundary` answers "how many seconds until the earliest instant
+some condition here could answer differently", and `_reschedule` arms the timer
+it already had. The floor is the guarantee; this is the precision.
+
+`_soonest` is a `min` over the deadlines that exist, and `None` means "this
+kind has nothing pending" rather than infinity -- so a `max_wait: 1` interlock
+still releases in one second with a sun boundary hours away. Getting that
+backwards would be this fix causing the class of bug it fixes, which is why
+there is a test whose only job is to take the interlock's side.
+
+**Only boundaries inside the current local day are visible.** `World.sun`
+carries today's sunrise and sunset and nothing else, so at 20:00 tomorrow's
+`sunrise - 21 min` is not knowable from the snapshot; after midnight it is, and
+it is still hours away. That is a real limit and the floor is what covers it.
+It also bit the first version of the wiring test, which used a sun boundary and
+so passed in the morning and failed at 20:21 -- the test now uses a `for:`
+boundary, whose instant the test itself sets.
+
+## `readiness.py`
+
+### Why readiness is a veto and not a wait
+
+`assess` answers "were the inputs behind this decision readable", and the
+coordinator uses the answer to withhold dispatch. It never waits, and it never
+eventually proceeds anyway. Three reasons, and the third is the one that
+settles it.
+
+**A wait needs a deadline, and there is no safe value for it.** The only two
+things a timeout can do at the end are act on the decision or abandon it.
+Acting on a decision derived from missing inputs is the defect being fixed --
+waiting two minutes first does not make it a different decision. Abandoning is
+what a veto already does, immediately, without a number nobody can justify.
+
+**This project already has a wait primitive, and it is written down per
+guard.** `guards.py`'s `defer` policy carries `max_wait`, `on_timeout` and
+`recheck_every`, chosen by whoever wrote the interlock, for exactly the cases
+where waiting is the right answer. A second, hidden wait with a hard-coded
+deadline inside the dispatcher would be the same concept implemented twice --
+with the worse ergonomics, since nobody could see it in the configuration.
+
+**Every consequence of not moving is later, never sooner.** The same argument
+`deferrals.py` makes about a restart. The old system's answer to
+`sensor.zaluzie_cielovy_stav` being `unavailable` was also to do nothing -- see
+`script.zaluzie_uplatnit`'s opening `wait_template`, and the house's own
+`CLAUDE.md` entry for 2026-08-06, when it did nothing for four minutes. What
+this gate adds is not the withholding; it is that the withholding says so, in
+the log at `WARNING` and on the sensor's `readiness` attribute.
+
+### Why the veto is per blind and not per house
+
+The obvious objection to a veto is duration: an entity dead for a day would
+block every command for a day, and a house that never moves is a worse failure
+than a house that moves wrongly once. Per-blind attribution is the answer to
+that objection, not a refinement of it.
+
+A blind is blocked by the entities *its own* decision reads: every mode's
+`when` (shared -- mode is a house-wide fact, and it is what fell through to the
+catch-all in the measured incident), the rules that can decide its zone
+including the default-zone list, the guards that target it, and the helper
+entities its candidate actions read. A dead kitchen sensor therefore blocks the
+kitchen zone and nothing else; a dead mode input blocks all ten blinds, which is
+correct rather than unfortunate.
+
+The bedroom case still holds unconditionally, and that is the property that
+matters: on a world where nothing has been restored, *every* entity is
+unreadable, so every blind is blocked and nothing moves. Per-blind scoping only
+ever narrows the veto when the world is partly healthy -- it can never widen
+what a fully unreadable world blocks.
+
+**Scoping to the resolved mode was considered and rejected.** It would be
+tighter still: only the matched mode's rules can actually fire, so only their
+inputs matter. But the resolved mode is derived from the very inputs whose
+presence is in question, so on the one world this gate exists for it is the
+untrustworthy value being used to decide how much to trust everything else.
+`assess` therefore takes no `Decision` at all and unions every mode's rules for
+the blind's zone -- broader, and independent of anything that could have gone
+wrong upstream.
+
+### Why readiness is read off the `World` and not off `hass.states`
+
+`assess(config, world)` is pure and reads the same snapshot the decision was
+made from. Reading `hass.states` again would be a second read at a second
+instant, and then "was the world readable" and "what did the world say" are
+answers about two different worlds -- the entire class of race `world.py` exists
+to remove. It also keeps the module in `tests/test_purity.py`'s `PURE_MODULES`,
+so a convenience `hass` import has to argue with a failing test first.
+
+The two faults it treats identically are worth stating: an entity missing from
+the snapshot (`ha_world.build_world` omits an entity Home Assistant has never
+had, rather than inventing a state for it) and an entity reporting Home
+Assistant's own `unknown`/`unavailable`. Acting on either is the same mistake.
+`""`, `"off"` and `"0"` are not on that list: they are answers. Neither is an
+absent attribute, nor anything a condition defaults — the two sections below.
+
+### Why a stated `default:` is not a readiness fault
+
+The gate shipped judging every read the same way, and on 2026-08-31 that blocked
+the live house permanently: `ready=False`, three names, none of which could ever
+come back. Two were the Netatmo anemometers, flat for months, and the third is
+in the section below.
+
+Those two sensors are read only by `vietor_ok` and `vietor_silny`, and both
+conditions write an explicit `default:` — the whole reason this dialect
+*requires* one on `numeric_state` (see "Why `numeric_state` requires an explicit
+`default`") is that the config author is the only person who knows which side is
+safe for that rule. `vietor_silny`'s `default: 0` is a decision with its own
+paragraph in the fixture: a dead sensor means "no information", the live forecast
+carries the guard. A gate that vetoes on it is overriding an answer the
+configuration already gave, in the direction of never acting again.
+
+So the rule is: **a read is a readiness fault only where the configuration has
+no answer for it.** A node's `default:` exempts every entity that node reads,
+per read and not per entity — `config_schema.Read` carries the flag, so the same
+sensor read once with a default and once without still reports the undefaulted
+fault. What remains a fault is unchanged and is what the original incident was
+made of: every mode condition in this house is a `state` condition with no
+default, so an unrestored world still blocks all ten blinds.
+
+The flag is reported by `config_schema.node_reads`, next to the entity ids it
+already owned, rather than computed in `readiness.py`. "What does this condition
+read" has one owner (`MODELS.md` §9), and "does it tolerate that read being
+missing" is the same question about the same node — asking it in the consumer is
+how the two drift apart. `referenced_entities` became a projection of
+`referenced_reads` for the same reason: subscribing to an entity and judging
+whether it was readable must not be able to disagree about what the config reads.
+
+### Why an absent attribute is a value and not a fault
+
+The third permanently-missing name was `alarm_control_panel.alarmo`, whose state
+was `disarmed` and perfectly readable. The fixture also reads its `arm_mode`
+attribute — Alarmo publishes that only while armed, so while disarmed it is
+`None`, and that `None` is precisely the answer "not armed on vacation".
+
+Home Assistant has no "this attribute is unavailable" marker. An integration
+omitting an attribute is *saying* something by it, which is the opposite of the
+`unknown`/`unavailable` case, where Home Assistant is saying it has nothing to
+say. And every attribute read in this dialect is total when the attribute is
+absent: `state` compares (absent ≠ `armed_vacation`, and that is a definite
+`False`), `numeric_state` must carry a `default`, and `sun_hits_target` falls
+back inside `conditions._sun_hits_target`.
+
+So an attribute read reports its *entity's* fault and only that: absent from the
+snapshot, `unknown`, or `unavailable`, exactly as a state read does, and still
+under the entity's own id because that is the name a person goes and looks at.
+This is deliberately stronger than "unless a default covers it" — the alarmo
+node carries no default and cannot: `condition: state` has no such key, and the
+fixture is the live configuration, not somewhere to add one to satisfy a gate.
+It is also *safer* than the narrower rule: keeping the check at entity level
+means a condition that reads only an attribute of an entity Home Assistant has
+never restored still blocks, which is the startup incident's own shape.
+
+The boundary is worth writing down: a future condition type that reads an
+attribute and *needs* it — one that raises, or misbehaves, on `None` — would not
+be covered by this gate. The three above do not, and adding a fourth means
+deciding what its absent attribute means, in that condition, rather than here.
+
+### Why a `values:` default is not an answer
+
+`values:` also requires a `default`, and a `Ref` axis genuinely falls back to it
+(`engine._resolve_value`). It is still not counted as an answer, and the
+asymmetry with a condition's `default:` is the point: a defaulted *condition*
+resolves to a boolean and can perfectly well decide "do nothing", while a
+defaulted *`Ref` axis* resolves to a position and is therefore always a command.
+"Send 34 % to ten blinds because the helper had not restored yet" is the
+movement this gate exists to stop, not a way of avoiding one.
+
+### Why the gate sits in `_apply` and not before the engine
+
+Dispatch is gated; evaluation is not. The decision is still computed, still
+stored on the coordinator and still published to the diagnostic sensor, because
+a diagnostic that goes blank when something is wrong is the opposite of useful
+-- "it decided open and moved nothing, and here is which entity is missing" is
+an answer, and "the sensor is unavailable" is not.
+
+`coordinator._apply` is the one funnel every command goes through, both the
+ordinary `Priority.SCHEDULED` decision and a `Priority.GUARD` deferral whose
+deadline just expired. Putting the check anywhere else means putting it twice,
+and the copy that gets forgotten is the `GUARD` one -- the highest-priority
+path, and the one whose whole point is that a later recompute cannot overtake
+it. A guard running out of patience is not a reason to trust the decision it was
+holding back.
+
+## `model.py`
+
+### Why `Config` is frozen without `slots` (unresolved)
+
+Every other frozen dataclass in this module (`Ref`, `Action`, `Blind`,
+`Zone`, `Mode`, `Rule`) is declared `@dataclass(frozen=True, slots=True)`.
+`Config` and `World` (in `world.py`) are the two exceptions -- both are
+`@dataclass(frozen=True)` without `slots`. No comment, docstring, test, or
+commit message in this repository's history explains why. A working test
+(adding `slots=True` to both and running the full suite) shows no functional
+or performance obstacle in this codebase as it stands today. This entry
+records that the omission was investigated and is being left exactly as
+found, rather than "fixed" or given a fabricated justification -- if the
+original reason resurfaces, it belongs here.

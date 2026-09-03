@@ -1,0 +1,761 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Cover Logic",
+        "description": "Ako chcete začať?",
+        "menu_options": {
+          "blinds_now": "Nastaviť žalúzie teraz (odporúčané)",
+          "from_file": "Načítať konfiguráciu zo súboru YAML",
+          "from_example": "Začať s príkladom pre vzorový dom",
+          "empty": "Začať naprázdno"
+        }
+      },
+      "blinds_now": {
+        "title": "Nastaviť žalúzie teraz",
+        "description": "Vyberte každú žalúziu, ktorú má Cover Logic ovládať. Ďalej sa opýtame, ktorým smerom je každá z nich otočená, a potom sa pre vás vytvorí funkčné východiskové nastavenie -- čokoľvek z neho môžete neskôr zmeniť z konfiguračného menu.",
+        "data": {
+          "entities": "Žalúzie"
+        }
+      },
+      "blinds_now_facing": {
+        "title": "Ktorým smerom je táto žalúzia otočená?",
+        "description": "{blind} -- vyberte svetovú stranu, na ktorú smeruje jej vonkajšia strana. Podľa toho sa určí, kedy na ňu svieti slnko.",
+        "data": {
+          "facing": "Smer"
+        }
+      },
+      "blinds_now_summary": {
+        "title": "Východiskové nastavenie",
+        "description": "{blinds}\n\nV noci sa nič nehýbe.\nCez deň sa každá žalúzia čiastočne zatvorí (na pozíciu {shade_position}, lamely {shade_tilt}), keď na jej stranu domu svieti slnko, a zvyšok času zostáva úplne otvorená (pozícia {open_position}).\n\nPokračovaním ho vytvoríte presne tak, ako je zobrazené, alebo toto nastavenie zrušte a začnite znova z hlavného menu."
+      },
+      "from_file": {
+        "title": "Načítať konfiguráciu zo súboru YAML",
+        "description": "Zadajte cestu k YAML súboru s definíciou žalúzií, zón a pravidiel. Súbor sa hneď načíta a skontroluje.",
+        "data": {
+          "config_path": "Cesta ku konfiguračnému súboru"
+        }
+      },
+      "from_example": {
+        "title": "Začať s príkladom pre vzorový dom",
+        "description": "Naimportuje príklad pre iný, vymyslený dom (štyri okná, režimy preč/noc/doma) ako východiskový bod. Čokoľvek z toho môžete neskôr upraviť alebo odstrániť z konfiguračného menu."
+      },
+      "example_not_available": {
+        "title": "Príklad nie je dostupný",
+        "description": "Táto inštalácia neobsahuje vzorovú konfiguráciu. Pokračovaním sa vrátite do úvodného menu a vyberiete iný spôsob, ako začať."
+      },
+      "empty": {
+        "title": "Začať naprázdno",
+        "description": "Vytvorí Cover Logic bez akejkoľvek konfigurácie. Žalúzie, zóny, režimy a pravidlá pridáte neskôr z konfiguračného menu."
+      }
+    },
+    "error": {
+      "invalid_config": "Tento súbor sa nedá použiť: {error_detail}",
+      "no_blinds_selected": "Vyberte aspoň jednu žalúziu, alebo použite možnosť „Začať naprázdno“."
+    },
+    "abort": {
+      "already_configured": "Cover Logic je už nastavený, podporovaná je len jedna inštancia.",
+      "starter_config_invalid": "Vygenerované východiskové nastavenie neprešlo vlastnou kontrolou -- ide o chybu v Cover Logic, nie vo vašom zadaní. Nahláste to, prosím, a namiesto toho použite možnosť „Začať naprázdno“ alebo „Načítať konfiguráciu zo súboru YAML“."
+    }
+  },
+  "selector": {
+    "facing": {
+      "options": {
+        "north": "Sever",
+        "northeast": "Severovýchod",
+        "east": "Východ",
+        "southeast": "Juhovýchod",
+        "south": "Juh",
+        "southwest": "Juhozápad",
+        "west": "Západ",
+        "northwest": "Severozápad"
+      }
+    }
+  },
+  "config_subentries": {
+    "blind": {
+      "entry_type": "Žalúzia",
+      "initiate_flow": {
+        "user": "Pridať žalúziu"
+      },
+      "step": {
+        "user": {
+          "title": "Pridať žalúziu",
+          "description": "Jedna fyzická žalúzia, pre ktorú Cover Logic určuje polohu a lamely.",
+          "data": {
+            "entity": "Entita žalúzie",
+            "facade_azimuth": "Azimut fasády",
+            "tolerance": "Tolerancia slnečného sektora",
+            "travel_time": "Čas plného dojazdu",
+            "has_tilt": "Má lamelovú os",
+            "tilt_after_arrival": "Lamely nastaviť až po dojazde polohy"
+          }
+        },
+        "reconfigure": {
+          "title": "Upraviť žalúziu",
+          "data": {
+            "entity": "Entita žalúzie",
+            "facade_azimuth": "Azimut fasády",
+            "tolerance": "Tolerancia slnečného sektora",
+            "travel_time": "Čas plného dojazdu",
+            "has_tilt": "Má lamelovú os",
+            "tilt_after_arrival": "Lamely nastaviť až po dojazde polohy"
+          }
+        }
+      },
+      "error": {
+        "invalid_config": "Tento súbor sa nedá použiť: {error_detail}"
+      },
+      "abort": {
+        "reconfigure_successful": "Rekonfigurácia bola úspešná"
+      }
+    },
+    "zone": {
+      "entry_type": "Zóna",
+      "initiate_flow": {
+        "user": "Pridať zónu"
+      },
+      "step": {
+        "user": {
+          "title": "Pridať zónu",
+          "description": "Skupina žalúzií, o ktorých Cover Logic rozhoduje spoločne, podľa jedného zoznamu pravidiel.",
+          "data": {
+            "id": "Identifikátor zóny",
+            "members": "Žalúzie v tejto zóne",
+            "occupants": "Obyvatelia"
+          }
+        },
+        "reconfigure": {
+          "title": "Upraviť zónu",
+          "data": {
+            "id": "Identifikátor zóny",
+            "members": "Žalúzie v tejto zóne",
+            "occupants": "Obyvatelia"
+          }
+        }
+      },
+      "error": {
+        "invalid_config": "Tento súbor sa nedá použiť: {error_detail}"
+      },
+      "abort": {
+        "reconfigure_successful": "Rekonfigurácia bola úspešná"
+      }
+    },
+    "value": {
+      "entry_type": "Hodnota",
+      "initiate_flow": {
+        "user": "Pridať hodnotu"
+      },
+      "step": {
+        "user": {
+          "title": "Pridať hodnotu",
+          "description": "Entita helpera čítaná v čase rozhodovania, použiteľná ako !ref v akcii.",
+          "data": {
+            "id": "Identifikátor hodnoty",
+            "entity": "Entita helpera",
+            "default": "Predvolená hodnota (ak entita chýba alebo sa nedá prečítať)"
+          }
+        },
+        "reconfigure": {
+          "title": "Upraviť hodnotu",
+          "data": {
+            "id": "Identifikátor hodnoty",
+            "entity": "Entita helpera",
+            "default": "Predvolená hodnota (ak entita chýba alebo sa nedá prečítať)"
+          }
+        }
+      },
+      "error": {
+        "invalid_config": "Tento súbor sa nedá použiť: {error_detail}"
+      },
+      "abort": {
+        "reconfigure_successful": "Rekonfigurácia bola úspešná"
+      }
+    },
+    "condition": {
+      "entry_type": "Podmienka",
+      "initiate_flow": {
+        "user": "Pridať podmienku"
+      },
+      "step": {
+        "user": {
+          "title": "Pridať podmienku",
+          "description": "Pomenovaná, znovupoužiteľná podmienka. Odkážte na ňu podľa mena z podmienky režimu alebo spomedzi inej podmienky.",
+          "data": {
+            "id": "Identifikátor podmienky",
+            "condition": "Podmienka",
+            "numeric_state_default": "Záložná hodnota pre číselné porovnanie"
+          },
+          "data_description": {
+            "numeric_state_default": "Použije sa len vtedy, keď je podmienka vyššie jedno číselné porovnanie (numeric_state). Je to hodnota, s ktorou sa počíta, keď je porovnávaná entita nedostupná alebo nečíselná -- teda rozhoduje, ktorým smerom sa podmienka vyhodnotí v tomto prípade; zvoľte ju tak, aby mŕtvy senzor zlyhal na bezpečnú stranu. Inak sa ignoruje, ale pri numeric_state je povinná."
+          }
+        },
+        "reconfigure": {
+          "title": "Upraviť podmienku",
+          "data": {
+            "id": "Identifikátor podmienky",
+            "condition": "Podmienka",
+            "numeric_state_default": "Záložná hodnota pre číselné porovnanie"
+          },
+          "data_description": {
+            "numeric_state_default": "Použije sa len vtedy, keď je podmienka vyššie jedno číselné porovnanie (numeric_state). Je to hodnota, s ktorou sa počíta, keď je porovnávaná entita nedostupná alebo nečíselná -- teda rozhoduje, ktorým smerom sa podmienka vyhodnotí v tomto prípade; zvoľte ju tak, aby mŕtvy senzor zlyhal na bezpečnú stranu. Inak sa ignoruje, ale pri numeric_state je povinná."
+          }
+        }
+      },
+      "error": {
+        "invalid_config": "Tento súbor sa nedá použiť: {error_detail}"
+      },
+      "abort": {
+        "reconfigure_successful": "Rekonfigurácia bola úspešná"
+      }
+    },
+    "mode": {
+      "entry_type": "Režim",
+      "initiate_flow": {
+        "user": "Pridať režim"
+      },
+      "step": {
+        "user": {
+          "title": "Pridať režim",
+          "description": "O pravidlách každej zóny rozhoduje prvý režim, ktorého podmienka sa splní. Posledný režim, skúšaný keď nesedí nič iné, nesmie mať ani pomenovanú, ani vloženú podmienku.",
+          "data": {
+            "id": "Identifikátor režimu",
+            "order": "Poradie (nižšie sa skúša skôr; záložný režim musí mať najvyššie poradie)",
+            "condition_ref": "Pomenovaná podmienka (nechajte prázdne pre vloženú podmienku, alebo aby bol tento režim záložný)",
+            "when": "Vložená podmienka (nechajte prázdne pri použití pomenovanej podmienky, alebo aby bol tento režim záložný)"
+          }
+        },
+        "reconfigure": {
+          "title": "Upraviť režim",
+          "data": {
+            "id": "Identifikátor režimu",
+            "order": "Poradie (nižšie sa skúša skôr; záložný režim musí mať najvyššie poradie)",
+            "condition_ref": "Pomenovaná podmienka (nechajte prázdne pre vloženú podmienku, alebo aby bol tento režim záložný)",
+            "when": "Vložená podmienka (nechajte prázdne pri použití pomenovanej podmienky, alebo aby bol tento režim záložný)"
+          }
+        }
+      },
+      "error": {
+        "invalid_config": "Tento súbor sa nedá použiť: {error_detail}"
+      },
+      "abort": {
+        "reconfigure_successful": "Rekonfigurácia bola úspešná"
+      }
+    },
+    "rule": {
+      "entry_type": "Pravidlo",
+      "initiate_flow": {
+        "user": "Pridať pravidlo"
+      },
+      "step": {
+        "user": {
+          "title": "Pridať pravidlo",
+          "description": "Do ktorého zoznamu pravidiel toto pravidlo patrí? Každá dvojica režim–zóna má vlastný zoznam, ktorý sa skúša od najnižšieho poradia, kým niektoré pravidlo nesadne.",
+          "data": {
+            "mode": "Režim",
+            "zone": "Zóna"
+          }
+        },
+        "rule": {
+          "title": "Pridať pravidlo",
+          "description": "O tom, kam pôjdu žalúzie zóny, rozhodne prvé pravidlo v tomto zozname, ktorému sedia udalosti aj podmienka; na ďalšie sa už nepozerá. Pravidlo bez podmienky preto patrí na koniec.",
+          "data": {
+            "mode": "Režim",
+            "zone": "Zóna",
+            "order": "Poradie",
+            "if_ref": "Pomenovaná podmienka (nechajte prázdne pre vloženú podmienku, alebo pre pravidlo, ktoré sedí vždy)",
+            "if": "Vložená podmienka (nechajte prázdne pri použití pomenovanej podmienky, alebo pre pravidlo, ktoré sedí vždy)",
+            "position": "Pozícia",
+            "tilt": "Lamely",
+            "events": "Len pre tieto udalosti",
+            "name": "Názov (zobrazí sa v zázname rozhodnutia)"
+          },
+          "data_description": {
+            "order": "Nižšie sa skúša skôr. Predvyplní sa o desať vyššie než posledné pravidlo v tomto zozname, aby sa medzi ne dalo neskôr vložiť ďalšie. Dve pravidlá v jednom zozname nemôžu mať rovnaké poradie.",
+            "position": "Zvoľte „keep“, ak sa má os nechať tak, zvoľte nastavenú hodnotu, ak sa má číslo prečítať z pomocníka pri rozhodovaní, alebo napíšte číslo od 0 do 100.",
+            "tilt": "Zvoľte „keep“, ak sa má os nechať tak, zvoľte nastavenú hodnotu, ak sa má číslo prečítať z pomocníka pri rozhodovaní, alebo napíšte číslo od 0 do 100.",
+            "events": "Nechajte prázdne, ak má pravidlo platiť pre každú udalosť."
+          }
+        },
+        "reconfigure": {
+          "title": "Upraviť pravidlo",
+          "description": "O tom, kam pôjdu žalúzie zóny, rozhodne prvé pravidlo v tomto zozname, ktorému sedia udalosti aj podmienka; na ďalšie sa už nepozerá. Pravidlo bez podmienky preto patrí na koniec.",
+          "data": {
+            "mode": "Režim",
+            "zone": "Zóna",
+            "order": "Poradie",
+            "if_ref": "Pomenovaná podmienka (nechajte prázdne pre vloženú podmienku, alebo pre pravidlo, ktoré sedí vždy)",
+            "if": "Vložená podmienka (nechajte prázdne pri použití pomenovanej podmienky, alebo pre pravidlo, ktoré sedí vždy)",
+            "position": "Pozícia",
+            "tilt": "Lamely",
+            "events": "Len pre tieto udalosti",
+            "name": "Názov (zobrazí sa v zázname rozhodnutia)"
+          },
+          "data_description": {
+            "order": "Nižšie sa skúša skôr. Predvyplní sa o desať vyššie než posledné pravidlo v tomto zozname, aby sa medzi ne dalo neskôr vložiť ďalšie. Dve pravidlá v jednom zozname nemôžu mať rovnaké poradie.",
+            "position": "Zvoľte „keep“, ak sa má os nechať tak, zvoľte nastavenú hodnotu, ak sa má číslo prečítať z pomocníka pri rozhodovaní, alebo napíšte číslo od 0 do 100.",
+            "tilt": "Zvoľte „keep“, ak sa má os nechať tak, zvoľte nastavenú hodnotu, ak sa má číslo prečítať z pomocníka pri rozhodovaní, alebo napíšte číslo od 0 do 100.",
+            "events": "Nechajte prázdne, ak má pravidlo platiť pre každú udalosť."
+          }
+        }
+      },
+      "error": {
+        "invalid_config": "Tento súbor sa nedá použiť: {error_detail}"
+      },
+      "abort": {
+        "reconfigure_successful": "Rekonfigurácia bola úspešná"
+      }
+    },
+    "guard": {
+      "entry_type": "Poistka",
+      "initiate_flow": {
+        "user": "Pridať poistku"
+      },
+      "step": {
+        "user": {
+          "title": "Pridať poistku",
+          "description": "Aká politika a kde v poradí. Politika určuje, ktoré polia bude mať ďalšia obrazovka, preto sa pýta prvá.",
+          "data": {
+            "policy": "Politika",
+            "order": "Poradie",
+            "name": "Názov (zobrazí sa v trace)"
+          },
+          "data_description": {
+            "policy": "Zámerne bez defaultu: tie tri politiky robia tri rozdielne veci.",
+            "order": "Nižšie sa skúša skôr. Návrh je o desať za poslednou poistkou, aby sa medzi dve dala neskôr vsunúť ďalšia. Dve poistky nesmú mať to isté poradie."
+          }
+        },
+        "guard": {
+          "title": "Pridať poistku",
+          "description": "Poistky sa skúšajú v poradí a vyhráva prvá, ktorá sadne. Poistka môže pohyb vynechať, odložiť, alebo vnútiť inú akciu.",
+          "data": {
+            "targets": "Čoho sa týka (prázdne = všetky žalúzie v dome)",
+            "applies_to": "Ktorý pohyb",
+            "stage": "Kedy zasahuje",
+            "condition_ref": "Pomenovaná podmienka (prázdne = vlastná nižšie, alebo poistka platná vždy)",
+            "when": "Vlastná podmienka (prázdne, ak používaš pomenovanú, alebo pre poistku platnú vždy)",
+            "position": "Poloha, ktorú vnúti",
+            "tilt": "Lamely, ktoré vnúti",
+            "wait_limit": "Ako dlho môže čakať",
+            "max_wait_duration": "Najviac",
+            "on_timeout": "Keď čas vyprší",
+            "recheck_every": "Kontrolovať každých"
+          },
+          "data_description": {
+            "targets": "Žalúzie a zóny sa dajú mixovať. Prázdne = všetky žalúzie; „nevyplnené\" a „výslovne všetky\" tu znamenajú to isté.",
+            "applies_to": "„zatváranie\" je klesajúca poloha, nie lamely. Väčšina poistiek v dome je „zatváranie\", ale default zostáva „akýkoľvek\", aby tá istá poistka znamenala to isté bez ohľadu na to, ako bola napísaná.",
+            "stage": "„po rozhodnutí\" prepíše akciu, „pred rozhodnutím\" vyradí cieľ z rozhodovania. Poistka pred rozhodnutím musí mať „akýkoľvek\" -- ešte neexistuje príkaz, ktorého smer by mohla mieniť.",
+            "condition_ref": "Číselný prah sa dá dosiahnuť len takto: HA selektor nepustí záložnú hodnotu, ktorú táto integrácia vyžaduje, takže podmienku treba pomenovať.",
+            "position": "„keep\" nechá os na pokoji, nastavená hodnota prečíta číslo z helpera, alebo napíš číslo 0-100.",
+            "tilt": "„keep\" nechá os na pokoji, nastavená hodnota prečíta číslo z helpera, alebo napíš číslo 0-100.",
+            "wait_limit": "„bez obmedzenia\" je skutočná odpoveď, nie prázdno: čaká, kým podmienka nezmizne. Default zámerne nie je -- tie dve možnosti robia rozdielne veci.",
+            "max_wait_duration": "Čita sa len pri „najviac\". Nula znamená, že sa poistka odmietne, nie že sa uloží nulové čakanie.",
+            "on_timeout": "Zámerne bez defaultu: zahodiť pohyb a vykonať ho aj tak sú protiklady.",
+            "recheck_every": "Odložený pohyb neprežije reštart HA, takže toto je poistka, ktorá ho znova zdvihne."
+          }
+        },
+        "reconfigure": {
+          "title": "Upraviť poistku",
+          "description": "Poistky sa skúšajú v poradí a vyhráva prvá, ktorá sadne. Poistka môže pohyb vynechať, odložiť, alebo vnútiť inú akciu.",
+          "data": {
+            "policy": "Politika",
+            "order": "Poradie",
+            "name": "Názov (zobrazí sa v trace)",
+            "targets": "Čoho sa týka (prázdne = všetky žalúzie v dome)",
+            "applies_to": "Ktorý pohyb",
+            "stage": "Kedy zasahuje",
+            "condition_ref": "Pomenovaná podmienka (prázdne = vlastná nižšie, alebo poistka platná vždy)",
+            "when": "Vlastná podmienka (prázdne, ak používaš pomenovanú, alebo pre poistku platnú vždy)",
+            "position": "Poloha, ktorú vnúti",
+            "tilt": "Lamely, ktoré vnúti",
+            "wait_limit": "Ako dlho môže čakať",
+            "max_wait_duration": "Najviac",
+            "on_timeout": "Keď čas vyprší",
+            "recheck_every": "Kontrolovať každých"
+          },
+          "data_description": {
+            "policy": "Zámerne bez defaultu: tie tri politiky robia tri rozdielne veci.",
+            "order": "Nižšie sa skúša skôr. Návrh je o desať za poslednou poistkou, aby sa medzi dve dala neskôr vsunúť ďalšia. Dve poistky nesmú mať to isté poradie.",
+            "targets": "Žalúzie a zóny sa dajú mixovať. Prázdne = všetky žalúzie; „nevyplnené\" a „výslovne všetky\" tu znamenajú to isté.",
+            "applies_to": "„zatváranie\" je klesajúca poloha, nie lamely. Väčšina poistiek v dome je „zatváranie\", ale default zostáva „akýkoľvek\", aby tá istá poistka znamenala to isté bez ohľadu na to, ako bola napísaná.",
+            "stage": "„po rozhodnutí\" prepíše akciu, „pred rozhodnutím\" vyradí cieľ z rozhodovania. Poistka pred rozhodnutím musí mať „akýkoľvek\" -- ešte neexistuje príkaz, ktorého smer by mohla mieniť.",
+            "condition_ref": "Číselný prah sa dá dosiahnuť len takto: HA selektor nepustí záložnú hodnotu, ktorú táto integrácia vyžaduje, takže podmienku treba pomenovať.",
+            "position": "„keep\" nechá os na pokoji, nastavená hodnota prečíta číslo z helpera, alebo napíš číslo 0-100.",
+            "tilt": "„keep\" nechá os na pokoji, nastavená hodnota prečíta číslo z helpera, alebo napíš číslo 0-100.",
+            "wait_limit": "„bez obmedzenia\" je skutočná odpoveď, nie prázdno: čaká, kým podmienka nezmizne. Default zámerne nie je -- tie dve možnosti robia rozdielne veci.",
+            "max_wait_duration": "Čita sa len pri „najviac\". Nula znamená, že sa poistka odmietne, nie že sa uloží nulové čakanie.",
+            "on_timeout": "Zámerne bez defaultu: zahodiť pohyb a vykonať ho aj tak sú protiklady.",
+            "recheck_every": "Odložený pohyb neprežije reštart HA, takže toto je poistka, ktorá ho znova zdvihne."
+          }
+        }
+      },
+      "error": {
+        "invalid_config": "Tento súbor sa nedal použiť: {error_detail}"
+      },
+      "abort": {
+        "reconfigure_successful": "Rekonfigurácia prebehla úspešne"
+      }
+    },
+    "manual_detection": {
+      "entry_type": "Detekcia ručného zásahu",
+      "initiate_flow": {
+        "user": "Nastaviť detekciu ručného zásahu"
+      },
+      "step": {
+        "user": {
+          "title": "Detekcia ručného zásahu",
+          "description": "Ktoré pohyby nie sú od človeka. Toto nastavenie je pre celý dom jedno jediné.",
+          "data": {
+            "ignore_while_on": "Ignoruj pohyby, kým je niektorá z nich zapnutá"
+          },
+          "data_description": {
+            "ignore_while_on": "Entita skriptu je zapnutá presne po dobu svojho behu, takže menovať ju tu znamená „čokoľvek, čo sa pohne počas tohto skriptu, je od skriptu, nie od človeka\". Funguje akákoľvek entita, nielen skripty — input boolean, ktorý si dom zapína okolo vlastných hromadných pohybov, robí to isté."
+          }
+        },
+        "reconfigure": {
+          "title": "Upraviť detekciu ručného zásahu",
+          "description": "Ktoré pohyby nie sú od človeka.",
+          "data": {
+            "ignore_while_on": "Ignoruj pohyby, kým je niektorá z nich zapnutá"
+          }
+        }
+      },
+      "error": {
+        "invalid_config": "Tento súbor sa nedal použiť: {error_detail}"
+      },
+      "abort": {
+        "reconfigure_successful": "Rekonfigurácia prebehla úspešne",
+        "already_configured": "Detekcia ručného zásahu už je nastavená — uprav existujúcu."
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Cover Logic",
+        "description": "Čo chcete pozrieť alebo zmeniť?",
+        "menu_options": {
+          "blinds": "Žalúzie ({blinds_count})",
+          "zones": "Zóny ({zones_count})",
+          "values": "Hodnoty ({values_count})",
+          "conditions": "Podmienky ({conditions_count})",
+          "modes": "Režimy ({modes_count})",
+          "rules": "Pravidlá ({rules_count})",
+          "guards": "Poistky ({guards_count})",
+          "manual_detection": "Detekcia ručného zásahu ({manual_detection_count})",
+          "import_export": "Import / export YAML",
+          "execution": "Vykonávanie ({execution_summary})",
+          "check_matrix": "Zdravie konfigurácie ({health_summary})"
+        }
+      },
+      "blinds": {
+        "title": "Žalúzie",
+        "description": "Nastavených: {count}.",
+        "menu_options": {
+          "add": "Pridať",
+          "edit": "Upraviť existujúce",
+          "remove": "Odstrániť existujúce",
+          "back": "Späť do hlavnej ponuky"
+        }
+      },
+      "zones": {
+        "title": "Zóny",
+        "description": "Nastavených: {count}.",
+        "menu_options": {
+          "add": "Pridať",
+          "edit": "Upraviť existujúce",
+          "remove": "Odstrániť existujúce",
+          "back": "Späť do hlavnej ponuky"
+        }
+      },
+      "values": {
+        "title": "Hodnoty",
+        "description": "Nastavených: {count}.",
+        "menu_options": {
+          "add": "Pridať",
+          "edit": "Upraviť existujúce",
+          "remove": "Odstrániť existujúce",
+          "back": "Späť do hlavnej ponuky"
+        }
+      },
+      "conditions": {
+        "title": "Podmienky",
+        "description": "Nastavených: {count}.",
+        "menu_options": {
+          "add": "Pridať",
+          "edit": "Upraviť existujúce",
+          "remove": "Odstrániť existujúce",
+          "back": "Späť do hlavnej ponuky"
+        }
+      },
+      "modes": {
+        "title": "Režimy",
+        "description": "Nastavených: {count}.",
+        "menu_options": {
+          "add": "Pridať",
+          "edit": "Upraviť existujúce",
+          "remove": "Odstrániť existujúce",
+          "back": "Späť do hlavnej ponuky"
+        }
+      },
+      "rules": {
+        "title": "Pravidlá",
+        "description": "Nastavených: {count}, naprieč všetkými dvojicami režim-zóna. V rámci dvojice rozhoduje prvé pravidlo, ktorého podmienka sedí -- poradie v dvojici je presne to, čo engine skúša ako prvé.",
+        "menu_options": {
+          "add": "Pridať",
+          "list": "Zobraziť, čo dom naozaj urobí",
+          "zone": "Pozrieť si zoznam jednej zóny (vrátane zdedených)",
+          "edit": "Upraviť existujúce",
+          "remove": "Odstrániť existujúce",
+          "back": "Späť do hlavnej ponuky"
+        }
+      },
+      "guards": {
+        "title": "Poistky",
+        "description": "Nastavených: {count}. Skúšajú sa v poradí; o príkaze rozhodne prvá poistka, ktorá naň sadne.",
+        "menu_options": {
+          "add": "Pridať",
+          "edit": "Upraviť existujúce",
+          "remove": "Odstrániť existujúce",
+          "back": "Späť do hlavnej ponuky"
+        }
+      },
+      "manual_detection": {
+        "title": "Detekcia ručného zásahu",
+        "description": "Nastavených: {count} (0 alebo 1). Ktoré pohyby nie sú od človeka.",
+        "menu_options": {
+          "add": "Pridať",
+          "edit": "Upraviť existujúce",
+          "remove": "Odstrániť existujúce",
+          "back": "Späť do hlavnej ponuky"
+        }
+      },
+      "list": {
+        "title": "Pravidlá v poradí vyhodnocovania",
+        "description": "Zoskupené podľa režimu a zóny, presne v poradí, v akom ich engine v rámci dvojice skúša -- rozhoduje prvé pravidlo, ktorého podmienka sedí.\n\n{result}"
+      },
+      "zone": {
+        "title": "Vybrať zónu",
+        "description": "Vyberte režim a zónu, ktorých pravidlá chcete vidieť. Voľba zóny „*“ ukáže priamo predvolený zoznam daného režimu.",
+        "data": {
+          "mode": "Režim",
+          "zone": "Zóna"
+        }
+      },
+      "zone_rules": {
+        "title": "Pravidlá jednej zóny",
+        "description": "Vlastné pravidlá zóny {zone} v režime {mode}, a za nimi zdedené predvolené pravidlá režimu (označené „zdedené z predvoleného pravidla režimu“) pre všetko, čo si zóna {zone} sama nerieši -- presne v poradí, v akom ich engine skúša, alebo nič, ak sa zatiaľ nič nevzťahuje. Zdedené pravidlo patrí režimu, nie tejto zóne: jeho výber tu iba povie, kde sa dá upraviť.",
+        "data": {
+          "subentry_id": "Ktoré?",
+          "confirm": "Odstrániť namiesto úpravy"
+        },
+        "data_description": {
+          "confirm": "Zaškrtnite, ak sa má vybrané pravidlo odstrániť namiesto otvorenia na úpravu. Pri zdedenom pravidle nemá účinok -- aj tak sa odmietne."
+        }
+      },
+      "add": {
+        "title": "Pridať",
+        "description": "Vyplňte polia nižšie. Platia len polia pre typ položky, ktorú pridávate; čo neviete, nechajte na predvolenej hodnote.",
+        "data": {
+          "entity": "Entita",
+          "id": "Id",
+          "facade_azimuth": "Azimut fasády",
+          "tolerance": "Tolerancia slnečného sektora",
+          "travel_time": "Čas plného dojazdu",
+          "has_tilt": "Má lamelovú os",
+          "tilt_after_arrival": "Lamely nastaviť až po dojazde polohy",
+          "members": "Žalúzie v tejto zóne",
+          "occupants": "Obyvatelia",
+          "default": "Predvolená hodnota (ak entita chýba alebo sa nedá prečítať)",
+          "condition": "Podmienka",
+          "numeric_state_default": "Záložná hodnota pre číselné porovnanie",
+          "order": "Poradie (nižšie sa skúša skôr; záložný režim musí mať najvyššie poradie)",
+          "condition_ref": "Pomenovaná podmienka (nechajte prázdne pre vloženú podmienku, alebo aby bol tento režim záložný)",
+          "when": "Vložená podmienka (nechajte prázdne pri použití pomenovanej podmienky, alebo aby bol tento režim záložný)",
+          "mode": "Režim",
+          "zone": "Zóna"
+        }
+      },
+      "add_rule_fields": {
+        "title": "Pridať pravidlo",
+        "description": "O tom, kam pôjdu žalúzie zóny, rozhodne prvé pravidlo v tomto zozname, ktorému sedia udalosti aj podmienka; na ďalšie sa už nepozerá. Pravidlo bez podmienky preto patrí na koniec.",
+        "data": {
+          "mode": "Režim",
+          "zone": "Zóna",
+          "order": "Poradie",
+          "if_ref": "Pomenovaná podmienka (nechajte prázdne pre vloženú podmienku, alebo pre pravidlo, ktoré sedí vždy)",
+          "if": "Vložená podmienka (nechajte prázdne pri použití pomenovanej podmienky, alebo pre pravidlo, ktoré sedí vždy)",
+          "position": "Pozícia",
+          "tilt": "Lamely",
+          "events": "Len pre tieto udalosti",
+          "name": "Názov (zobrazí sa v zázname rozhodnutia)"
+        },
+        "data_description": {
+          "order": "Nižšie sa skúša skôr. Predvyplní sa o desať vyššie než posledné pravidlo v tomto zozname, aby sa medzi ne dalo neskôr vložiť ďalšie. Dve pravidlá v jednom zozname nemôžu mať rovnaké poradie.",
+          "position": "Zvoľte „keep“, ak sa má os nechať tak, zvoľte nastavenú hodnotu, ak sa má číslo prečítať z pomocníka pri rozhodovaní, alebo napíšte číslo od 0 do 100.",
+          "tilt": "Zvoľte „keep“, ak sa má os nechať tak, zvoľte nastavenú hodnotu, ak sa má číslo prečítať z pomocníka pri rozhodovaní, alebo napíšte číslo od 0 do 100.",
+          "events": "Nechajte prázdne, ak má pravidlo platiť pre každú udalosť."
+        }
+      },
+      "edit": {
+        "title": "Vyberte, čo upraviť",
+        "data": {
+          "subentry_id": "Ktoré?"
+        }
+      },
+      "edit_form": {
+        "title": "Upraviť",
+        "description": "Vyplňte polia nižšie. Platia len polia pre typ položky, ktorú pridávate; čo neviete, nechajte na predvolenej hodnote.",
+        "data": {
+          "entity": "Entita",
+          "id": "Id",
+          "facade_azimuth": "Azimut fasády",
+          "tolerance": "Tolerancia slnečného sektora",
+          "travel_time": "Čas plného dojazdu",
+          "has_tilt": "Má lamelovú os",
+          "tilt_after_arrival": "Lamely nastaviť až po dojazde polohy",
+          "members": "Žalúzie v tejto zóne",
+          "occupants": "Obyvatelia",
+          "default": "Predvolená hodnota (ak entita chýba alebo sa nedá prečítať)",
+          "condition": "Podmienka",
+          "numeric_state_default": "Záložná hodnota pre číselné porovnanie",
+          "order": "Poradie (nižšie sa skúša skôr; záložný režim musí mať najvyššie poradie)",
+          "condition_ref": "Pomenovaná podmienka (nechajte prázdne pre vloženú podmienku, alebo aby bol tento režim záložný)",
+          "when": "Vložená podmienka (nechajte prázdne pri použití pomenovanej podmienky, alebo aby bol tento režim záložný)",
+          "mode": "Režim",
+          "zone": "Zóna"
+        }
+      },
+      "remove": {
+        "title": "Odstrániť",
+        "data": {
+          "subentry_id": "Ktoré?",
+          "confirm": "Áno, odstrániť"
+        }
+      },
+      "import_export": {
+        "title": "Import / export konfigurácie",
+        "description": "Načíta alebo zapíše celú konfiguráciu ako YAML súbor -- tie isté služby import_config/export_config, ktoré sa dajú zavolať aj priamo z Nástrojov pre vývojárov.",
+        "data": {
+          "action": "Akcia",
+          "path": "Cesta",
+          "dry_run": "Skúšobný beh",
+          "overwrite": "Prepísať"
+        }
+      },
+      "execution": {
+        "title": "Vykonávanie",
+        "description": "Či integrácia žalúziami naozaj hýbe, alebo len zapisuje do logu, čím by pohla. Suchý beh je bezpečné nastavenie: každý príkaz sa zaloguje aj so službou a dátami, ktoré by použil, takže sa dá deň porovnať s automatizáciami, ktoré nahrádza. Vypnutím dostane integrácia ruky.",
+        "data": {
+          "dry_run": "Suchý beh (príkazy len zapisovať, nehýbať ničím)",
+          "fixture_path": "Fixture na porovnanie"
+        },
+        "data_description": {
+          "dry_run": "Zapnuté: nič sa nehýbe, každý zamýšľaný príkaz ide do logu. Vypnuté: žalúzie sa naozaj hýbu. Prejaví sa okamžite, bez reloadu.",
+          "fixture_path": "Nepovinné. Cesta k YAML fixture, proti ktorej kontrola driftu porovnáva živú konfiguráciu — pre dom, ktorý má checkout inde. Prázdne znamená porovnávať proti adresáru fixtures/ vedľa custom_components/, alebo proti ničomu, ak taký nie je."
+        }
+      },
+      "check_matrix": {
+        "title": "Zdravie konfigurácie",
+        "description": "{result}"
+      }
+    },
+    "error": {
+      "invalid_config": "Tento súbor sa nedá použiť: {error_detail}",
+      "confirmation_required": "Zaškrtnite potvrdenie, aby sa položka odstránila.",
+      "import_export_failed": "Toto sa nepodarilo dokončiť: {error_detail}",
+      "rule_is_inherited": "Toto pravidlo patrí do zdieľaného predvoleného zoznamu režimu „{mode}“, nie tejto zóne -- rozhoduje o každej zóne v tomto režime, ktorá nemá vlastné zodpovedajúce pravidlo. Upraviť alebo odstrániť ho môžete cez Pravidlá -> zóna „*“ pre režim „{mode}“.",
+      "rule_no_longer_exists": "Toto pravidlo pre zónu „{zone}“ v režime „{mode}“ bolo medzitým odstránené inde. Vyberte znova z aktuálneho zoznamu.",
+      "subentry_vanished": "Táto položka bola medzitým odstránená inde. Vráťte sa späť a vyberte znova, ak ešte existuje."
+    }
+  },
+  "issues": {
+    "fixture_drift": {
+      "title": "Konfigurácia sa už nezhoduje s fixtures/dom_peter.yaml",
+      "description": "Žalúzie, zóny, režimy, podmienky, hodnoty alebo pravidlá nastavené tu sa už nezhodujú so súborom `fixtures/dom_peter.yaml` z tohto repozitára -- práve ten meria migračná brána na 92 160 scenároch. Rozdielne polia: {fields}. Naimportuj ten súbor znova (služba `import_config`), aby sa oba stavy opäť zjednotili, alebo uprav fixture podľa toho, čo je skutočne zamýšľané, skôr než sa na bránu opäť spoľahneš."
+    },
+    "unknown_entities": {
+      "title": "Konfigurácia odkazuje na entity, ktoré tento Home Assistant nemá",
+      "description": "Túto konfiguráciu tvorí {count} entít, ktoré nie sú ani v stavovom stroji, ani v registri entít, takže ich nemá kto čítať ani ovládať: {entities}. Pravidlo, podmienka alebo poistka, ktorá od niektorej závisí, sa bude chovať, ako keby ten vstup chýbal, a žalúziou spomedzi nich sa nikdy nepohne. Vytvor chýbajúce helpery a entity, alebo uprav konfiguráciu na tie, ktoré tento dom naozaj má. Kontroluje sa raz, po nábehu Home Assistant."
+    },
+    "blinds_missing_features": {
+      "title": "Žalúzia nezvládne to, čo od nej pravidlá žiadajú",
+      "description": "Pri {count} žalúziách chýbajú schopnosti, ktoré pravidlá potrebujú: {blinds}. Výber entít v Home Assistant filtruje len domain `cover`, takže sa dajú zvoliť aj garážové dvere alebo markíza — a príkazy, ktoré nezvládnu, Home Assistant ticho zahodí. Buď zvoľ cover, ktorý tie schopnosti má, alebo uprav pravidlá, aby žiadali len to, čo vie (0 a 100 potrebujú len otvoriť a zavrieť, hodnota medzi tým potrebuje nastavenie pozície). Kontroluje sa raz, po nábehu Home Assistant."
+    },
+    "config_warnings": {
+      "title": "Konfigurácia má varovania",
+      "description": "Počet varovaní o tejto konfigurácii: {count}. {warnings}. Nič z toho integráciu nezastaví, a každé znamená, že sa niečo ticho neriadi — zóna bez pravidiel, pravidlo zatienené skorším, poistka, ktorá nikdy nevystrelí, žalúzia, ku ktorej sa nehlási žiadna zóna, alebo lamely žiadané od žalúzie, ktorá ich nemá. Oprav to v dotknutom subentry, alebo potvrď, že to chovanie je zámer."
+    }
+  },
+  "services": {
+    "import_config": {
+      "name": "Importovať konfiguráciu",
+      "description": "Načíta YAML konfiguračný súbor a nahradí ním celé nastavenie žalúzií, zón, režimov, podmienok, hodnôt a pravidiel v tejto integrácii.",
+      "fields": {
+        "path": {
+          "name": "Cesta",
+          "description": "Cesta k YAML súboru, ktorý sa má importovať."
+        },
+        "dry_run": {
+          "name": "Skúšobný beh",
+          "description": "Len nahlási, čo by sa spravilo, bez akejkoľvek zmeny."
+        },
+        "overwrite": {
+          "name": "Prepísať",
+          "description": "Nutné na nahradenie už nakonfigurovaných žalúzií, zón, režimov, podmienok, hodnôt a pravidiel. Bez tohto sa import cez existujúcu konfiguráciu odmietne, nezlúči sa s ňou."
+        }
+      }
+    },
+    "export_config": {
+      "name": "Exportovať konfiguráciu",
+      "description": "Zapíše aktuálne žalúzie, zóny, režimy, podmienky, hodnoty a pravidlá tejto integrácie do YAML súboru, v rovnakom tvare, aký číta import_config.",
+      "fields": {
+        "path": {
+          "name": "Cesta",
+          "description": "Cesta, kam sa má YAML súbor zapísať. Odmietnutá, ak ide o symlink, priečinok, alebo ak nadradený priečinok neexistuje."
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "no_config_entry": {
+      "message": "Cover Logic ešte nie je nastavený."
+    },
+    "invalid_config": {
+      "message": "Tento súbor sa nedá importovať: {error_detail}"
+    },
+    "cannot_parse_file": {
+      "message": "Súbor {path} sa nedá spracovať: {error_detail}"
+    },
+    "cannot_read_file": {
+      "message": "Súbor {path} sa nedá načítať: {error_detail}"
+    },
+    "existing_config": {
+      "message": "Cover Logic už má nastavených {count} položiek. Na ich úplné nahradenie treba poslať \"overwrite: true\", alebo ich najprv odstrániť."
+    },
+    "import_conversion_failed": {
+      "message": "Importovaný súbor sa nepodarilo previesť na položky konfigurácie: {error_detail}"
+    },
+    "export_path_is_symlink": {
+      "message": "Export cez symlink je odmietnutý: {path}. Zadajte priamo skutočný súbor."
+    },
+    "export_path_is_directory": {
+      "message": "{path} je priečinok, nie súbor."
+    },
+    "export_parent_missing": {
+      "message": "Priečinok {path} neexistuje."
+    },
+    "export_target_has_comments": {
+      "message": "{path} už obsahuje {count} riadkov s komentárom. Export by ich ticho zmazal -- najprv súbor presuňte inam, alebo exportujte inde a komentáre doplňte ručne."
+    },
+    "nothing_to_export": {
+      "message": "Zatiaľ nie je nastavené nič; nie je čo exportovať."
+    },
+    "cannot_parse_subentries": {
+      "message": "Aktuálnu konfiguráciu sa nepodarilo načítať: {error_detail}"
+    },
+    "cannot_write_file": {
+      "message": "Súbor {path} sa nedá zapísať: {error_detail}"
+    }
+  }
+}

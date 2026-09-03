@@ -1,0 +1,144 @@
+name: claude review
+
+# ON DEMAND ONLY. This workflow spends real API credit on every run (order of
+# a few euros), so nothing here fires by itself -- not `synchronize`, not
+# `opened`, and above all not `reopened`.
+#
+# `reopened` is why this comment exists. It reads like a repository event, but
+# in practice it is a button: closing and reopening a PR was being used as
+# "review this again", and each press cost another full review. An automatic
+# trigger that a human presses on purpose is the worst of both worlds -- it
+# spends money without anyone deciding to spend money.
+#
+# To ask for a review, comment `@claude` on the pull request, or run this
+# workflow manually from the Actions tab with a PR number.
+#
+# The `author_association` check below is not ceremony: this repository is
+# PUBLIC, so without it any stranger could spend the owner's API credit by
+# commenting one word. OWNER/MEMBER/COLLABORATOR only.
+on:
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: PR number to review
+        required: true
+        type: string
+
+jobs:
+  review:
+    # `issue_comment` fires for issues too, hence the `.pull_request` check --
+    # there is no pull-request-comment event to subscribe to instead.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.issue.pull_request &&
+       contains(github.event.comment.body, '@claude') &&
+       contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'),
+                github.event.comment.author_association))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    env:
+      PR_NUMBER: ${{ github.event.inputs.pr || github.event.issue.number }}
+    steps:
+      # Neither trigger checks out the PR branch on its own: `issue_comment`
+      # and `workflow_dispatch` both start from the default branch, so the
+      # head ref has to be named explicitly. Without this the review would
+      # read `main` and report on a diff that is not the one under review.
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          ref: refs/pull/${{ env.PR_NUMBER }}/head
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ env.PR_NUMBER }}
+
+            Review this pull request. The PR branch is already checked out.
+
+            ## What this project is
+
+            `cover_logic` decides where a real, occupied house's blinds should
+            be. It is deployed and running. A wrong decision moves furniture-
+            sized objects in someone's home, so correctness outranks style by a
+            wide margin. Read `MODELS.md` first — it is the project brief and
+            states the architecture, the deliberate decisions that look like
+            bugs, and the rules for changing this code.
+
+            ## The one thing CI cannot tell you
+
+            The strongest safety net in this project is the migration gate in
+            `tests/parity/`: it renders the live Jinja matrix from the house's
+            own `configuration.yaml` and compares it against the engine across
+            92,160 scenarios. **That file is not in this repository, so the gate
+            is excluded in CI** (`--ignore=tests/parity`). A green CI run says
+            nothing about whether the house still decides the same way.
+
+            So: if this PR touches `engine.py`, `conditions.py`, `config_schema.py`,
+            `config_store.py`, `validation.py` or `fixtures/dom_peter.yaml`, say
+            plainly in your review that the gate must be run locally before merge,
+            and name which decisions could have changed. Do not treat green checks
+            as proof.
+
+            ## The defect class that keeps getting through here
+
+            Three defects have shipped past a suite of 500+ green tests, each
+            because the test exercised a layer *below* the one that breaks:
+
+            - a rendered `step_id` with no matching `async_step_` method — tests
+              called flow methods directly, bypassing Home Assistant's `FlowManager`
+            - 118 unresolved `[%key:...%]` translation references — the test
+              compared key *sets*, never values
+            - service handlers registered as lambdas, so every call through the
+              service bus returned an unawaited coroutine — every test awaited the
+              inner function directly
+
+            For each new or changed test, ask what a broken implementation would
+            have to do to still pass it. A test that cannot fail is worse than no
+            test, because it buys false confidence.
+
+            ## Invariants worth checking
+
+            - **One owner.** Rule grouping and order live in
+              `config_store._grouped_rules`; the effective per-zone list in
+              `effective_rule_items`; validation in `validation.validate`;
+              conformance in `conformance.diff_configs`. A second implementation
+              of any of these is a real finding — two copies that agree today
+              diverge later, and the gate is blind to the difference.
+            - **A form may only be blocked by a problem it can fix.** This defect
+              appeared three times; twice it made the configuration literally
+              unbuildable. `_CODE_OWNERS` and `Problem.owners` are the mechanism.
+            - **`dry_run` is the only brake left.** Since phase 3 task 5 the
+              integration does call `cover.*` services, from exactly one place:
+              `coordinator._build_runner`. `dry_run` defaults to `True`
+              (`const.DEFAULT_DRY_RUN`) and `runner._execute` returns before the
+              caller while it is on. A second service-call site, a cached
+              `dry_run`, or a changed default is a real finding.
+            - **Translations.** No value may be a `[%key:...%]` reference — it does
+              not resolve in a custom integration and the user reads the raw
+              placeholder. No string carrying a `{placeholder}` may contain an
+              apostrophe — the formatter treats `'` as an escape character.
+            - **Rule order is semantics**, not presentation: the engine takes the
+              first match. Anything that displays rules in another order misleads.
+
+            ## How to report
+
+            Use `gh pr comment` for the overall verdict, and
+            `mcp__github_inline_comment__create_inline_comment` (with
+            `confirmed: true`) for specific lines. Post GitHub comments only — do
+            not return the review as a message.
+
+            Rank by severity and be concrete: name the input or state that
+            triggers each problem and what goes wrong. If you find nothing, say so
+            plainly rather than padding with style observations. Never include a
+            link to a Claude session in anything you post — this repository
+            forbids it (see `MODELS.md` section 9).
+
+          claude_args: |
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read,Grep,Glob"
