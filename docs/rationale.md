@@ -919,6 +919,42 @@ project does not own), and `_check_unknown_condition_refs` only checks ref
 deep inside `conditions.py` at evaluation time, far from the config that
 caused it.
 
+### Why `numeric_state` cannot take `for:`
+
+`conditions._state` honours `for:`; every other condition type accepts the key
+and ignores it, and `validation`'s `for_ignored` warns about that. The warning
+says "cannot", not "does not yet", and the distinction is the point: the
+obvious implementation is silently wrong.
+
+`for:` here is measured from `World.since`, which records **when the entity
+last changed state**. For a state that is a single value ("bed is `off`") that
+is the right clock. For a threshold it is the wrong one: a sensor that keeps
+rewriting its value resets `since` while the threshold stays crossed.
+
+Measured on the owner's roof-mounted lux sensor, the evening of 2026-09-02
+between 17:00 and 20:00: it rewrites its value **every 120 seconds, exactly**,
+and did so 22 times while below the 2800 lx threshold. So `since` never
+exceeded 120 s during a descent that lasted three quarters of an hour, and a
+`for: 300` implemented off `since` would have been false the entire time --
+while looking, in the configuration, exactly like a five-minute debounce.
+
+Doing it properly needs "when did this value last cross this threshold", which
+is per-condition state that has to survive between evaluations. `World` is a
+snapshot on purpose (see "Why `World` takes a defensive copy"), and the one
+place this project keeps between-evaluation state is `deferrals.py`, which is
+about guards and their deadlines rather than about condition history. Adding a
+second such place to debounce a threshold would be a large change for a small
+gain, and the gain is available already: debounce the trigger that writes the
+entity, or read a helper that latches the answer -- which is what
+`Lighting SUN` does with its own `for: 5 min` on the lux trigger.
+
+The live consequence is measured and small. A lux dropout at dusk flips
+`vecer` false for the length of the dropout, and the terrace would be told to
+open; the settle window (8 s) does not absorb it, since dropouts run 55-132 s.
+Over 14 days there were 33 dropouts and **none** fell in the 45 minutes before
+sunset -- they cluster in daylight hours. After sunset `vecer` is held by the
+sun window, so only the lux-led dusk of an overcast evening is exposed at all.
+
 ## `planner.py`
 
 ### Why the plan is a sequence with an explicit wait, not two service calls

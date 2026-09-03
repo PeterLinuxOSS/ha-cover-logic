@@ -53,6 +53,10 @@ _FIXTURE_DRIFT_ISSUE = "fixture_drift"
 # see `_check_referenced_entities`.
 _UNKNOWN_ENTITIES_ISSUE = "unknown_entities"
 
+# The same mechanism for a blind that cannot do what the rules ask of it;
+# see `_check_blind_capabilities`.
+_MISSING_FEATURES_ISSUE = "blinds_missing_features"
+
 # Plain strings, not `homeassistant.const.Platform.SENSOR` -- an enum import
 # would be one more Home Assistant name at module level, exactly what this
 # file's own docstring rules out. Home Assistant's platform-forwarding calls
@@ -164,6 +168,7 @@ async def async_setup_entry(hass: "HomeAssistant", entry: "CoverLogicConfigEntry
 
     async def _at_started(_hass: "HomeAssistant") -> None:
         await _check_referenced_entities(hass, config)
+        await _check_blind_capabilities(hass, config)
 
     entry.async_on_unload(async_at_started(hass, _at_started))
 
@@ -359,6 +364,56 @@ class _ConfigReloader:
         if self._unsub is not None:
             self._unsub()
             self._unsub = None
+
+
+async def _check_blind_capabilities(hass: "HomeAssistant", config: Config) -> None:
+    """Which blinds cannot carry out what this configuration asks of them.
+
+    Home Assistant's entity picker filters on `domain="cover"` and nothing
+    else, so a clean install offered `cover.garage_door` (open and close, no
+    position, no tilt) as a blind and nothing refused it -- measured
+    2026-09-03. See `capabilities.py` for why the requirement is derived from
+    the values the rules ask for rather than from a fixed list, and why
+    filtering the picker was rejected as unverifiable.
+
+    Runs from `async_at_started` for the same reason as
+    `_check_referenced_entities`: before Home Assistant has finished starting,
+    a cover's `supported_features` may not be readable yet, and reading zero
+    then would flag every blind in the house.
+    """
+    # Deferred: see the module docstring for why this cannot be a top-level
+    # import.
+    from homeassistant.helpers import issue_registry as ir  # noqa: PLC0415
+
+    from .capabilities import missing_features, required_features  # noqa: PLC0415
+
+    short = []
+    for entity, needed in sorted(required_features(config).items()):
+        state = hass.states.get(entity)
+        if state is None:
+            # Absent is `_check_referenced_entities`'s question, not this one,
+            # and answering it twice would put one fault in two issues.
+            continue
+        gaps = missing_features(needed, int(state.attributes.get("supported_features") or 0))
+        if gaps:
+            short.append(f"{entity} ({', '.join(gaps)})")
+
+    if not short:
+        ir.async_delete_issue(hass, DOMAIN, _MISSING_FEATURES_ISSUE)
+        return
+
+    _LOGGER.warning(
+        "cover_logic: %d blind(s) cannot do what the rules ask: %s", len(short), "; ".join(short)
+    )
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        _MISSING_FEATURES_ISSUE,
+        is_fixable=False,
+        severity=ir.IssueSeverity.WARNING,
+        translation_key=_MISSING_FEATURES_ISSUE,
+        translation_placeholders={"count": str(len(short)), "blinds": name_list(tuple(short))},
+    )
 
 
 async def _check_referenced_entities(hass: "HomeAssistant", config: Config) -> None:

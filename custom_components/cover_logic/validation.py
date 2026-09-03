@@ -938,16 +938,19 @@ def _check_condition_shape(node: dict, where: str, owner: tuple[str, str]) -> li
             )
         )
     if "for" in node and kind != "state":
-        # `conditions.py` reads `for:` in `_state` and nowhere else, so on any
-        # other type it is silently ignored -- and silence is the failure mode
-        # this project keeps paying for. WARNING, not ERROR: the condition is
-        # still answerable, just less patient than it reads.
+        # Not "not implemented yet" but "cannot be": see docs/rationale.md,
+        # "Why `numeric_state` cannot take `for:`". Saying so in the message
+        # matters -- "ignored" reads as a bug someone will fix, and the
+        # obvious fix is silently wrong.
         out.append(
             Problem(
                 WARNING,
                 "for_ignored",
-                f"{where}: condition {kind!r} ignores 'for:' -- only 'state' takes it here, "
-                f"so this condition answers on the first reading rather than a held one",
+                f"{where}: condition {kind!r} cannot take 'for:' and ignores it. Only 'state' "
+                f"takes it, because 'for:' is measured from when the entity last changed state "
+                f"-- which for a threshold is the wrong clock: a sensor that keeps rewriting its "
+                f"value resets it while the threshold stays crossed. Debounce the trigger that "
+                f"writes the entity, or add a 'state' condition on a helper that latches it",
                 owners=owners,
             )
         )

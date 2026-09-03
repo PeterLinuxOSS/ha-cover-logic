@@ -675,6 +675,10 @@
     "unknown_entities": {
       "title": "Konfigurácia odkazuje na entity, ktoré tento Home Assistant nemá",
       "description": "Túto konfiguráciu tvorí {count} entít, ktoré nie sú ani v stavovom stroji, ani v registri entít, takže ich nemá kto čítať ani ovládať: {entities}. Pravidlo, podmienka alebo poistka, ktorá od niektorej závisí, sa bude chovať, ako keby ten vstup chýbal, a žalúziou spomedzi nich sa nikdy nepohne. Vytvor chýbajúce helpery a entity, alebo uprav konfiguráciu na tie, ktoré tento dom naozaj má. Kontroluje sa raz, po nábehu Home Assistant."
+    },
+    "blinds_missing_features": {
+      "title": "Žalúzia nezvládne to, čo od nej pravidlá žiadajú",
+      "description": "Pri {count} žalúziách chýbajú schopnosti, ktoré pravidlá potrebujú: {blinds}. Výber entít v Home Assistant filtruje len domain `cover`, takže sa dajú zvoliť aj garážové dvere alebo markíza — a príkazy, ktoré nezvládnu, Home Assistant ticho zahodí. Buď zvoľ cover, ktorý tie schopnosti má, alebo uprav pravidlá, aby žiadali len to, čo vie (0 a 100 potrebujú len otvoriť a zavrieť, hodnota medzi tým potrebuje nastavenie pozície). Kontroluje sa raz, po nábehu Home Assistant."
     }
   },
   "services": {
