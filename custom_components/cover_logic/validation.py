@@ -382,7 +382,7 @@ def _check_guards(config: Config) -> list[Problem]:
             if target not in config.blinds and target not in config.zones
         )
 
-    return out + _check_guard_reachability(config)
+    return out + _check_guard_reachability(config) + _check_guard_stage_precedence(config)
 
 
 def _check_guard_reachability(config: Config) -> list[Problem]:
@@ -401,9 +401,9 @@ def _check_guard_reachability(config: Config) -> list[Problem]:
     said to swallow a later one, and all three are conservative:
 
     - the earlier guard has no `when`, so it matches unconditionally;
-    - it runs at the same `stage` -- an `input` guard removing a target and
-      an `output` guard overriding a decision are asked at different moments,
-      and neither hides the other;
+    - it runs at the same `stage`. Across stages order is not the referee at
+      all, which is a hazard of its own rather than a reason to relax this
+      one -- see `_check_guard_stage_precedence`;
     - its `applies_to` covers the later one's direction.
     """
     out: list[Problem] = []
@@ -430,6 +430,52 @@ def _check_guard_reachability(config: Config) -> list[Problem]:
                 )
         if guard.when is None:
             covered.setdefault((guard.stage, guard.applies_to), set()).update(mine)
+
+    return out
+
+
+def _check_guard_stage_precedence(config: Config) -> list[Problem]:
+    """An `input` guard beats every `output` guard, however late it is written.
+
+    `guards.review` seeds its outcomes from the input-stage screening and never
+    judges a blind twice, so between the two stages the stage decides and the
+    written order does not. That is deliberate, and everywhere else it is
+    harmless: an input guard and an output `skip` reach the same "move nothing".
+    It is not harmless against a `force`, which is the one policy that makes
+    something happen -- the house's wind protection is written first precisely
+    so it outranks everything, and an input guard added later would silently
+    outrank it back, leaving a hand-raised blind out in a storm.
+
+    Reported only against an earlier `force`, so the check stays at the one
+    shape that loses something real. See docs/rationale.md -- "Why an input
+    guard over an earlier force is a warning".
+    """
+    out: list[Problem] = []
+    forced: list[tuple[int, Guard, set[str]]] = []
+
+    for index, guard in enumerate(config.guards):
+        mine = guard_blinds(config, guard)
+        if guard.stage != GUARD_STAGE_INPUT:
+            if guard.policy == GUARD_FORCE:
+                forced.append((index, guard, mine))
+            continue
+
+        for earlier, other, blinds in forced:
+            shared = sorted(mine & blinds)
+            if not shared:
+                continue
+            out.append(
+                Problem(
+                    WARNING,
+                    "guard_stage_precedence",
+                    f"{_guard_label(index, guard)} is at stage {GUARD_STAGE_INPUT!r}, so it is "
+                    f"answered before {_guard_label(earlier, other)} is asked at all, even "
+                    f"though that one is written first and imposes an action on "
+                    f"{', '.join(shared)}; move this guard to the output stage if written "
+                    f"order is meant to decide between them",
+                    owners=frozenset({_guard_owner(index)}),
+                )
+            )
 
     return out
 
