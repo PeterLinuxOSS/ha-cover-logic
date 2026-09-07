@@ -18,12 +18,32 @@ class EngineError(Exception):
 
 
 @dataclass(frozen=True)
+class ZoneFailure:
+    """One zone whose rules raised, the exception that did it, and who paid for it.
+
+    `key` is the `f"{mode}.{zone_id}"` spelling `config.rules` and the trace
+    already use, so a report names the same thing the config does.
+    """
+
+    key: str
+    error: str
+    blinds: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class Decision:
-    """The resolved mode, the action for every blind, and why each one fired."""
+    """The resolved mode, the action for every blind, why each one fired, and what failed.
+
+    `failures` is empty on a decision that broke nothing. A non-empty one means
+    those zones were left on keep/keep and the rest of the house was decided
+    anyway -- see docs/rationale.md, "Why a contained zone failure is reported
+    as an error": containment is the design, silence was the defect.
+    """
 
     mode: str
     targets: dict[str, Action]
     trace: dict[str, str]
+    failures: tuple[ZoneFailure, ...] = ()
 
 
 def evaluate(config: Config, world: World) -> Decision:
@@ -36,6 +56,7 @@ def evaluate(config: Config, world: World) -> Decision:
 
     targets: dict[str, Action] = {}
     trace: dict[str, str] = {}
+    failures: list[ZoneFailure] = []
 
     # Looked up once per mode, outside the zone loop: a default is a
     # property of the mode, shared verbatim by every zone that falls back to
@@ -45,13 +66,15 @@ def evaluate(config: Config, world: World) -> Decision:
 
     for zone_id, zone in config.zones.items():
         own_rules = config.rules.get(f"{mode}.{zone_id}")
-        zone_targets, zone_trace = _evaluate_zone(
+        zone_targets, zone_trace, failure = _evaluate_zone(
             config, own_rules, default_rules, world, zone, mode, zone_id
         )
         targets.update(zone_targets)
         trace.update(zone_trace)
+        if failure is not None:
+            failures.append(failure)
 
-    return Decision(mode=mode, targets=targets, trace=trace)
+    return Decision(mode=mode, targets=targets, trace=trace, failures=tuple(failures))
 
 
 def _evaluate_zone(
@@ -62,11 +85,14 @@ def _evaluate_zone(
     zone: Zone,
     mode: str,
     zone_id: str,
-) -> tuple[dict[str, Action], dict[str, str]]:
+) -> tuple[dict[str, Action], dict[str, str], ZoneFailure | None]:
     """Decide every blind in one zone; a broken rule here must not affect other zones.
 
-    See docs/rationale.md -- "Why `EngineError` must propagate uncontained
-    out of `_evaluate_zone`".
+    Returns the failure alongside the decision rather than only marking the
+    trace: the trace is a string a person reads, and the caller needs a fact it
+    can report. See docs/rationale.md -- "Why `EngineError` must propagate
+    uncontained out of `_evaluate_zone`" and "Why a contained zone failure is
+    reported as an error".
     """
     targets: dict[str, Action] = {}
     trace: dict[str, str] = {}
@@ -85,12 +111,14 @@ def _evaluate_zone(
     except EngineError:
         raise
     except Exception as err:  # noqa: BLE001 -- contain any rule failure, by design
-        label = f"{mode}.{zone_id}#error {type(err).__name__}: {err}"
+        reason = f"{type(err).__name__}: {err}"
+        key = f"{mode}.{zone_id}"
         return (
             dict.fromkeys(zone.members, Action()),
-            dict.fromkeys(zone.members, label),
+            dict.fromkeys(zone.members, f"{key}#error {reason}"),
+            ZoneFailure(key=key, error=reason, blinds=tuple(zone.members)),
         )
-    return targets, trace
+    return targets, trace, None
 
 
 def _resolve_mode(config: Config, world: World) -> str:
