@@ -29,7 +29,33 @@ recorded with their evidence so nobody re-litigates them.
 | 17 | `tests/ha/test_init.py:140` | Setup tests never unload, abandoning the coordinator's subscription and timers. |
 | 18 | `tests/ha/test_options_flow.py:1284` | The translation guard checks a hand-maintained step list, so a new step can render untranslated and still pass. |
 
-## Deliberately left open, with the diagnosis
+## Fixed after all: #10, #11, #12, by way of issue #6
+
+Everything in this section was written while these three were still open, and
+it is kept as written because the wrong turn is the useful part. They landed
+the same day, once the owner pointed out that the problem was already analysed
+and specified in this repository: **open issue #6, "No time axis"**. The fix is
+the one that issue names -- the clock is a derived axis, each boundary ± 1
+minute, with the sky held constant -- and it closes all three:
+
+- **#10** (sun witnesses) was a *symptom* of #6, not a defect of its own.
+- **#11** (`pairwise` partial coverage) turned out to be worse than reported:
+  on this house's own fixture the old `break` left **192 pairs uncovered** out
+  of 6 921. Now zero, measured.
+- **#12** (`event_targets_zone` ignoring `want_true`) is resolved against the
+  event actually chosen.
+
+Result on the house fixture: clock axis 12 instants, rows 102 -> 207, worlds
+294 -> 504, uncovered pairs 192 -> 0, witnesses 90/90, `dead=[]`.
+`horucava.kvety#1` fires from the witnesses alone -- no axis was widened to
+make it green. Suite 1410 -> 1422, `test_coverage_rules.py` 1.6 s -> 5.1 s,
+under 2 % at suite level. Issue #6 can be closed.
+
+The `19:39/19:41` and `05:38/05:40` probes in that axis are the point: sunset
+− 20 min ± 1 and sunrise − 21 min ± 1, which is `vecer` and `je_noc` separated
+to the minute.
+
+## The wrong turn, kept on purpose
 
 **#10, #11, #12 -- `tests/scenarios.py`.** Attempted and reverted the same
 day, because the attempt made `test_every_rule_fires_at_least_once` fail on
@@ -51,17 +77,37 @@ _Infeasible: no sun probe makes {'condition': 'sun', 'before': 'sunrise',
 (pinned sun: SunTimes(sunrise=... 6:00, sunset=... 11:00))
 ```
 
-Two things a correct version needs, both absent from the attempt:
+**And varying the sky was the wrong axis to begin with.** This is not a new
+problem needing a new design: it is open issue **#6**, "No time axis: a
+time-gated mode kills its whole rule set", written up in
+`docs/phase-2-findings.md` §4 and still listed as open in `MODELS.md`. The
+root cause named there is the one thing both symptoms share -- `NOW` is a
+module constant, so *nothing* clock-derived can be varied, which is why
+`_require`'s `time` branch surrenders and its `sun` branch says outright
+"fixed by the world, not by any entity this generator can vary". Sourcery's
+sun finding is a symptom of #6, not a separate defect.
 
-1. **Probes derived from the configuration, not fixed constants.** This file
-   already does exactly that for facades -- `DEFAULT_AZIMUTH_PROBES` is only
-   the fallback "when a configuration declares no facade at all", and real
-   probes are derived per config. Sun probes have to come from the offsets the
-   configuration actually contains, so every boundary a clause can distinguish
-   is representable.
-2. **The sky as a backtrackable choice point,** like any other axis. Pinning
-   it first-wins and raising when a later clause disagrees is what produced
-   the failure above.
+The fix has been written down all along, and it is the opposite of what was
+attempted: *"Make `now` an axis, derived from the `after`/`before` values
+present in the config (each boundary ± 1 minute)."* Keep the sky fixed and
+move the clock. That is what makes minute-level boundaries separable -- `± 1
+minute` is exactly the resolution the `vecer`/`je_noc` pair needs -- and it
+fixes `condition: time` at the same time, which the sky approach never would
+have.
+
+Two properties a correct version needs, neither present in the attempt:
+
+1. **The axis derived from the configuration, not from constants.** This file
+   already does that for facades: `DEFAULT_AZIMUTH_PROBES` is only the
+   fallback "when a configuration declares no facade at all". The clock axis
+   has to come from the boundaries the configuration actually contains.
+2. **The instant as a backtrackable choice point,** like any other axis.
+   Pinning it first-wins and raising when a later clause disagrees is what
+   produced the failure above.
+
+Lesson worth more than the fix: the diagnosis above was reached by reading the
+code and stopping there, and it invented a design for a problem this
+repository had already analysed and specified. Read the `.md` history first.
 
 Reverting was the safe call, not the lazy one: `scenarios.py` derives the
 space that `test_coverage_rules.py` and the 92 160-scenario migration gate

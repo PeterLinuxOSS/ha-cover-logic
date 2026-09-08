@@ -8,13 +8,32 @@ import datetime as dt
 import itertools
 from typing import Any
 
-from cover_logic.conditions import evaluate_condition
+from cover_logic.conditions import evaluate_condition, parse_hhmm
 from cover_logic.config_schema import all_condition_nodes
 from cover_logic.engine import evaluate
 from cover_logic.model import Config
-from cover_logic.world import Event, Target, World
+from cover_logic.world import Event, SunTimes, Target, World
 
 NOW = dt.datetime(2026, 8, 19, 13, 0)
+
+# The sky is FIXED and the clock moves. See docs/rationale.md -- "Why the
+# clock is the axis and the sky is a constant".
+SUN = SunTimes(
+    sunrise=NOW.replace(hour=6, minute=0),
+    sunset=NOW.replace(hour=20, minute=0),
+)
+
+# Reserved axis key for `World.now`. Every other key is built from an entity
+# id, which is always `domain.object_id`; this one has no dot, so no
+# configuration can name an entity that collides with it.
+CLOCK_AXIS = "__now__"
+
+# One night and one daylight instant, always on the clock axis, so a
+# configuration with no `time` and no `sun` clause still yields a usable `now`.
+DEFAULT_CLOCK_PROBES = (NOW.replace(hour=2, minute=0), NOW)
+
+# Issue #6's stated resolution: "each boundary ± 1 minute".
+CLOCK_STEP = dt.timedelta(minutes=1)
 
 # Fallback probes for a 45-degree sector, used only when a configuration
 # declares no facade at all. Real probes are derived per-config below.
@@ -124,6 +143,54 @@ def _azimuth_probes(config: Config) -> list[str]:
     return [f"{value:g}" for value in sorted(probes)]
 
 
+def _clock_boundaries(config: Config) -> set[dt.datetime]:
+    """Every instant a clock-derived clause in THIS configuration can distinguish.
+
+    A `time` clause names a wall-clock boundary directly; a `sun` clause names
+    one as an offset from sunrise or sunset, which is a knowable instant
+    precisely because `SUN` is a constant. Offsets are seconds -- this
+    dialect's spelling, not Home Assistant's `"-00:20:00"` string.
+    """
+    bases = {"sunrise": SUN.sunrise, "sunset": SUN.sunset}
+    bounds: set[dt.datetime] = set()
+    for node in all_condition_nodes(config):
+        kind = node.get("condition")
+        if kind == "time":
+            for edge in ("after", "before"):
+                if edge in node:
+                    moment = parse_hhmm(node[edge])
+                    bounds.add(
+                        NOW.replace(
+                            hour=moment.hour,
+                            minute=moment.minute,
+                            second=moment.second,
+                            microsecond=0,
+                        )
+                    )
+        elif kind == "sun":
+            for edge, offset in (("after", "after_offset"), ("before", "before_offset")):
+                base = bases.get(node.get(edge))
+                if base is not None:
+                    bounds.add(base + dt.timedelta(seconds=int(node.get(offset, 0))))
+    return bounds
+
+
+def _clock_probes(config: Config) -> list[dt.datetime]:
+    """Each derived boundary ± 1 minute, plus the always-present day/night pair.
+
+    The boundary instant itself is deliberately NOT probed: what this axis
+    exists for is that every clock clause can be made both true and false, and
+    ± 1 minute is the smallest set that does it. Whether the comparison at the
+    exact boundary is `<` or `<=` is `test_conditions.py`'s subject, and adding
+    a third probe per boundary would grow the covering array for a question
+    that is already answered elsewhere.
+    """
+    probes = set(DEFAULT_CLOCK_PROBES)
+    for bound in _clock_boundaries(config):
+        probes.update({bound - CLOCK_STEP, bound + CLOCK_STEP})
+    return sorted(probes)
+
+
 def _axis_sort_key(value: Any) -> tuple[str, str]:
     """Sort key that tolerates a mixed-type axis (e.g. int `100` next to the
     string sentinel `"__other__"`) without `sorted()` raising on `<` between
@@ -146,6 +213,11 @@ def derive_axes(config: Config) -> dict[str, list]:
     Stringifying here would make a rule that fires in production look dead in
     this suite, and vice versa -- precisely inverted from what the suite
     exists to prove.
+
+    One axis is not an entity at all: `CLOCK_AXIS` carries `World.now` as
+    `datetime` values, derived from the clock boundaries the configuration
+    contains (issue #6). Before it existed, `now` was a module constant and
+    nothing clock- or sun-derived could be varied at all.
     """
     axes: dict[str, set] = {}
 
@@ -180,16 +252,54 @@ def derive_axes(config: Config) -> dict[str, list]:
     for ref in config.values.values():
         add(ref.entity, [str(ref.default), "unavailable"])
 
+    add(CLOCK_AXIS, _clock_probes(config))
+
     return {key: sorted(values, key=_axis_sort_key) for key, values in axes.items()}
+
+
+def _pair_sort_key(pair: tuple[str, Any, str, Any]) -> tuple:
+    """Deterministic order over uncovered pairs, tolerating mixed value types."""
+    a, va, b, vb = pair
+    return (a, _axis_sort_key(va), b, _axis_sort_key(vb))
+
+
+def _covered_by(row: dict[str, Any], needed: set) -> set:
+    return {(a, va, b, vb) for (a, va, b, vb) in needed if row.get(a) == va and row.get(b) == vb}
+
+
+def _greedy_row(
+    axes: dict[str, list], keys: list[str], needed: set, pinned: dict[str, Any]
+) -> dict[str, Any]:
+    """One row: start from the axis defaults and hill-climb each free coordinate."""
+    row = {k: axes[k][0] for k in keys}
+    row.update(pinned)
+    for key in keys:
+        if key in pinned:
+            continue
+        best, best_gain = row[key], -1
+        for value in axes[key]:
+            gain = len(_covered_by({**row, key: value}, needed))
+            if gain > best_gain:
+                best, best_gain = value, gain
+        row[key] = best
+    return row
 
 
 def pairwise(axes: dict[str, list]) -> list[dict[str, Any]]:
     """Greedy covering array: every pair of values appears in at least one row.
 
     Not minimal, but small — and pair coverage is where the real bugs live.
+
+    When the hill-climb stalls (no single-coordinate change improves on the
+    axis defaults, which two four-value axes already manage) the smallest
+    still-uncovered pair is PLANTED into a row instead. Returning early there
+    was the older behaviour, and it quietly broke the guarantee in this
+    docstring: on the house fixture it left 192 pairs uncovered. Planting
+    always covers at least the pair it plants, so `needed` strictly shrinks
+    and the loop terminates.
     """
     keys = sorted(axes)
-    needed: set[tuple[str, str, str, str]] = set()
+    needed: set[tuple[str, Any, str, Any]] = set()
     for a, b in itertools.combinations(keys, 2):
         for va in axes[a]:
             for vb in axes[b]:
@@ -197,24 +307,12 @@ def pairwise(axes: dict[str, list]) -> list[dict[str, Any]]:
 
     rows: list[dict[str, Any]] = []
     while needed:
-        row = {k: axes[k][0] for k in keys}
-        for key in keys:
-            best, best_gain = row[key], -1
-            for value in axes[key]:
-                candidate = {**row, key: value}
-                gain = sum(
-                    1
-                    for (a, va, b, vb) in needed
-                    if candidate.get(a) == va and candidate.get(b) == vb
-                )
-                if gain > best_gain:
-                    best, best_gain = value, gain
-            row[key] = best
-        covered = {
-            (a, va, b, vb) for (a, va, b, vb) in needed if row.get(a) == va and row.get(b) == vb
-        }
+        row = _greedy_row(axes, keys, needed, {})
+        covered = _covered_by(row, needed)
         if not covered:
-            break
+            a, va, b, vb = min(needed, key=_pair_sort_key)
+            row = _greedy_row(axes, keys, needed, {a: va, b: vb})
+            covered = _covered_by(row, needed)
         needed -= covered
         rows.append(row)
     return rows
@@ -316,6 +414,33 @@ def _leaf_false(key: str, node: dict, values: dict[str, Any], axes: dict[str, li
     raise _Infeasible(msg)
 
 
+def _clock_leaf(
+    cond: dict,
+    want_true: bool,
+    values: dict[str, Any],
+    axes: dict[str, list],
+    registry: dict[str, dict],
+) -> None:
+    """Resolve a `time` or `sun` clause by choosing an instant on the clock axis.
+
+    Both read `World.now` against the fixed `SUN` and name no entity, so the
+    clock is the axis they share -- which is why `_solve_rule_witness`
+    enumerates it around the whole solve rather than pinning it here and
+    hoping. Raising when the pinned instant disagrees is what hands control
+    back to that enumeration, or to a nearer `and`/`or` choice point.
+    """
+    pinned = CLOCK_AXIS in values
+    candidates = [values[CLOCK_AXIS]] if pinned else axes.get(CLOCK_AXIS, DEFAULT_CLOCK_PROBES)
+    for instant in candidates:
+        probe = World(states={}, attributes={}, now=instant, sun=SUN, event=Event())
+        if evaluate_condition(cond, probe, None, registry) == want_true:
+            values[CLOCK_AXIS] = instant
+            return
+    where = f"pinned now={values[CLOCK_AXIS]}" if pinned else "no instant on the clock axis"
+    msg = f"{where} cannot make {cond} answer {want_true}"
+    raise _Infeasible(msg)
+
+
 def _require(
     cond: Any,
     want_true: bool,
@@ -323,6 +448,7 @@ def _require(
     axes: dict[str, list],
     registry: dict[str, dict],
     target: Target,
+    event: Event,
 ) -> None:
     """Resolve `cond` to `want_true` in place, backtracking at choice points.
 
@@ -346,7 +472,7 @@ def _require(
     kind = cond.get("condition")
 
     if kind == "ref":
-        _require(registry[cond["name"]], want_true, values, axes, registry, target)
+        _require(registry[cond["name"]], want_true, values, axes, registry, target, event)
         return
 
     if kind in ("and", "or", "not"):
@@ -361,13 +487,13 @@ def _require(
         child_truth = want_true if kind != "not" else not want_true
         if all_required:
             for child in children:
-                _require(child, child_truth, values, axes, registry, target)
+                _require(child, child_truth, values, axes, registry, target, event)
             return
         errors = []
         for child in children:
             snapshot = dict(values)
             try:
-                _require(child, child_truth, values, axes, registry, target)
+                _require(child, child_truth, values, axes, registry, target, event)
                 return
             except _Infeasible as err:
                 values.clear()
@@ -376,28 +502,10 @@ def _require(
         msg = f"no child of {kind!r} could be resolved: {errors}"
         raise _Infeasible(msg)
 
-    if kind == "time":
-        empty = World(states={}, attributes={}, now=NOW, event=Event())
-        actual = evaluate_condition(cond, empty, None, registry)
-        if actual != want_true:
-            msg = f"time condition is fixed by NOW, cannot be made {want_true}"
-            raise _Infeasible(msg)
-
-        return
-
-    if kind == "sun":
-        # Same shape as `time` above: fixed by the world, not by any entity
-        # this generator can vary. `condition: sun` reads `World.sun`, which
-        # witnesses leave empty, so it answers False and only `want_true` is
-        # infeasible. Without this branch it falls through to the leaf path,
-        # which needs an `entity_id` it does not have -- so an `or` holding
-        # one becomes unfalsifiable, which is how every `horucava` rule
-        # briefly looked unreachable.
-        empty = World(states={}, attributes={}, now=NOW, event=Event())
-        if evaluate_condition(cond, empty, None, registry) != want_true:
-            msg = f"sun condition is fixed by the witness world, cannot be made {want_true}"
-            raise _Infeasible(msg)
-
+    if kind in ("time", "sun"):
+        # Both are clock-derived and neither names an entity: they are solved
+        # on the shared clock axis (issue #6), not surrendered to.
+        _clock_leaf(cond, want_true, values, axes, registry)
         return
 
     if kind == "sun_hits_target":
@@ -470,8 +578,14 @@ def _require(
         raise _Infeasible(msg)
 
     if kind == "event_targets_zone":
-        # Depends on the chosen event's person, not on entity state; the
-        # caller picks the event separately, so there is nothing to pin here.
+        # Resolved against the event the caller already chose: returning as
+        # satisfied whatever `want_true` said made negating an earlier
+        # arrival-targeted rule a silent no-op.
+        probe = World(states={}, attributes={}, now=NOW, sun=SUN, event=event)
+        if evaluate_condition(cond, probe, target, registry) != want_true:
+            msg = f"event {event} cannot make {cond} answer {want_true}"
+            raise _Infeasible(msg)
+
         return
 
     entity = cond.get("entity_id")
@@ -497,27 +611,43 @@ def _solve_rule_witness(config: Config, axes: dict[str, list], key: str, index: 
     person = (zone.occupants[0] if zone.occupants else "peter") if event_kind == "arrival" else None
     event = Event(kind=event_kind, person=person)
 
-    values: dict[str, Any] = {}
     modes = list(config.modes)
     mode_pos = next(i for i, m in enumerate(modes) if m.id == mode_id)
 
-    # The target rule's own guard first: it is usually the most specific
-    # constraint (e.g. it pins sun.sun via sun_hits_target), and the
-    # AND-false backtracking for everything negated below routes around it.
-    _require(rule.when, True, values, axes, config.conditions, target)
-    _require(modes[mode_pos].when, True, values, axes, config.conditions, target)
+    # The clock is enumerated AROUND the whole solve, not pinned inside it.
+    # Several independent requirements share this one axis -- a mode's `when`
+    # and the negation of an earlier mode's `when` routinely both read it,
+    # with opposite truth values and boundaries a minute apart -- and there is
+    # no `and`/`or` choice point between them to backtrack at. See
+    # docs/rationale.md -- "Why the clock is enumerated around the solve".
+    errors = []
+    for instant in axes.get(CLOCK_AXIS) or list(DEFAULT_CLOCK_PROBES):
+        values: dict[str, Any] = {CLOCK_AXIS: instant}
+        try:
+            # The target rule's own guard first: it is usually the most
+            # specific constraint (e.g. it pins sun.sun via sun_hits_target),
+            # and the AND-false backtracking for everything negated below
+            # routes around it.
+            _require(rule.when, True, values, axes, config.conditions, target, event)
+            _require(modes[mode_pos].when, True, values, axes, config.conditions, target, event)
 
-    for earlier_mode in modes[:mode_pos]:
-        _require(earlier_mode.when, False, values, axes, config.conditions, target)
+            for earlier_mode in modes[:mode_pos]:
+                _require(earlier_mode.when, False, values, axes, config.conditions, target, event)
 
-    for prior in config.rules[key][:index]:
-        if prior.events is not None and event_kind not in prior.events:
-            continue  # already skipped by event-kind filter, nothing to negate
-        _require(prior.when, False, values, axes, config.conditions, target)
+            for prior in config.rules[key][:index]:
+                if prior.events is not None and event_kind not in prior.events:
+                    continue  # already skipped by event-kind filter, nothing to negate
+                _require(prior.when, False, values, axes, config.conditions, target, event)
+        except _Infeasible as err:
+            errors.append(f"{instant.time()}: {err}")
+            continue
 
-    full = {key: candidates[0] for key, candidates in axes.items()}
-    full.update(values)
-    return _world_from_row(full, event)
+        full = {key: candidates[0] for key, candidates in axes.items()}
+        full.update(values)
+        return _world_from_row(full, event)
+
+    msg = f"no instant on the clock axis admits a witness for {key}#{index}: {errors}"
+    raise _Infeasible(msg)
 
 
 def rule_witnesses(config: Config, axes: dict[str, list]) -> list[World]:
@@ -536,16 +666,20 @@ def rule_witnesses(config: Config, axes: dict[str, list]) -> list[World]:
 
 
 def _world_from_row(row: dict[str, Any], event: Event) -> World:
-    """Split a covering-array row back into states and attributes."""
+    """Split a covering-array row back into states, attributes and the clock."""
     states: dict[str, str] = {}
     attributes: dict[tuple[str, str], Any] = {}
+    now = NOW
     for key, value in row.items():
+        if key == CLOCK_AXIS:
+            now = value
+            continue
         entity, attribute = _split_axis_key(key)
         if attribute is None:
             states[entity] = value
         else:
             attributes[(entity, attribute)] = value
-    return World(states=states, attributes=attributes, now=NOW, event=event)
+    return World(states=states, attributes=attributes, now=now, sun=SUN, event=event)
 
 
 def worlds(config: Config) -> list[World]:

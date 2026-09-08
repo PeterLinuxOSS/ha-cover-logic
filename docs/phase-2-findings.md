@@ -73,7 +73,7 @@ cause — the symptom is only "the sun rules never fire".
 `world.number` already takes an `attribute` argument. That also removes the last
 house-specific constant from the engine.
 
-## 4. No time axis: a time-gated mode kills its whole rule set — *important* (#6)
+## 4. No time axis: a time-gated mode kills its whole rule set — *important* (#6) — **FIXED 2026-09-08**
 
 `tests/scenarios.py` holds `NOW` as a module constant (13:00) and `_require`'s
 `time` branch explicitly gives up. Verified:
@@ -90,6 +90,39 @@ a red suite on day one, told their rules are unreachable when they are not.
 
 **Fix.** Make `now` an axis, derived from the `after`/`before` values present in
 the config (each boundary ± 1 minute).
+
+**Fixed as specified.** `scenarios.py` now holds a *fixed* sky (`SUN`, sunrise
+06:00 and sunset 20:00 on `NOW`'s date) and moves the clock instead:
+`_clock_boundaries` walks the same `all_condition_nodes` the other axes come
+from and collects every instant a clause can distinguish — a `time` clause's
+`after`/`before` as a wall-clock instant, a `sun` clause's `sunrise`/`sunset`
+shifted by its `before_offset`/`after_offset` seconds — and `_clock_probes`
+returns each of those ± 1 minute plus one always-present day/night pair.
+`CLOCK_AXIS` (`"__now__"`, which has no dot and so cannot collide with an
+entity id) is carried through `derive_axes`, `pairwise` and `_world_from_row`
+like any other coordinate, and `_solve_rule_witness` enumerates it around the
+whole solve so a clause that disagrees with an earlier pin backtracks instead
+of losing the witness. The house's axis is 12 instants; both symptoms above
+now report `dead=[]`, and `test_every_rule_fires_at_least_once` still reaches
+all 90 rules.
+
+Keeping the sky fixed rather than probing it is load-bearing, not incidental:
+the house's `vecer` and `je_noc` windows differ by sixty seconds at each end,
+which no coarse `SunTimes` probe can separate. See `docs/rationale.md`, "Why
+the clock is the axis and the sky is a constant".
+
+Two defects found while wiring it, fixed in the same pass:
+
+- `pairwise` used to `break` out of its greedy loop when no
+  single-coordinate change improved a row, silently returning less than the
+  pair coverage its own docstring promises — 192 uncovered pairs on the house
+  fixture, and 9 of 16 on two four-value axes. It now plants the smallest
+  still-uncovered pair into a row and greedily fills the rest, which
+  terminates because the planted pair is always covered.
+- `_require`'s `event_targets_zone` branch returned as satisfied regardless of
+  `want_true`, so negating an earlier event-targeted rule was a no-op. It is
+  now resolved against the event the caller chose, and a disagreement is a
+  backtracking point.
 
 ## 5. No axis for `condition: template` either — *important* (#7)
 

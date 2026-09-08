@@ -616,12 +616,15 @@ stands now: five are fixed — condition-shape validation (#3, commit
 `a665891`), per-zone containment of a bad rule (#4, `50e5d75`),
 `sun_hits_target` reading the azimuth from an attribute (#5, `f7e35ed`),
 `config_schema.referenced_entities()` (#8, `05f4a7f`), and the deep-copy of
-snapshot attributes (#9, `2ec5f50`). Two remain open exactly as described:
-`tests/scenarios.py` still fixes `NOW` as a module constant and raises
-`_Infeasible` for any `time` condition it cannot already satisfy at that
-instant (#6), and a `condition: template` rule still falls through to
-`entity_id is None` in the same file and is reported unreachable rather
-than genuinely evaluated (#7). The minor item (#10) is only partly done:
+snapshot attributes (#9, `2ec5f50`). **#6 is fixed too** (2026-09-08):
+`tests/scenarios.py` no longer holds `NOW` as a module constant — the clock
+is a derived axis, each `after`/`before` and each sun boundary ± 1 minute,
+and `_require` solves for an instant instead of surrendering. See
+`docs/rationale.md`, "Why the clock is the axis and the sky is a constant".
+One remains open exactly as described: a `condition: template` rule still
+falls through to `entity_id is None` in that file and is reported
+unreachable rather than genuinely evaluated (#7). The minor item (#10) is
+only partly done:
 `tests/test_fixture_dom_peter.py::test_fixture_has_no_validation_errors`
 still filters to `severity == ERROR` rather than asserting `validate(config)
 == []`, exactly as the finding left it. Treat this file as a historical
