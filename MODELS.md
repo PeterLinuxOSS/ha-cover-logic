@@ -621,16 +621,17 @@ snapshot attributes (#9, `2ec5f50`). **#6 is fixed too** (2026-09-08):
 is a derived axis, each `after`/`before` and each sun boundary ± 1 minute,
 and `_require` solves for an instant instead of surrendering. See
 `docs/rationale.md`, "Why the clock is the axis and the sky is a constant".
-One remains open exactly as described: a `condition: template` rule still
-falls through to `entity_id is None` in that file and is reported
-unreachable rather than genuinely evaluated (#7). The minor item (#10) is
-only partly done:
-`tests/test_fixture_dom_peter.py::test_fixture_has_no_validation_errors`
-still filters to `severity == ERROR` rather than asserting `validate(config)
-== []`, exactly as the finding left it. Treat this file as a historical
-record, not a live TODO list — this summary was checked once, against one
-commit; re-verify against current `engine.py`/`conditions.py`/
-`tests/scenarios.py` before relying on it.
+**#7 is fixed too** (2026-09-08): a `template` condition's source is scanned
+for the entities it names, in `config_schema.node_reads` — so the integration
+now watches them, which it never did — and `scenarios._require_template`
+solves such a condition by evaluating it against candidates. See
+`docs/rationale.md`, "Why a template's reads are found by reading the source".
+**#10 is done as well**: `test_fixture_has_no_validation_errors` asserts
+`validate(config) == []` rather than filtering to errors, and the weak
+determinism property test now builds two separate equal worlds instead of
+passing one object twice. **All eight are closed.** Treat this file as a
+historical record, not a live TODO list — re-verify against current
+`engine.py`/`conditions.py`/`tests/scenarios.py` before relying on it.
 
 ## 8. How to run the tests
 

@@ -79,9 +79,22 @@ def test_every_blind_always_gets_exactly_one_action(config, values, arrival):
     )
 )
 @settings(max_examples=200, deadline=None)
-def test_the_same_world_always_gives_the_same_decision(config, values):
-    world = World(states=values, attributes={}, now=NOW, event=Event())
-    assert evaluate(config, world) == evaluate(config, world)
+def test_equal_worlds_always_give_the_same_decision(config, values):
+    """Two *separately built* worlds, not one object twice.
+
+    Passing the same instance twice only proves `evaluate` keeps no internal
+    memo -- true of any pure function and of plenty of impure ones. The
+    property worth holding over the whole generated space is reproducibility
+    across equal snapshots, which is what lets a decision be re-derived from a
+    recorded state at all. `test_engine.py`'s
+    `test_equal_but_separately_built_worlds_give_the_same_decision` states the
+    same thing for one hand-built pair; this states it for two hundred
+    generated ones.
+    """
+    first = World(states=dict(values), attributes={}, now=NOW, event=Event())
+    second = World(states=dict(values), attributes={}, now=NOW, event=Event())
+    assert first is not second
+    assert evaluate(config, first) == evaluate(config, second)
 
 
 @given(
