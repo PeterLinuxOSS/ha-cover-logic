@@ -17,6 +17,7 @@ from scenarios import (
     _Infeasible,
     _require,
     _require_template,
+    _template_literals,
     derive_axes,
     fired_rules,
     pairwise,
@@ -121,6 +122,24 @@ def test_requiring_a_template_that_names_no_entity_is_infeasible_not_silently_tr
     """A computed entity id is unsolvable here, and saying so beats guessing."""
     with pytest.raises(_Infeasible):
         _require_template({"condition": "template", "value_template": "{{ 1 }}"}, True, {}, {})
+
+
+def test_a_dotted_comparison_value_is_still_probed():
+    """`'1.5'` is a state to compare against, not an entity id.
+
+    The first version of `_template_literals` dropped every quoted literal
+    containing a dot, reasoning that a dot is what makes an id an id. It is
+    not: `'1.5'` and `'foo.bar'` are perfectly good states, and discarding
+    them left the axis without the one value that satisfies the template, so
+    the rule came out infeasible. What must be excluded is the ids
+    `node_reads` actually found -- nothing more.
+    """
+    node = {"condition": "template", "value_template": "{{ states('sensor.x') == '1.5' }}"}
+    assert _template_literals(node) == ["1.5"]
+
+    values: dict = {}
+    _require_template(node, True, values, {"sensor.x": ["1.5", "__other__"]})
+    assert values == {"sensor.x": "1.5"}
 
 
 def test_require_routes_a_template_node_to_the_solver():

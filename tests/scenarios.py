@@ -251,7 +251,7 @@ def derive_axes(config: Config) -> dict[str, list]:
     for node in all_condition_nodes(config):
         if node.get("condition") != "template":
             continue
-        literals = _template_literals(str(node.get("value_template", "")))
+        literals = _template_literals(node)
         for template_key in _template_axis_keys(node):
             add(template_key, [*literals, "__other__"])
 
@@ -387,16 +387,22 @@ def _template_axis_keys(node: dict) -> list[str]:
     return sorted(_axis_key(read.entity, read.attribute) for read in node_reads(node))
 
 
-def _template_literals(body: str) -> list[str]:
-    """The quoted values a template compares against, minus the entity ids.
+def _template_literals(node: dict) -> list[str]:
+    """The quoted values a template compares against, minus the ids it names.
 
     An axis needs values as well as a key, and a template states its
-    interesting ones itself: `is_state('x', 'on')` says `on` matters. Entity
-    ids are excluded because they are the key, not a value -- they are the
-    strings containing a dot, which is exactly what makes an id an id.
+    interesting ones itself: `is_state('x', 'on')` says `on` matters.
+
+    What is excluded is exactly the ids and attribute names `node_reads`
+    already found -- not "every literal containing a dot", which was the first
+    attempt and wrong: `'1.5'` and `'foo.bar'` are perfectly good states to
+    compare against, and dropping them left the rule unsolvable.
     """
+    body = str(node.get("value_template", ""))
+    named = {read.entity for read in node_reads(node)}
+    named |= {read.attribute for read in node_reads(node) if read.attribute}
     quoted = re.findall(r"['\"]([^'\"]*)['\"]", body)
-    return sorted({literal for literal in quoted if "." not in literal})
+    return sorted({literal for literal in quoted if literal not in named})
 
 
 def _require_template(
