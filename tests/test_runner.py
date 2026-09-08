@@ -257,28 +257,45 @@ ABANDONED = SetTilt("cover.a", 0)
 
 def test_an_abandoned_tilt_is_carried_when_the_successor_keeps_the_slat_axis():
     """`keep` is delegation, not "do nothing": nobody else owns the slats."""
-    successor = Plan(commands=(SetPosition("cover.a", 100),))
-    carried = _carry_over_tilt(ABANDONED, successor, Action(position=100, tilt=KEEP))
-    assert carried.commands == (SetPosition("cover.a", 100), ABANDONED)
+    assert _carry_over_tilt(ABANDONED, Action(position=100, tilt=KEEP)) == Action(
+        position=100, tilt=ABANDONED.tilt
+    )
 
 
-def test_an_abandoned_tilt_is_carried_even_onto_an_empty_plan():
+def test_a_carried_tilt_waits_for_arrival_when_the_successor_also_moves_the_position():
+    """The point of folding the hand-over into the action instead of appending it.
+
+    These motors discard a tilt command that lands while the blind is still
+    travelling (2026-08-21). Appending the abandoned `SetTilt` to a successor
+    plan that also moves the position put it after the position command with
+    no wait in between, so the slats silently never arrived -- the very
+    incident the hand-over exists for, reintroduced by the hand-over itself.
+    Re-planning makes `plan()` insert its own arrival wait.
+    """
+    blind = Blind(entity="cover.a")
+    action = _carry_over_tilt(ABANDONED, Action(position=0, tilt=KEEP))
+    commands = plan(blind, 100, 100, action).commands
+
+    assert [type(c) for c in commands] == [SetPosition, WaitForPosition, Settle, SetTilt]
+    assert commands[-1] == ABANDONED
+
+
+def test_an_abandoned_tilt_is_carried_even_when_the_successor_moves_nothing():
     """The blind is already where the successor wants it -- the slats still are not."""
-    carried = _carry_over_tilt(ABANDONED, Plan(), Action(position=100, tilt=KEEP))
-    assert carried.commands == (ABANDONED,)
+    blind = Blind(entity="cover.a")
+    action = _carry_over_tilt(ABANDONED, Action(position=100, tilt=KEEP))
+    assert plan(blind, 100, 100, action).commands == (ABANDONED,)
 
 
 def test_an_abandoned_tilt_is_dropped_when_the_successor_names_a_tilt():
-    successor = Plan(commands=(SetPosition("cover.a", 100), SetTilt("cover.a", 100)))
-    carried = _carry_over_tilt(ABANDONED, successor, Action(position=100, tilt=100))
-    assert carried.commands == successor.commands
-    assert ABANDONED not in carried.commands
+    action = Action(position=100, tilt=100)
+    assert _carry_over_tilt(ABANDONED, action) is action
 
 
 def test_an_abandoned_tilt_is_dropped_when_the_dead_band_swallowed_the_successors_tilt():
     """The condition is on the `Action`, not on the `Plan` -- this is why.
 
-    The successor owns the slat axis (`tilt=100`) but `plan()` emitted no
+    The successor owns the slat axis (`tilt=100`) but `plan()` emits no
     `SetTilt`, because the blind already reports 100. Asking the plan "does it
     contain a `SetTilt`?" would answer no and re-send the abandoned command --
     moving the slats for no reason, which is the 2026-08-27 class of bug. The
@@ -286,24 +303,34 @@ def test_an_abandoned_tilt_is_dropped_when_the_dead_band_swallowed_the_successor
     """
     blind = Blind(entity="cover.a", tilt_after_arrival=False)
     action = Action(position=100, tilt=100)
-    successor = plan(blind, 100, 100, action)
-    assert successor.commands == ()
+    assert plan(blind, 100, 100, action).commands == ()
+    assert plan(blind, 100, 100, _carry_over_tilt(ABANDONED, action)).commands == ()
 
-    carried = _carry_over_tilt(ABANDONED, successor, action)
-    assert carried.commands == ()
+
+def test_a_carried_tilt_the_slats_already_satisfy_sends_nothing():
+    """Folding subjects the hand-over to the dead band, and that is an improvement.
+
+    Appending sent the abandoned command unconditionally, so a cancellation
+    whose slats had meanwhile reached the abandoned target re-sent it -- and a
+    repeated absolute tilt command visibly moves the blind for no reason
+    (2026-08-27). `plan()` now answers that question the same way it answers
+    it for every other command.
+    """
+    blind = Blind(entity="cover.a")
+    action = _carry_over_tilt(ABANDONED, Action(position=100, tilt=KEEP))
+    assert plan(blind, 100, ABANDONED.tilt, action).commands == ()
 
 
 def test_nothing_is_carried_when_nothing_was_abandoned():
-    successor = Plan(commands=(SetPosition("cover.a", 100),))
-    assert _carry_over_tilt(None, successor, Action(position=100, tilt=KEEP)) is successor
+    action = Action(position=100, tilt=KEEP)
+    assert _carry_over_tilt(None, action) is action
 
 
-def test_carrying_preserves_the_successors_clamps():
+def test_carrying_preserves_the_successors_own_clamp():
     """A hand-over must not quietly lose the successor's own out-of-range report."""
-    clamp = Clamp("cover.a", "position", 105, 100)
-    successor = Plan(commands=(SetPosition("cover.a", 100),), clamps=(clamp,))
-    carried = _carry_over_tilt(ABANDONED, successor, Action(position=105, tilt=KEEP))
-    assert carried.clamps == (clamp,)
+    blind = Blind(entity="cover.a")
+    action = _carry_over_tilt(ABANDONED, Action(position=105, tilt=KEEP))
+    assert plan(blind, 0, 0, action).clamps == (Clamp("cover.a", "position", 105, 100),)
 
 
 # ---------------------------------------------------------------------------

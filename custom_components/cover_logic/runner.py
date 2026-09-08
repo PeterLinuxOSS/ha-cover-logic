@@ -57,7 +57,7 @@ itself. An empty `Plan` is a complete answer, not a missing one.
 
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import IntEnum
 import logging
 import time
@@ -295,8 +295,12 @@ def _arbitrate(
     return PEND
 
 
-def _carry_over_tilt(abandoned: SetTilt | None, successor: Plan, action: Action) -> Plan:
-    """Hand an abandoned slat command to the successor -- or deliberately drop it.
+def _carry_over_tilt(abandoned: SetTilt | None, action: Action) -> Action:
+    """Fold an abandoned slat command into the successor's action -- or drop it.
+
+    Returns the action the successor must be planned *from*, so the carried
+    tilt is an ordinary requested tilt and `plan()` inserts its own arrival
+    wait. See docs/rationale.md -- "Why the tilt hand-over is re-planned".
 
     The condition is exact, and it is on the **`Action`**, not on the `Plan`:
     carry the abandoned `SetTilt` over precisely when `action.tilt is KEEP`.
@@ -307,25 +311,14 @@ def _carry_over_tilt(abandoned: SetTilt | None, successor: Plan, action: Action)
       and must survive -- otherwise the blind ends its movement with untouched
       slats, which is the 2026-08-21 incident verbatim.
     - When the successor *does* name a tilt, it owns the axis and the abandoned
-      value is correctly discarded -- even if `plan()` emitted no `SetTilt` for
+      value is correctly discarded -- even if `plan()` emits no `SetTilt` for
       it because the dead band filtered it out. Asking the `Plan` instead of
       the `Action` would re-send exactly the command the dead band just
       suppressed, and the blind would move for no reason.
-
-    **Known wrinkle, deliberately left as designed.** The abandoned command is
-    appended, not folded back into the successor's `Action` and re-planned. So
-    when the successor also moves the *position*, the carried tilt goes out
-    with no arrival wait in front of it (`plan()` only inserts one when both
-    axes move), and these motors discard a tilt that lands mid-travel. That is
-    still strictly better than the alternative -- a discarded tilt is no worse
-    than a tilt that was never sent, which is the incident -- but it is not
-    free, and the fix, if it is wanted, is to re-plan the successor with
-    `tilt=abandoned.tilt` rather than to append here. Raised rather than
-    changed unilaterally, because appending is what the design says.
     """
     if abandoned is None or action.tilt is not KEEP:
-        return successor
-    return Plan(commands=(*successor.commands, abandoned), clamps=successor.clamps)
+        return action
+    return replace(action, tilt=abandoned.tilt)
 
 
 def _remaining_seconds(plan_: Plan, index: int) -> float:
@@ -812,17 +805,19 @@ class CoverRunner:
         blind = request.blind
         position, tilt = self._read_axes(blind.entity)
 
+        # Folded before planning, not appended after: `plan()` is what knows a
+        # tilt needs an arrival wait in front of it.
+        action = _carry_over_tilt(request.carried_tilt, request.action)
         try:
-            computed = plan(blind, position, tilt, request.action)
+            computed = plan(blind, position, tilt, action)
         except PlannerError:
             _LOGGER.exception("cover_logic: %s could not be planned", blind.entity)
             return
-        computed = _carry_over_tilt(request.carried_tilt, computed, request.action)
         sequence.plan = computed
         sequence.planned = True
 
         self._log_clamps(blind.entity, computed.clamps)
-        for suppressed in _suppressions(blind, request.action, computed, position, tilt):
+        for suppressed in _suppressions(blind, action, computed, position, tilt):
             self._log_suppressed(sequence, suppressed)
 
         total = len(computed.commands)
