@@ -1,0 +1,761 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Cover Logic",
+        "description": "How do you want to start?",
+        "menu_options": {
+          "blinds_now": "Set up blinds now (recommended)",
+          "from_file": "Load a configuration from a YAML file",
+          "from_example": "Start from the example configuration",
+          "empty": "Start empty"
+        }
+      },
+      "blinds_now": {
+        "title": "Set up blinds now",
+        "description": "Pick every cover Cover Logic should control. Next you will say which way each one faces, then a working starting setup is created for you -- you can change any of it later from the configuration menu.",
+        "data": {
+          "entities": "Blinds"
+        }
+      },
+      "blinds_now_facing": {
+        "title": "Which way does this blind face?",
+        "description": "{blind} -- pick the compass direction its outside faces. This decides when the sun reaches it.",
+        "data": {
+          "facing": "Facing"
+        }
+      },
+      "blinds_now_summary": {
+        "title": "Starter setup",
+        "description": "{blinds}\n\nAt night, nothing moves.\nDuring the day, each blind closes partway (to position {shade_position}, tilt {shade_tilt}) whenever the sun is shining on its own side of the house, and stays fully open (position {open_position}) the rest of the time.\n\nContinue to create it as shown, or cancel this setup and start over from the main menu."
+      },
+      "from_file": {
+        "title": "Load a configuration from a YAML file",
+        "description": "Point Cover Logic at the YAML file describing your blinds, zones and rules. It is loaded and checked right away.",
+        "data": {
+          "config_path": "Configuration file path"
+        }
+      },
+      "from_example": {
+        "title": "Start from the example configuration",
+        "description": "Imports the worked example for a different, invented house (four windows, an away/night/home mode split) as a starting point. Edit or remove any of it afterwards from the configuration menu."
+      },
+      "example_not_available": {
+        "title": "Example not available",
+        "description": "This installation does not ship the example configuration. Continue to go back to the setup menu and pick a different way to start."
+      },
+      "empty": {
+        "title": "Start empty",
+        "description": "Creates Cover Logic with nothing configured yet. Add blinds, zones, modes and rules afterwards from the configuration menu."
+      }
+    },
+    "error": {
+      "invalid_config": "This file could not be used: {error_detail}",
+      "no_blinds_selected": "Pick at least one blind, or use \"Start empty\" instead."
+    },
+    "abort": {
+      "already_configured": "Cover Logic is already set up; only one instance is supported.",
+      "starter_config_invalid": "The starter configuration this step generated failed its own checks -- this is a bug in Cover Logic itself, not something you did. Please report it, then use \"Start empty\" or \"Load a configuration from a YAML file\" instead."
+    }
+  },
+  "selector": {
+    "facing": {
+      "options": {
+        "north": "North",
+        "northeast": "Northeast",
+        "east": "East",
+        "southeast": "Southeast",
+        "south": "South",
+        "southwest": "Southwest",
+        "west": "West",
+        "northwest": "Northwest"
+      }
+    }
+  },
+  "config_subentries": {
+    "blind": {
+      "entry_type": "Blind",
+      "initiate_flow": {
+        "user": "Add blind"
+      },
+      "step": {
+        "user": {
+          "title": "Add blind",
+          "description": "One physical cover Cover Logic can decide a position and tilt for.",
+          "data": {
+            "entity": "Cover entity",
+            "facade_azimuth": "Facade azimuth",
+            "tolerance": "Sun sector tolerance",
+            "travel_time": "Full travel time",
+            "has_tilt": "Has a tilt (slat) axis",
+            "tilt_after_arrival": "Tilt only after the position finishes moving"
+          }
+        },
+        "reconfigure": {
+          "title": "Edit blind",
+          "data": {
+            "entity": "Cover entity",
+            "facade_azimuth": "Facade azimuth",
+            "tolerance": "Sun sector tolerance",
+            "travel_time": "Full travel time",
+            "has_tilt": "Has a tilt (slat) axis",
+            "tilt_after_arrival": "Tilt only after the position finishes moving"
+          }
+        }
+      },
+      "error": {
+        "invalid_config": "This file could not be used: {error_detail}"
+      },
+      "abort": {
+        "reconfigure_successful": "Reconfiguration was successful"
+      }
+    },
+    "zone": {
+      "entry_type": "Zone",
+      "initiate_flow": {
+        "user": "Add zone"
+      },
+      "step": {
+        "user": {
+          "title": "Add zone",
+          "description": "A group of blinds Cover Logic decides together, one rule list at a time.",
+          "data": {
+            "id": "Zone id",
+            "members": "Blinds in this zone",
+            "occupants": "Occupants"
+          }
+        },
+        "reconfigure": {
+          "title": "Edit zone",
+          "data": {
+            "id": "Zone id",
+            "members": "Blinds in this zone",
+            "occupants": "Occupants"
+          }
+        }
+      },
+      "error": {
+        "invalid_config": "This file could not be used: {error_detail}"
+      },
+      "abort": {
+        "reconfigure_successful": "Reconfiguration was successful"
+      }
+    },
+    "value": {
+      "entry_type": "Value",
+      "initiate_flow": {
+        "user": "Add value"
+      },
+      "step": {
+        "user": {
+          "title": "Add value",
+          "description": "A helper entity read at decision time, for use as !ref in an action.",
+          "data": {
+            "id": "Value id",
+            "entity": "Helper entity",
+            "default": "Default (used if the entity is missing or unreadable)"
+          }
+        },
+        "reconfigure": {
+          "title": "Edit value",
+          "data": {
+            "id": "Value id",
+            "entity": "Helper entity",
+            "default": "Default (used if the entity is missing or unreadable)"
+          }
+        }
+      },
+      "error": {
+        "invalid_config": "This file could not be used: {error_detail}"
+      },
+      "abort": {
+        "reconfigure_successful": "Reconfiguration was successful"
+      }
+    },
+    "condition": {
+      "entry_type": "Condition",
+      "initiate_flow": {
+        "user": "Add condition"
+      },
+      "step": {
+        "user": {
+          "title": "Add condition",
+          "description": "A named, reusable condition. Reference it by name from a mode's condition or from inside another condition.",
+          "data": {
+            "id": "Condition id",
+            "condition": "Condition",
+            "numeric_state_default": "Fallback for a numeric comparison"
+          },
+          "data_description": {
+            "numeric_state_default": "Only used when the condition above is a single numeric comparison (numeric_state). This is the value assumed when the compared entity is unavailable or not a number, so it decides which way the condition goes in that case -- pick it so a dead sensor fails on the safe side. Ignored otherwise, and required whenever the condition is numeric_state."
+          }
+        },
+        "reconfigure": {
+          "title": "Edit condition",
+          "data": {
+            "id": "Condition id",
+            "condition": "Condition",
+            "numeric_state_default": "Fallback for a numeric comparison"
+          },
+          "data_description": {
+            "numeric_state_default": "Only used when the condition above is a single numeric comparison (numeric_state). This is the value assumed when the compared entity is unavailable or not a number, so it decides which way the condition goes in that case -- pick it so a dead sensor fails on the safe side. Ignored otherwise, and required whenever the condition is numeric_state."
+          }
+        }
+      },
+      "error": {
+        "invalid_config": "This file could not be used: {error_detail}"
+      },
+      "abort": {
+        "reconfigure_successful": "Reconfiguration was successful"
+      }
+    },
+    "mode": {
+      "entry_type": "Mode",
+      "initiate_flow": {
+        "user": "Add mode"
+      },
+      "step": {
+        "user": {
+          "title": "Add mode",
+          "description": "The first mode whose condition matches decides every zone's rules. The last mode, tried when nothing else matches, must have neither a named nor an inline condition.",
+          "data": {
+            "id": "Mode id",
+            "order": "Order (lower is tried first; the fallback mode must have the highest order)",
+            "condition_ref": "Named condition (leave empty to build one inline, or to make this the fallback mode)",
+            "when": "Inline condition (leave empty if using a named condition, or to make this the fallback mode)"
+          }
+        },
+        "reconfigure": {
+          "title": "Edit mode",
+          "data": {
+            "id": "Mode id",
+            "order": "Order (lower is tried first; the fallback mode must have the highest order)",
+            "condition_ref": "Named condition (leave empty to build one inline, or to make this the fallback mode)",
+            "when": "Inline condition (leave empty if using a named condition, or to make this the fallback mode)"
+          }
+        }
+      },
+      "error": {
+        "invalid_config": "This file could not be used: {error_detail}"
+      },
+      "abort": {
+        "reconfigure_successful": "Reconfiguration was successful"
+      }
+    },
+    "rule": {
+      "entry_type": "Rule",
+      "initiate_flow": {
+        "user": "Add rule"
+      },
+      "step": {
+        "user": {
+          "title": "Add rule",
+          "description": "Which rule list does this rule join? Each mode-and-zone pair has its own list, tried from the lowest order down until a rule matches.",
+          "data": {
+            "mode": "Mode",
+            "zone": "Zone"
+          }
+        },
+        "rule": {
+          "title": "Add rule",
+          "description": "The first rule in this list whose events and condition both match decides where the zone's blinds go, and no later rule is looked at. A rule with no condition therefore belongs last.",
+          "data": {
+            "mode": "Mode",
+            "zone": "Zone",
+            "order": "Order",
+            "if_ref": "Named condition (leave empty to build one inline, or for a rule that always matches)",
+            "if": "Inline condition (leave empty if using a named condition, or for a rule that always matches)",
+            "position": "Position",
+            "tilt": "Tilt (slats)",
+            "events": "Only for these events",
+            "name": "Name (shown in the decision trace)"
+          },
+          "data_description": {
+            "order": "Lower is tried first. Suggested as ten past the last rule in this list, leaving room to slip a rule in between two later on. Two rules in one list cannot share an order.",
+            "position": "Pick 'keep' to leave this axis alone, pick a configured value to read the number from that helper at decision time, or type a number from 0 to 100.",
+            "tilt": "Pick 'keep' to leave this axis alone, pick a configured value to read the number from that helper at decision time, or type a number from 0 to 100.",
+            "events": "Leave empty to apply to every event."
+          }
+        },
+        "reconfigure": {
+          "title": "Edit rule",
+          "description": "The first rule in this list whose events and condition both match decides where the zone's blinds go, and no later rule is looked at. A rule with no condition therefore belongs last.",
+          "data": {
+            "mode": "Mode",
+            "zone": "Zone",
+            "order": "Order",
+            "if_ref": "Named condition (leave empty to build one inline, or for a rule that always matches)",
+            "if": "Inline condition (leave empty if using a named condition, or for a rule that always matches)",
+            "position": "Position",
+            "tilt": "Tilt (slats)",
+            "events": "Only for these events",
+            "name": "Name (shown in the decision trace)"
+          },
+          "data_description": {
+            "order": "Lower is tried first. Suggested as ten past the last rule in this list, leaving room to slip a rule in between two later on. Two rules in one list cannot share an order.",
+            "position": "Pick 'keep' to leave this axis alone, pick a configured value to read the number from that helper at decision time, or type a number from 0 to 100.",
+            "tilt": "Pick 'keep' to leave this axis alone, pick a configured value to read the number from that helper at decision time, or type a number from 0 to 100.",
+            "events": "Leave empty to apply to every event."
+          }
+        }
+      },
+      "error": {
+        "invalid_config": "This file could not be used: {error_detail}"
+      },
+      "abort": {
+        "reconfigure_successful": "Reconfiguration was successful"
+      }
+    },
+    "guard": {
+      "entry_type": "Guard",
+      "initiate_flow": {
+        "user": "Add guard"
+      },
+      "step": {
+        "user": {
+          "title": "Add guard",
+          "description": "Which policy, and where in the order. The policy decides which fields the next screen has, so it is asked first.",
+          "data": {
+            "policy": "Policy",
+            "order": "Order",
+            "name": "Name (shown in the decision trace)"
+          },
+          "data_description": {
+            "policy": "No default on purpose: the three policies do three different things.",
+            "order": "Lower is tried first. Suggested as ten past the last guard, leaving room to slip one in between two later on. Two guards cannot share an order."
+          }
+        },
+        "guard": {
+          "title": "Add guard",
+          "description": "Guards are tried in order and the first one that matches wins. A guard can skip a movement, defer it, or force a different action instead.",
+          "data": {
+            "targets": "What it covers (leave empty for every blind in the house)",
+            "applies_to": "Which movement",
+            "stage": "When it acts",
+            "condition_ref": "Named condition (leave empty to build one inline, or for a guard that always applies)",
+            "when": "Inline condition (leave empty if using a named condition, or for a guard that always applies)",
+            "position": "Position it imposes",
+            "tilt": "Tilt (slats) it imposes",
+            "wait_limit": "How long it may wait",
+            "max_wait_duration": "At most",
+            "on_timeout": "When the wait runs out",
+            "recheck_every": "Re-check every"
+          },
+          "data_description": {
+            "targets": "Blinds and zones, mixed freely. Empty means every blind -- there is no difference here between 'unset' and 'all'.",
+            "applies_to": "'closing' means a falling position, not the slats. Most guards in a house are 'closing', but the default stays 'any' so a guard means the same thing however it was written.",
+            "stage": "'after the decision' overrides the action; 'before the decision' drops the target out of the decision entirely. A guard acting before the decision must use 'any' -- there is no command yet whose direction it could mean.",
+            "condition_ref": "A numeric threshold can only be reached this way: Home Assistant's inline condition selector rejects the fallback value this integration requires, so name a condition instead.",
+            "position": "Pick 'keep' to leave this axis alone, pick a configured value to read the number from that helper, or type a number from 0 to 100.",
+            "tilt": "Pick 'keep' to leave this axis alone, pick a configured value to read the number from that helper, or type a number from 0 to 100.",
+            "wait_limit": "'no limit' is a real answer, not a blank one: it waits until the condition clears. There is deliberately no default -- the two choices do different things.",
+            "max_wait_duration": "Only read when 'at most' is chosen. Left at zero, the guard is refused rather than saved as a zero-second wait.",
+            "on_timeout": "No default on purpose: dropping the movement and doing it anyway are opposites.",
+            "recheck_every": "A deferred movement does not survive a Home Assistant restart, so this is the safety net that picks it up again."
+          }
+        },
+        "reconfigure": {
+          "title": "Edit guard",
+          "description": "Guards are tried in order and the first one that matches wins. A guard can skip a movement, defer it, or force a different action instead.",
+          "data": {
+            "policy": "Policy",
+            "order": "Order",
+            "name": "Name (shown in the decision trace)",
+            "targets": "What it covers (leave empty for every blind in the house)",
+            "applies_to": "Which movement",
+            "stage": "When it acts",
+            "condition_ref": "Named condition (leave empty to build one inline, or for a guard that always applies)",
+            "when": "Inline condition (leave empty if using a named condition, or for a guard that always applies)",
+            "position": "Position it imposes",
+            "tilt": "Tilt (slats) it imposes",
+            "wait_limit": "How long it may wait",
+            "max_wait_duration": "At most",
+            "on_timeout": "When the wait runs out",
+            "recheck_every": "Re-check every"
+          },
+          "data_description": {
+            "policy": "No default on purpose: the three policies do three different things.",
+            "order": "Lower is tried first. Suggested as ten past the last guard, leaving room to slip one in between two later on. Two guards cannot share an order.",
+            "targets": "Blinds and zones, mixed freely. Empty means every blind -- there is no difference here between 'unset' and 'all'.",
+            "applies_to": "'closing' means a falling position, not the slats. Most guards in a house are 'closing', but the default stays 'any' so a guard means the same thing however it was written.",
+            "stage": "'after the decision' overrides the action; 'before the decision' drops the target out of the decision entirely. A guard acting before the decision must use 'any' -- there is no command yet whose direction it could mean.",
+            "condition_ref": "A numeric threshold can only be reached this way: Home Assistant's inline condition selector rejects the fallback value this integration requires, so name a condition instead.",
+            "position": "Pick 'keep' to leave this axis alone, pick a configured value to read the number from that helper, or type a number from 0 to 100.",
+            "tilt": "Pick 'keep' to leave this axis alone, pick a configured value to read the number from that helper, or type a number from 0 to 100.",
+            "wait_limit": "'no limit' is a real answer, not a blank one: it waits until the condition clears. There is deliberately no default -- the two choices do different things.",
+            "max_wait_duration": "Only read when 'at most' is chosen. Left at zero, the guard is refused rather than saved as a zero-second wait.",
+            "on_timeout": "No default on purpose: dropping the movement and doing it anyway are opposites.",
+            "recheck_every": "A deferred movement does not survive a Home Assistant restart, so this is the safety net that picks it up again."
+          }
+        }
+      },
+      "error": {
+        "invalid_config": "This file could not be used: {error_detail}"
+      },
+      "abort": {
+        "reconfigure_successful": "Reconfiguration was successful"
+      }
+    },
+    "manual_detection": {
+      "entry_type": "Manual detection",
+      "initiate_flow": {
+        "user": "Set up manual detection"
+      },
+      "step": {
+        "user": {
+          "title": "Manual detection",
+          "description": "Which movements are not a person's. There is only one of these settings for the whole house.",
+          "data": {
+            "ignore_while_on": "Ignore movements while any of these is on"
+          },
+          "data_description": {
+            "ignore_while_on": "A script entity is on for exactly its own run, so naming one here means \"anything that moves while this script runs came from the script, not from a person\". Any entity works, not only scripts -- an input boolean a house sets around its own bulk movements does the same job."
+          }
+        },
+        "reconfigure": {
+          "title": "Edit manual detection",
+          "description": "Which movements are not a person's.",
+          "data": {
+            "ignore_while_on": "Ignore movements while any of these is on"
+          }
+        }
+      },
+      "error": {
+        "invalid_config": "This file could not be used: {error_detail}"
+      },
+      "abort": {
+        "reconfigure_successful": "Reconfiguration was successful",
+        "already_configured": "Manual detection is already set up -- edit the existing one."
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Cover Logic",
+        "description": "What do you want to look at or change?",
+        "menu_options": {
+          "blinds": "Blinds ({blinds_count})",
+          "zones": "Zones ({zones_count})",
+          "values": "Values ({values_count})",
+          "conditions": "Conditions ({conditions_count})",
+          "modes": "Modes ({modes_count})",
+          "rules": "Rules ({rules_count})",
+          "guards": "Guards ({guards_count})",
+          "manual_detection": "Manual detection ({manual_detection_count})",
+          "import_export": "Import / export YAML",
+          "execution": "Execution ({execution_summary})",
+          "check_matrix": "Configuration health ({health_summary})"
+        }
+      },
+      "blinds": {
+        "title": "Blinds",
+        "description": "{count} configured.",
+        "menu_options": {
+          "add": "Add",
+          "edit": "Edit an existing one",
+          "remove": "Remove an existing one",
+          "back": "Back to the main menu"
+        }
+      },
+      "zones": {
+        "title": "Zones",
+        "description": "{count} configured.",
+        "menu_options": {
+          "add": "Add",
+          "edit": "Edit an existing one",
+          "remove": "Remove an existing one",
+          "back": "Back to the main menu"
+        }
+      },
+      "values": {
+        "title": "Values",
+        "description": "{count} configured.",
+        "menu_options": {
+          "add": "Add",
+          "edit": "Edit an existing one",
+          "remove": "Remove an existing one",
+          "back": "Back to the main menu"
+        }
+      },
+      "conditions": {
+        "title": "Conditions",
+        "description": "{count} configured.",
+        "menu_options": {
+          "add": "Add",
+          "edit": "Edit an existing one",
+          "remove": "Remove an existing one",
+          "back": "Back to the main menu"
+        }
+      },
+      "modes": {
+        "title": "Modes",
+        "description": "{count} configured.",
+        "menu_options": {
+          "add": "Add",
+          "edit": "Edit an existing one",
+          "remove": "Remove an existing one",
+          "back": "Back to the main menu"
+        }
+      },
+      "rules": {
+        "title": "Rules",
+        "description": "{count} configured, across every mode-and-zone pair. The first rule in a pair whose condition matches decides that pair; order within a pair is what the engine actually tries first.",
+        "menu_options": {
+          "add": "Add",
+          "list": "See what the house will do",
+          "zone": "Look at one zone's real list (including inherited defaults)",
+          "edit": "Edit an existing one",
+          "remove": "Remove an existing one",
+          "back": "Back to the main menu"
+        }
+      },
+      "guards": {
+        "title": "Guards",
+        "description": "{count} configured. Tried in order; the first guard that matches a command decides what happens to it.",
+        "menu_options": {
+          "add": "Add",
+          "edit": "Edit an existing one",
+          "remove": "Remove an existing one",
+          "back": "Back to the main menu"
+        }
+      },
+      "manual_detection": {
+        "title": "Manual detection",
+        "description": "{count} configured (0 or 1). Which movements did not come from a person.",
+        "menu_options": {
+          "add": "Add",
+          "edit": "Edit an existing one",
+          "remove": "Remove an existing one",
+          "back": "Back to the main menu"
+        }
+      },
+      "list": {
+        "title": "Rules in evaluation order",
+        "description": "Grouped by mode and zone, in the exact order the engine tries them within each pair -- the first rule whose condition matches decides that pair.\n\n{result}"
+      },
+      "zone": {
+        "title": "Choose a zone",
+        "description": "Pick the mode and zone whose rules you want to see. Picking \"*\" as the zone shows that mode's own default list directly.",
+        "data": {
+          "mode": "Mode",
+          "zone": "Zone"
+        }
+      },
+      "zone_rules": {
+        "title": "One zone's rules",
+        "description": "The rules that {zone} has of its own under mode {mode}, followed by the shared default rules of that mode (marked \"inherited from mode default\") for anything {zone} has no rule of its own to decide -- in the exact order the engine tries them, or nothing yet if none apply. An inherited rule belongs to the mode, not to this zone: picking it here only tells you where to edit it instead.",
+        "data": {
+          "subentry_id": "Which one?",
+          "confirm": "Remove instead of edit"
+        },
+        "data_description": {
+          "confirm": "Tick to remove the picked rule instead of opening it for editing. Has no effect on an inherited rule -- refused either way."
+        }
+      },
+      "add": {
+        "title": "Add",
+        "description": "Fill in the fields below. Only the fields for the kind of item you are adding matter; leave anything you are unsure about at its default.",
+        "data": {
+          "entity": "Entity",
+          "id": "Id",
+          "facade_azimuth": "Facade azimuth",
+          "tolerance": "Sun sector tolerance",
+          "travel_time": "Full travel time",
+          "has_tilt": "Has a tilt (slat) axis",
+          "tilt_after_arrival": "Tilt only after the position finishes moving",
+          "members": "Blinds in this zone",
+          "occupants": "Occupants",
+          "default": "Default (used if the entity is missing or unreadable)",
+          "condition": "Condition",
+          "numeric_state_default": "Fallback for a numeric comparison",
+          "order": "Order (lower is tried first; the fallback mode must have the highest order)",
+          "condition_ref": "Named condition (leave empty to build one inline, or to make this the fallback mode)",
+          "when": "Inline condition (leave empty if using a named condition, or to make this the fallback mode)",
+          "mode": "Mode",
+          "zone": "Zone"
+        }
+      },
+      "add_rule_fields": {
+        "title": "Add rule",
+        "description": "The first rule in this list whose events and condition both match decides where the zone's blinds go, and no later rule is looked at. A rule with no condition therefore belongs last.",
+        "data": {
+          "mode": "Mode",
+          "zone": "Zone",
+          "order": "Order",
+          "if_ref": "Named condition (leave empty to build one inline, or for a rule that always matches)",
+          "if": "Inline condition (leave empty if using a named condition, or for a rule that always matches)",
+          "position": "Position",
+          "tilt": "Tilt (slats)",
+          "events": "Only for these events",
+          "name": "Name (shown in the decision trace)"
+        },
+        "data_description": {
+          "order": "Lower is tried first. Suggested as ten past the last rule in this list, leaving room to slip a rule in between two later on. Two rules in one list cannot share an order.",
+          "position": "Pick 'keep' to leave this axis alone, pick a configured value to read the number from that helper at decision time, or type a number from 0 to 100.",
+          "tilt": "Pick 'keep' to leave this axis alone, pick a configured value to read the number from that helper at decision time, or type a number from 0 to 100.",
+          "events": "Leave empty to apply to every event."
+        }
+      },
+      "edit": {
+        "title": "Choose what to edit",
+        "data": {
+          "subentry_id": "Which one?"
+        }
+      },
+      "edit_form": {
+        "title": "Edit",
+        "description": "Fill in the fields below. Only the fields for the kind of item you are adding matter; leave anything you are unsure about at its default.",
+        "data": {
+          "entity": "Entity",
+          "id": "Id",
+          "facade_azimuth": "Facade azimuth",
+          "tolerance": "Sun sector tolerance",
+          "travel_time": "Full travel time",
+          "has_tilt": "Has a tilt (slat) axis",
+          "tilt_after_arrival": "Tilt only after the position finishes moving",
+          "members": "Blinds in this zone",
+          "occupants": "Occupants",
+          "default": "Default (used if the entity is missing or unreadable)",
+          "condition": "Condition",
+          "numeric_state_default": "Fallback for a numeric comparison",
+          "order": "Order (lower is tried first; the fallback mode must have the highest order)",
+          "condition_ref": "Named condition (leave empty to build one inline, or to make this the fallback mode)",
+          "when": "Inline condition (leave empty if using a named condition, or to make this the fallback mode)",
+          "mode": "Mode",
+          "zone": "Zone"
+        }
+      },
+      "remove": {
+        "title": "Remove",
+        "data": {
+          "subentry_id": "Which one?",
+          "confirm": "Yes, remove it"
+        }
+      },
+      "import_export": {
+        "title": "Import / export configuration",
+        "description": "Reads or writes the whole configuration as a YAML file -- the same import_config/export_config services Developer Tools can call directly.",
+        "data": {
+          "action": "Action",
+          "path": "Path",
+          "dry_run": "Dry run",
+          "overwrite": "Overwrite"
+        }
+      },
+      "execution": {
+        "title": "Execution",
+        "description": "Whether this integration actually moves the covers, or only writes to the log what it would have moved. Dry run is the safe setting: every command is logged with the service and payload it would have used, so a day of it can be compared against the automations it replaces. Turning it off gives this integration hands.",
+        "data": {
+          "dry_run": "Dry run (log commands, move nothing)",
+          "fixture_path": "Fixture to compare against"
+        },
+        "data_description": {
+          "dry_run": "On: nothing is moved, every intended command is written to the log. Off: covers really move. This takes effect immediately, with no reload.",
+          "fixture_path": "Optional. Path to the YAML fixture the drift check compares the live configuration against, for a house that keeps its checkout somewhere else. Leave empty to compare against a fixtures/ directory next to custom_components/, or against nothing if there is none."
+        }
+      },
+      "check_matrix": {
+        "title": "Configuration health",
+        "description": "{result}"
+      }
+    },
+    "error": {
+      "invalid_config": "This file could not be used: {error_detail}",
+      "confirmation_required": "Check the confirmation box to remove it.",
+      "import_export_failed": "This could not be completed: {error_detail}",
+      "rule_is_inherited": "This rule belongs to the shared default list of mode {mode}, not to this zone -- it decides every zone in that mode that has no matching rule of its own. Edit or remove it from Rules -> zone \"*\" for mode {mode} instead.",
+      "rule_no_longer_exists": "This rule for zone {zone} in mode {mode} was removed elsewhere before this was submitted. Pick again from the current list.",
+      "subentry_vanished": "This item was removed elsewhere before this was submitted. Go back and pick again if it still exists."
+    }
+  },
+  "issues": {
+    "fixture_drift": {
+      "title": "Configuration no longer matches fixtures/dom_peter.yaml",
+      "description": "The blinds, zones, modes, conditions, values or rules configured here no longer match `fixtures/dom_peter.yaml` in this checkout -- the file the 92,160-scenario migration gate measures. Differing: {fields}. Re-import that file (the `import_config` service) to bring the two back together, or update the fixture to match the configuration you actually intend, before trusting the gate again."
+    },
+    "unknown_entities": {
+      "title": "Configuration references entities this Home Assistant does not have",
+      "description": "{count} entity or entities named by this configuration exist in neither the state machine nor the entity registry, so nothing here can read or command them: {entities}. A rule, condition or guard that depends on one will behave as though that input were absent, and a blind among them can never be moved. Create the missing helpers and entities, or edit the configuration to name the ones this house actually has. Checked once, after Home Assistant has finished starting."
+    },
+    "blinds_missing_features": {
+      "title": "A blind cannot do what the rules ask of it",
+      "description": "{count} blind(s) named by this configuration lack cover features the rules need: {blinds}. The Home Assistant entity picker filters on the `cover` domain and nothing else, so a garage door or an awning can be chosen as a blind -- and the commands it cannot carry out are dropped silently. Either pick a cover that supports the listed features, or change the rules so they only ask for what it can do: 0 and 100 need only open and close, any value between needs the position setter. Checked once, after Home Assistant has finished starting."
+    },
+    "config_warnings": {
+      "title": "The configuration has warnings",
+      "description": "{count} warning(s) about this configuration: {warnings}. None of these stop the integration, and each one means something is quietly not being decided -- a zone with no rules, a rule shadowed by an earlier one, a guard that can never fire, a blind no zone claims, or tilt asked of a blind that has none. Fix them in the affected subentry, or confirm the behaviour is what you intended."
+    }
+  },
+  "services": {
+    "import_config": {
+      "name": "Import configuration",
+      "description": "Reads a YAML configuration file and replaces this integration's blinds, zones, modes, conditions, values and rules with what it contains.",
+      "fields": {
+        "path": {
+          "name": "Path",
+          "description": "Path to the YAML file to import."
+        },
+        "dry_run": {
+          "name": "Dry run",
+          "description": "Report what would happen without changing anything."
+        },
+        "overwrite": {
+          "name": "Overwrite",
+          "description": "Required to replace an already-configured set of blinds, zones, modes, conditions, values and rules. Without it, importing over an existing configuration is refused rather than merged."
+        }
+      }
+    },
+    "export_config": {
+      "name": "Export configuration",
+      "description": "Writes this integration's current blinds, zones, modes, conditions, values and rules out as a YAML file, in the same format import_config reads.",
+      "fields": {
+        "path": {
+          "name": "Path",
+          "description": "Path to write the YAML file to. Refused if it is a symlink, a directory, or its parent directory does not exist."
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "no_config_entry": {
+      "message": "Cover Logic is not set up yet."
+    },
+    "invalid_config": {
+      "message": "This file could not be imported: {error_detail}"
+    },
+    "cannot_parse_file": {
+      "message": "Could not parse {path}: {error_detail}"
+    },
+    "cannot_read_file": {
+      "message": "Could not read {path}: {error_detail}"
+    },
+    "existing_config": {
+      "message": "Cover Logic already has {count} subentries configured. Pass \"overwrite: true\" to replace them entirely, or remove them first."
+    },
+    "import_conversion_failed": {
+      "message": "Could not turn the imported file into subentries: {error_detail}"
+    },
+    "export_path_is_symlink": {
+      "message": "Refusing to export through a symlink: {path}. Point at the real file instead."
+    },
+    "export_path_is_directory": {
+      "message": "{path} is a directory, not a file."
+    },
+    "export_parent_missing": {
+      "message": "The directory {path} does not exist."
+    },
+    "export_target_has_comments": {
+      "message": "{path} already has {count} comment line(s). Exporting would silently discard them -- move the file aside first, or export somewhere else and merge the comments back by hand."
+    },
+    "nothing_to_export": {
+      "message": "Nothing is configured yet; there is nothing to export."
+    },
+    "cannot_parse_subentries": {
+      "message": "The current configuration could not be read: {error_detail}"
+    },
+    "cannot_write_file": {
+      "message": "Could not write {path}: {error_detail}"
+    }
+  }
+}
