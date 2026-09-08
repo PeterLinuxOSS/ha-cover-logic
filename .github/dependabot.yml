@@ -1,0 +1,18 @@
+version: 2
+updates:
+  # The CI workflow pins action versions; without this they silently rot.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore"
+
+  # PyYAML and Jinja2 are runtime dependencies of the integration itself, so a
+  # breaking change upstream reaches the house, not just the test suite.
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore"
