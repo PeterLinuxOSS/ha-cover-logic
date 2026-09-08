@@ -27,6 +27,7 @@ pytest.importorskip("homeassistant")
 
 from homeassistant.data_entry_flow import FlowResultType
 
+from cover_logic import conformance
 from cover_logic.config_flow import CoverLogicConfigFlow
 from cover_logic.config_store import BLIND, MODE, RULE, VALUE, ZONE
 from cover_logic.const import RULE_DEFAULT_ZONE
@@ -938,12 +939,133 @@ def test_export_writes_the_file_via_the_real_export_handler(subentry_entry, opti
 
 
 # ---------------------------------------------------------------------------
+# Execution mode: the one screen that writes `entry.options`
+# ---------------------------------------------------------------------------
+
+
+def _execution_field_names(flow):
+    """Field names the real `execution` form declares, as voluptuous sees them."""
+    return _schema_keys(_form(asyncio.run(flow.async_step_execution(None))))
+
+
+def test_execution_keeps_the_fixture_path_when_the_field_is_not_submitted(
+    subentry_entry, options_hass
+):
+    """Toggling dry run must not delete the fixture path.
+
+    Driven the way the house actually drives this flow -- `POST /api/config/
+    config_entries/options/flow` with only the field being changed -- and
+    through the form's own schema, because that is where the key disappeared:
+    `vol.Optional` with no `default` omits an unsubmitted field entirely, so
+    the handler could not tell "left alone" from "cleared".
+    """
+    entry = subentry_entry(options={"dry_run": True, "fixture_path": "/somewhere/dom_peter.yaml"})
+    flow = _make_flow(options_hass(entry))
+    form = _form(asyncio.run(flow.async_step_execution(None)))
+
+    validated = form["data_schema"]({"dry_run": False})
+    _menu(asyncio.run(flow.async_step_execution(validated)))
+
+    assert entry.options["fixture_path"] == "/somewhere/dom_peter.yaml"
+    assert entry.options["dry_run"] is False
+
+
+def test_execution_clears_the_fixture_path_when_the_field_is_submitted_empty(
+    subentry_entry, options_hass
+):
+    """The counter-case: emptying the field deliberately still unsets the option.
+
+    An absent key means "leave it as it is"; an empty string is the only way a
+    user has to say "compare against nothing again".
+    """
+    entry = subentry_entry(options={"fixture_path": "/somewhere/dom_peter.yaml"})
+    flow = _make_flow(options_hass(entry))
+    asyncio.run(flow.async_step_execution(None))
+
+    _menu(asyncio.run(flow.async_step_execution({"dry_run": False, "fixture_path": "   "})))
+
+    assert "fixture_path" not in entry.options
+
+
+def test_execution_stores_a_new_fixture_path(subentry_entry, options_hass):
+    entry = subentry_entry()
+    flow = _make_flow(options_hass(entry))
+    asyncio.run(flow.async_step_execution(None))
+
+    _menu(
+        asyncio.run(
+            flow.async_step_execution({"dry_run": True, "fixture_path": " /new/dom_peter.yaml "})
+        )
+    )
+
+    assert entry.options == {"dry_run": True, "fixture_path": "/new/dom_peter.yaml"}
+
+
+def test_execution_form_declares_both_fields(subentry_entry, options_hass):
+    entry = subentry_entry()
+    flow = _make_flow(options_hass(entry))
+
+    assert _execution_field_names(flow) == {"dry_run", "fixture_path"}
+
+
+# ---------------------------------------------------------------------------
 # Check against the old matrix
 # ---------------------------------------------------------------------------
 
 
+def test_check_matrix_compares_the_fixture_the_entry_names(
+    subentry_entry, options_hass, monkeypatch, tmp_path
+):
+    """The on-demand check must honour the `fixture_path` option, like setup does.
+
+    Simulates the deployed layout rather than relying on this checkout's own
+    path resolving: `_REPO_FIXTURE` is pointed at a file that does not exist,
+    which is what `parents[2]` derives on the house (`/config/fixtures/
+    dom_peter.yaml`) since phase 7.1 replaced the symlink with a copy. Without
+    the option being passed on, this screen answers "nothing to check" while
+    real drift exists -- see `test_init.py::
+    test_a_configured_fixture_path_is_what_gets_compared` for the setup-time
+    twin of this test.
+    """
+    monkeypatch.setattr(conformance, "_REPO_FIXTURE", tmp_path / "derived" / "dom_peter.yaml")
+    fixture = tmp_path / "elsewhere.yaml"
+    fixture.write_text("blinds:\n  - entity: cover.other\n", encoding="utf-8")
+    entry = subentry_entry(options={"fixture_path": str(fixture)})
+    entry.add_subentry(BLIND, {"entity": "cover.a"})
+    flow = _make_flow(options_hass(entry))
+
+    result = _form(asyncio.run(flow.async_step_check_matrix(None)))
+
+    assert "Differs" in result["description_placeholders"]["result"]
+    assert "blinds" in result["description_placeholders"]["result"]
+
+
+def test_check_matrix_passes_the_configured_option_to_the_resolver(
+    subentry_entry, options_hass, monkeypatch
+):
+    """Pins the argument itself, so the option cannot be dropped again silently.
+
+    The bug was invisible in a checkout: there `parents[2]` *is* the repo root,
+    so a missing argument still found a fixture and every existing test here
+    stubbed the resolver as a zero-argument callable.
+    """
+    seen = []
+
+    def _spy(configured=None):
+        """Record the argument; returning `None` ends the render at "no fixture"."""
+        seen.append(configured)
+
+    monkeypatch.setattr("cover_logic.options_flow.repo_fixture_path", _spy)
+    entry = subentry_entry(options={"fixture_path": "/somewhere/dom_peter.yaml"})
+    flow = _make_flow(options_hass(entry))
+
+    asyncio.run(flow.async_step_check_matrix(None))
+
+    assert seen == ["/somewhere/dom_peter.yaml"]
+
+
 def test_check_matrix_reports_no_fixture_when_none_ships(subentry_entry, options_hass, monkeypatch):
-    monkeypatch.setattr("cover_logic.options_flow.repo_fixture_path", lambda: None)
+    monkeypatch.setattr("cover_logic.options_flow.repo_fixture_path", lambda configured=None: None)
     entry = subentry_entry()
     flow = _make_flow(options_hass(entry))
 
@@ -959,7 +1081,9 @@ def test_check_matrix_reports_a_match(subentry_entry, options_hass, monkeypatch,
         "modes:\n  - {id: m}\nrules:\n  m.terasa:\n    - {then: {position: keep, tilt: keep}}\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr("cover_logic.options_flow.repo_fixture_path", lambda: fixture)
+    monkeypatch.setattr(
+        "cover_logic.options_flow.repo_fixture_path", lambda configured=None: fixture
+    )
     entry = subentry_entry()
     entry.add_subentry(BLIND, {"entity": "cover.a"})
     entry.add_subentry(ZONE, {"id": "terasa", "members": ["cover.a"]})
@@ -978,7 +1102,9 @@ def test_check_matrix_reports_a_match(subentry_entry, options_hass, monkeypatch,
 def test_check_matrix_reports_a_diff(subentry_entry, options_hass, monkeypatch, tmp_path):
     fixture = tmp_path / "dom_peter.yaml"
     fixture.write_text("blinds:\n  - entity: cover.other\n", encoding="utf-8")
-    monkeypatch.setattr("cover_logic.options_flow.repo_fixture_path", lambda: fixture)
+    monkeypatch.setattr(
+        "cover_logic.options_flow.repo_fixture_path", lambda configured=None: fixture
+    )
     entry = subentry_entry()
     entry.add_subentry(BLIND, {"entity": "cover.a"})
     flow = _make_flow(options_hass(entry))
@@ -990,7 +1116,7 @@ def test_check_matrix_reports_a_diff(subentry_entry, options_hass, monkeypatch, 
 
 
 def test_check_matrix_submit_returns_to_main_menu(subentry_entry, options_hass, monkeypatch):
-    monkeypatch.setattr("cover_logic.options_flow.repo_fixture_path", lambda: None)
+    monkeypatch.setattr("cover_logic.options_flow.repo_fixture_path", lambda configured=None: None)
     entry = subentry_entry()
     flow = _make_flow(options_hass(entry))
     asyncio.run(flow.async_step_check_matrix(None))
@@ -1053,7 +1179,7 @@ def test_check_matrix_reports_validation_counts_and_attributes_the_problem(
     open the "Modes" section and pick to fix it, not just "some mode,
     somewhere".
     """
-    monkeypatch.setattr("cover_logic.options_flow.repo_fixture_path", lambda: None)
+    monkeypatch.setattr("cover_logic.options_flow.repo_fixture_path", lambda configured=None: None)
     entry = subentry_entry()
     entry.add_subentry(
         MODE, {"id": "m1", "order": 0, "when": {"condition": "ref", "name": "missing"}}

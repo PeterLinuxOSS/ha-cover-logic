@@ -1084,16 +1084,20 @@ class CoverLogicOptionsFlow(OptionsFlow):
         """
         entry = self.config_entry
         if user_input is not None:
-            # An empty string clears the option rather than storing `""`,
-            # which `repo_fixture_path` would treat as "not configured"
-            # anyway -- storing it would leave a value that reads as a
-            # setting and behaves as its absence.
-            path = (user_input.get(OPT_FIXTURE_PATH) or "").strip()
             options = {**dict(entry.options), OPT_DRY_RUN: bool(user_input[OPT_DRY_RUN])}
-            if path:
-                options[OPT_FIXTURE_PATH] = path
-            else:
-                options.pop(OPT_FIXTURE_PATH, None)
+            # An absent key means "left alone", not "cleared": `vol.Optional`
+            # omits an unsubmitted field, and a REST caller flipping only
+            # `dry_run` submits nothing else.
+            if OPT_FIXTURE_PATH in user_input:
+                # An empty string clears the option rather than storing `""`,
+                # which `repo_fixture_path` would treat as "not configured"
+                # anyway -- storing it would leave a value that reads as a
+                # setting and behaves as its absence.
+                path = (user_input[OPT_FIXTURE_PATH] or "").strip()
+                if path:
+                    options[OPT_FIXTURE_PATH] = path
+                else:
+                    options.pop(OPT_FIXTURE_PATH, None)
             self.hass.config_entries.async_update_entry(entry, options=options)
             return await self._show_main_menu()
 
@@ -1179,8 +1183,14 @@ class CoverLogicOptionsFlow(OptionsFlow):
 
         `repo_fixture_path` stats a file, so it goes to the executor like the
         `load_config_file` below it -- both are I/O on the event loop.
+
+        The entry's `fixture_path` option is passed on, exactly as
+        `__init__._check_fixture_conformance` does: without it the derived
+        path is used, which on a copy-deployed install points at nothing.
         """
-        fixture = await self.hass.async_add_executor_job(repo_fixture_path)
+        fixture = await self.hass.async_add_executor_job(
+            repo_fixture_path, self.config_entry.options.get(OPT_FIXTURE_PATH)
+        )
         if fixture is None:
             return (
                 "This installation ships no fixtures/dom_peter.yaml to compare "

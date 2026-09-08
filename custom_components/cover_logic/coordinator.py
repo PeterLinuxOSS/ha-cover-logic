@@ -81,7 +81,7 @@ from .runner import (
     Priority,
     current_position,
 )
-from .world import Event as WorldEvent
+from .world import Event as WorldEvent, World
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -511,12 +511,19 @@ class CoverLogicCoordinator:
         and the answer to "a safety rule is unusable" is to move nothing and say
         so -- never to fall back to the unguarded decision, which is exactly the
         movement the guard existed to stop.
+
+        **The recheck timer is armed in a `finally`, and that is a safety
+        property, not tidiness.** See docs/rationale.md -- "Why a failing
+        evaluation must still arm the next one".
         """
         # Consumed, not merely read: an event describes one moment, and
         # letting it survive into the next evaluation would report the same
         # movement twice.
         pending, self._pending_event = self._pending_event, None
         world = build_world(self.hass, self.config, event=pending)
+        # Whether this evaluation got far enough to arm the timer with its own
+        # answer; the `finally` must not overwrite a guard's deadline with the floor.
+        armed = False
         try:
             # From this same snapshot, never a second read of `hass.states`:
             # otherwise "was the world readable" and "what did the world say"
@@ -527,32 +534,73 @@ class CoverLogicCoordinator:
             screening = screen(self.config, world)
             decision = evaluate(self.config, world)
             guarded = review(self.config, world, decision, self._positions(), screening)
+
+            self.decision = decision
+            self.guarded = guarded
+            self.readiness = readiness
+            # One clock for the whole publish, so "when did this finish" and
+            # "how long has a deferral waited" cannot disagree by a call.
+            completed = dt_util.utcnow()
+            self._publish_outcome(decision, completed)
+
+            now = completed.timestamp()
+            elapsed = self.deferrals.sync(guarded, decision, now)
+            # Two answers, one timer: a guard's own deadline and the next instant a
+            # time-derived condition changes answer. See `boundaries.py` for why the
+            # second one needs a clock nothing else was providing.
+            self._reschedule(_soonest(self.deferrals.next_recheck(now), self._next_boundary(world)))
+            armed = True
+            await self._execute(guarded, elapsed, decision.mode, readiness)
+
+            # Last, not first: the sensor reads `last_command` and `pending`, and a
+            # listener fired before the executor ran would show the previous
+            # recompute's answer next to this one's mode.
+            self._notify_listeners()
         except Exception as err:
             _LOGGER.exception("cover_logic: evaluation failed, keeping previous decision")
             self.last_error = f"{type(err).__name__}: {err}"
             self._notify_listeners()
+        finally:
+            if not armed:
+                self._reschedule(None)
+
+    def _publish_outcome(self, decision: Decision, completed: dt.datetime) -> None:
+        """Record whether this evaluation decided the whole house, or only part of it.
+
+        A zone whose rules raised is contained by the engine -- every other zone
+        still decides -- but containment is not an excuse, so the failure is
+        reported here instead of `last_success`. See docs/rationale.md -- "Why a
+        contained zone failure is reported as an error".
+        """
+        if not decision.failures:
+            self.last_error = None
+            self.last_success = completed
             return
 
-        self.decision = decision
-        self.guarded = guarded
-        self.readiness = readiness
-        self.last_error = None
-        self.last_success = dt_util.utcnow()
-
-        now = self.last_success.timestamp()
-        elapsed = self.deferrals.sync(guarded, decision, now)
-        # Two answers, one timer: a guard's own deadline and the next instant a
-        # time-derived condition changes answer. See `boundaries.py` for why the
-        # second one needs a clock nothing else was providing.
-        self._reschedule(
-            _soonest(self.deferrals.next_recheck(now), next_boundary(self.config, world))
+        for failure in decision.failures:
+            _LOGGER.error(
+                "cover_logic: zone %s could not be decided (%s); left alone: %s",
+                failure.key,
+                failure.error,
+                ", ".join(failure.blinds),
+            )
+        self.last_error = "; ".join(
+            f"zone {failure.key} could not be decided: {failure.error}"
+            for failure in decision.failures
         )
-        await self._execute(guarded, elapsed, decision.mode, readiness)
 
-        # Last, not first: the sensor reads `last_command` and `pending`, and a
-        # listener fired before the executor ran would show the previous
-        # recompute's answer next to this one's mode.
-        self._notify_listeners()
+    def _next_boundary(self, world: World) -> float | None:
+        """`boundaries.next_boundary`, degraded to "nothing pending" when it cannot be computed.
+
+        The same broken condition that the engine contains per zone is read
+        again here, house-wide -- so without this, one bad offset raises past
+        `_execute` and the zones that *did* decide are never commanded.
+        """
+        try:
+            return next_boundary(self.config, world)
+        except Exception:
+            _LOGGER.exception("cover_logic: could not compute the next time boundary")
+            return None
 
     def _positions(self) -> dict[str, int | None]:
         """Every configured blind's reported position, for `guards.review`.

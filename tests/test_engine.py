@@ -6,7 +6,7 @@ import pytest
 from cover_logic.config_schema import load_config
 from cover_logic.engine import EngineError, evaluate
 from cover_logic.model import KEEP, Action
-from cover_logic.world import Event, World
+from cover_logic.world import Event, SunTimes, World
 
 NOW = dt.datetime(2026, 8, 19, 13, 0)
 
@@ -38,8 +38,14 @@ rules:
 """)
 
 
-def world(states, event=None) -> World:
-    return World(states=states, attributes={}, now=NOW, event=event or Event())
+def world(states, event=None, sun=None) -> World:
+    return World(
+        states=states,
+        attributes={},
+        now=NOW,
+        event=event or Event(),
+        sun=sun or SunTimes(),
+    )
 
 
 DEN = {"input_boolean.cover_down": "off", "binary_sensor.is_home": "on"}
@@ -276,6 +282,49 @@ rules:
     # `fired_rules` recovers the rule key via `label.split(" ")[0]` -- the
     # error label must still split cleanly into a key-shaped first token.
     assert d.trace["cover.a"].split(" ")[0] == "den.broken#error"
+
+
+def test_a_zone_whose_rule_raises_is_reported_as_a_failure_on_the_decision():
+    """Containment is the design; silence was the defect.
+
+    The `#error` substring in the trace was the only signal a zone had been
+    left on keep/keep, and nothing outside this module ever read it -- so the
+    coordinator could not tell a contained failure from a clean evaluation.
+    `Decision.failures` carries it as data instead.
+
+    The condition here is the measured spelling: Home Assistant writes
+    `after_offset: "-00:20:00"`, this dialect takes seconds (see
+    docs/rationale.md -- "Why `condition: sun` takes seconds"), and nothing
+    type-checks the difference, so `int()` raises at evaluation time.
+    """
+    cfg = load_config("""
+blinds:
+  - {entity: cover.a}
+  - {entity: cover.b}
+zones:
+  broken: {members: [cover.a]}
+  fine: {members: [cover.b]}
+modes: [{id: noc}]
+conditions: {}
+values: {}
+rules:
+  noc.broken:
+    - {if: {condition: sun, after: sunset, after_offset: "-00:20:00"}, then: {position: 0}}
+  noc.fine:
+    - {then: {position: 42}}
+""")
+    d = evaluate(cfg, world({}, sun=SunTimes(sunset=NOW - dt.timedelta(hours=1))))
+
+    # Containment is unchanged: the other zone decided normally.
+    assert d.targets["cover.b"] == Action(position=42, tilt=KEEP)
+    assert d.targets["cover.a"] == Action()
+
+    assert [failure.key for failure in d.failures] == ["noc.broken"]
+    assert "ValueError" in d.failures[0].error
+    assert d.failures[0].blinds == ("cover.a",)
+
+    # Counter: an evaluation that broke nothing reports nothing.
+    assert evaluate(CFG, world(DEN)).failures == ()
 
 
 def test_zone_naming_an_unknown_blind_still_raises():

@@ -1057,6 +1057,55 @@ def test_an_earlier_guard_at_the_other_stage_does_not_shadow_a_later_one():
     )
 
 
+def test_an_input_guard_written_after_a_force_is_reported():
+    """The stage decides before the order does, and a `force` is what that costs.
+
+    `guards.review` never judges a blind the input stage already claimed, so
+    the wind protection written first is not asked at all once a later input
+    guard covers the same blind -- the exact case the house fixture avoids by
+    hand, with a comment, and which nothing checked until now.
+    """
+    problems = [
+        p
+        for p in validate(
+            load_config(
+                GUARD_BASE
+                + "  - {policy: force, then: {position: 100}, when: !ref vzdy}\n"
+                + "  - {policy: skip, stage: input, targets: [cover.a]}\n"
+            )
+        )
+        if p.code == "guard_stage_precedence"
+    ]
+    assert len(problems) == 1
+    assert problems[0].severity == WARNING
+    assert "guard #1" in problems[0].message
+    assert "guard #0" in problems[0].message
+    assert "cover.a" in problems[0].message
+
+
+def test_an_input_guard_over_an_earlier_skip_is_not_reported():
+    """Both mean "move nothing", so which of them answers changes no outcome."""
+    assert "guard_stage_precedence" not in guard_codes(
+        "  - {policy: skip, when: !ref vzdy}\n  - {policy: skip, stage: input}\n"
+    )
+
+
+def test_an_input_guard_written_before_a_force_is_not_reported():
+    """Written first, and the stage agrees with the order -- nothing is lost."""
+    assert "guard_stage_precedence" not in guard_codes(
+        "  - {policy: skip, stage: input, targets: [cover.a]}\n"
+        "  - {policy: force, then: {position: 100}, when: !ref vzdy}\n"
+    )
+
+
+def test_an_input_guard_on_other_blinds_than_the_force_is_not_reported():
+    """Judged per blind, like every other guard check here."""
+    assert "guard_stage_precedence" not in guard_codes(
+        "  - {policy: force, targets: [cover.a], then: {position: 100}, when: !ref vzdy}\n"
+        "  - {policy: skip, stage: input, targets: [cover.b]}\n"
+    )
+
+
 def test_an_earlier_opening_guard_does_not_shadow_a_later_closing_one():
     assert (
         validate(

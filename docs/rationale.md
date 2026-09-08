@@ -819,6 +819,35 @@ hide a config that cannot be evaluated behind a decision that looks normal.
 Only a failure from evaluating this zone's *rules* -- everything that is not
 an `EngineError` -- is contained here.
 
+### Why a contained zone failure is reported as an error
+
+Containment (above) is the design and stays. What was wrong was that it was
+also *silent*. A zone whose rules raised got `keep/keep` for every one of its
+blinds and a `#error` label inside `Decision.trace` -- and nothing read that
+label. The exception never left `evaluate()`, so the coordinator's own error
+handler never ran: `last_error` stayed `None`, `last_success` was refreshed as
+usual, no line reached the log. Every surface said the evaluation had
+succeeded while one zone had decided nothing at all.
+
+That is not a small gap in a house where, since phase 7.6, this integration is
+the only owner of closing at night: a single unparsable offset in one rule
+would leave that zone's blinds open until morning, with the mode sensor
+reporting a clean recompute the whole time.
+
+So the failure now travels as data (`Decision.failures`), not as a substring
+someone might grep for. `_evaluate_zone` returns a `ZoneFailure` naming the
+`mode.zone` key, the exception and the blinds that paid for it; the
+coordinator logs one `ERROR` per failed zone and sets `last_error` instead of
+`last_success`. The trace label is kept exactly as it was -- it is what a
+person reads -- but nothing depends on parsing it any more. A decision that
+broke nothing carries an empty tuple, so the common path is unchanged.
+
+Deliberately not a repair issue: this is a runtime failure of one evaluation,
+not a static defect of the configuration, and the repair-issue channel added
+in #63 is for what `validate()` can see before anything runs. A condition that
+raises only in some worlds would otherwise raise and clear an issue as the
+house moved through the day.
+
 ### Why the `#none` trace label is ambiguous on purpose
 
 The trace label `#none` is deliberately ambiguous between two causes: no
@@ -1069,6 +1098,41 @@ open; the settle window (8 s) does not absorb it, since dropouts run 55-132 s.
 Over 14 days there were 33 dropouts and **none** fell in the 45 minutes before
 sunset -- they cluster in daylight hours. After sunset `vecer` is held by the
 sun window, so only the lux-led dusk of an overcast evening is exposed at all.
+
+### Why an input guard over an earlier force is a warning
+
+Guards resolve first-match-wins by written order, and that is the whole
+conflict-resolution mechanism -- there are no priorities. Between the two
+stages it is not true. `guards.review` seeds its outcomes from the input-stage
+screening and never judges a blind twice, so a guard at `stage: input` is
+answered before any `stage: output` guard is asked, however early that one is
+written.
+
+The asymmetry is deliberate and stays: the input stage exists to remove a
+target before the engine is asked about it, which is why `screen()` takes no
+`Decision` at all. Almost everywhere it also costs nothing -- an input guard
+and an output `skip` both end in "move nothing", so which one answers changes
+no outcome.
+
+It costs something against exactly one policy. A `force` is the only guard
+that makes something happen, and the house's wind protection is written first
+precisely so that it outranks everything else -- that placement is what
+replaces a "wind is below the threshold" condition on every other guard. An
+input guard added later takes that rank back silently. The house fixture knows
+this: the flower-blind override is written `stage: output`, with a comment
+explaining that `stage: input` "would defeat the wind protection too, and a
+hand-raised blind would stay out in a storm". It was reasoned about once, by
+hand, and nothing checked it afterwards.
+
+`_check_guard_stage_precedence` is that check, scoped to the one shape that
+loses something real: an `input` guard sharing a blind with an *earlier*
+`force`. Not reported when the force comes later (stage and order agree), when
+the earlier guard is a `skip` (same outcome either way), or when they share no
+blind -- shadowing is judged per blind here as everywhere else. A `WARNING`
+rather than an `ERROR` because the configuration is honourable and will run;
+what it will not do is what its author's ordering says. Since #63 that reaches
+the owner as a repair issue, which is why the check is narrow: the house's own
+fixture must, and does, come out clean.
 
 ## `planner.py`
 
@@ -1503,6 +1567,33 @@ blind's ~55 s travel, so it never lands repeatedly inside a move. In the
 owner's house it changes nothing at all -- 300 s is *rarer* than the 66 s that
 already happens -- which is what made it safe to deploy on the same day the
 integration took over the night.
+
+### Why a failing evaluation must still arm the next one
+
+The floor above only guarantees a next evaluation if something arms it, and
+for the first months it did not. `_reschedule` was called once, after the
+`try`, so an evaluation that raised set `last_error`, notified listeners and
+returned -- past the one line that arms the timer. `_handle_recheck` clears
+`_unsub_recheck` before it awaits, so the timer that fired was already gone:
+after a single failure the integration would evaluate *only* when a referenced
+entity happened to change, which is precisely the property the floor exists to
+remove. A `defer` was worse off still -- its `max_wait` is reached by
+`next_recheck` waking the coordinator, so a wait with a deadline would sit
+there having quietly lost the only thing that could end it.
+
+The re-arm is therefore in a `finally`, with a flag saying whether the
+successful path already armed it with its own answer. That ordering matters in
+both directions: the `finally` must not overwrite a guard's 30-second deadline
+with the 300-second floor, and it must still fire when the failure happened
+before any deadline was known. The flag is set after `_reschedule` and before
+`_execute`, so a failure in the executor keeps the timer the decision asked
+for rather than replacing it.
+
+`_next_boundary` is a smaller instance of the same idea. `boundaries.
+next_boundary` reads the same conditions the engine does, house-wide, so one
+bad offset raised there would fly past `_execute` and the zones that *did*
+decide would never be commanded. It is contained to "nothing pending" and
+logged.
 
 ### Why a configuration change reloads the entry
 

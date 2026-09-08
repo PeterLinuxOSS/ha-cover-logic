@@ -24,12 +24,14 @@ pytest.importorskip("homeassistant")
 from homeassistant.core import EVENT_STATE_CHANGED, Context
 
 from cover_logic.config_schema import load_config
+from cover_logic.const import COMMAND_WOULD_CALL
 from cover_logic.coordinator import (
     CoverLogicCoordinator,
     _manual_move_blinds,
     evaluate as real_evaluate,
 )
 from cover_logic.engine import EngineError
+from cover_logic.model import KEEP, Action
 
 from .conftest import SHORT_SETTLE_SECONDS
 
@@ -206,6 +208,171 @@ def test_non_engine_error_is_also_caught_and_recorded(
 
             assert coordinator.decision is previous
             assert coordinator.last_error == "ValueError: unknown condition type: 'sate'"
+
+            await coordinator.async_unload()
+        finally:
+            await hass.async_stop(force=True)
+
+    asyncio.run(_run())
+
+
+def test_a_failing_settle_evaluation_arms_a_fresh_recheck_timer(
+    config, hass_factory, runtime_entry, monkeypatch
+):
+    """The error path must re-arm the timer that guarantees a next evaluation.
+
+    `_reschedule` was reachable only after the `try`, so a raising evaluation
+    left whatever timer happened to be armed already and never replaced it --
+    and that stale one clears itself before awaiting, so the next failure was
+    terminal. Identity, not `is not None`: the previous timer is still armed at
+    this point (the floor is five minutes), so only a *different* unsub proves
+    the error path armed one of its own.
+    """
+
+    async def _run():
+        hass = hass_factory()
+        try:
+            coordinator = CoverLogicCoordinator(hass, config, runtime_entry())
+            await coordinator.async_setup()
+            await asyncio.sleep(_WAIT)
+            armed = coordinator._unsub_recheck  # noqa: SLF001
+            assert armed is not None  # counter: the good path arms it
+
+            def _raise(_config, _world):
+                msg = "boom"
+                raise ValueError(msg)
+
+            monkeypatch.setattr("cover_logic.coordinator.evaluate", _raise)
+            hass.states.async_set("input_boolean.a", "on")
+            await asyncio.sleep(_WAIT)
+
+            assert coordinator.last_error == "ValueError: boom"
+            assert coordinator._unsub_recheck is not None  # noqa: SLF001
+            assert coordinator._unsub_recheck is not armed  # noqa: SLF001
+
+            await coordinator.async_unload()
+        finally:
+            await hass.async_stop(force=True)
+
+    asyncio.run(_run())
+
+
+def test_a_failing_recheck_evaluation_keeps_the_recheck_timer_going(
+    config, hass_factory, runtime_entry, monkeypatch
+):
+    """`_handle_recheck` clears its unsub before awaiting, so one error killed it.
+
+    From then on the integration evaluated only when a referenced entity
+    changed -- which is exactly the guarantee `RECONCILE_FLOOR_SECONDS` exists
+    to give (docs/rationale.md, "Why evaluation has a floor"), and a pending
+    `defer` would never reach its `max_wait` either.
+
+    The floor is shortened here so several of its periods fit in a test; its
+    real length belongs to `test_settle.py`.
+    """
+    monkeypatch.setattr("cover_logic.coordinator.RECONCILE_FLOOR_SECONDS", 0.3)
+    failures = []
+
+    def _raise(_config, _world):
+        failures.append(1)
+        msg = "boom"
+        raise ValueError(msg)
+
+    async def _run():
+        hass = hass_factory()
+        try:
+            coordinator = CoverLogicCoordinator(hass, config, runtime_entry())
+            await coordinator.async_setup()
+            await asyncio.sleep(_WAIT)
+            assert coordinator.last_success is not None  # counter: the first one worked
+
+            monkeypatch.setattr("cover_logic.coordinator.evaluate", _raise)
+            # Four floors' worth: nothing changes state, so every one of these
+            # can only have come from the previous failure re-arming the timer.
+            await asyncio.sleep(1.2)
+            assert len(failures) >= 3, failures
+            assert coordinator._unsub_recheck is not None  # noqa: SLF001
+
+            # And the re-armed timer really does evaluate, not just exist.
+            monkeypatch.setattr("cover_logic.coordinator.evaluate", real_evaluate)
+            await asyncio.sleep(0.6)
+            assert coordinator.last_error is None
+
+            await coordinator.async_unload()
+        finally:
+            await hass.async_stop(force=True)
+
+    asyncio.run(_run())
+
+
+# A zone whose condition raises at runtime, next to one that decides normally.
+# The offset spelling is Home Assistant's own (`"-00:20:00"`); this dialect
+# takes seconds, and nothing type-checks the difference, so `int()` raises
+# while the sun condition is being evaluated.
+_BROKEN_ZONE_CONFIG = """
+blinds:
+  - {entity: cover.a}
+  - {entity: cover.b}
+zones:
+  broken: {members: [cover.a]}
+  fine: {members: [cover.b]}
+modes: [{id: noc}]
+rules:
+  noc.broken:
+    - {if: {condition: sun, after: sunset, after_offset: "-00:20:00"}, then: {position: 0}}
+  noc.fine:
+    - {then: {position: 42}}
+"""
+
+
+def test_a_zone_whose_condition_raises_is_reported_and_not_counted_as_a_success(
+    hass_factory, runtime_entry, caplog
+):
+    """A contained zone failure must reach the entity, and must not read as success.
+
+    Before this, the only trace of it was the substring `#error` inside
+    `Decision.trace`, which nothing outside the engine reads: `last_error`
+    stayed `None`, `last_success` was stamped as if the whole house had been
+    decided, and nothing was logged. In mode `noc` this integration is the only
+    thing that closes the house, so those blinds stay open all night while the
+    sensor reports a clean evaluation.
+    """
+
+    async def _run():
+        hass = hass_factory()
+        try:
+            coordinator = CoverLogicCoordinator(
+                hass, load_config(_BROKEN_ZONE_CONFIG), runtime_entry()
+            )
+            with caplog.at_level("ERROR", logger="cover_logic.coordinator"):
+                await coordinator.async_setup()
+                await asyncio.sleep(_WAIT)
+
+            # Containment is unchanged: the healthy zone is still decided.
+            assert coordinator.decision is not None
+            assert coordinator.decision.targets["cover.b"] == Action(position=42, tilt=KEEP)
+            assert coordinator.decision.targets["cover.a"] == Action()
+
+            # Decided is not enough: the healthy zone must also have been
+            # dispatched. The same broken offset breaks `next_boundary`, which
+            # is read past the engine and used to raise straight over
+            # `_execute`, so nothing at all was commanded.
+            await coordinator.runner.async_wait_idle()
+            assert [
+                entry
+                for entry in coordinator.commands.recent
+                if entry["kind"] == COMMAND_WOULD_CALL and entry["blind"] == "cover.b"
+            ], coordinator.commands.recent
+
+            assert coordinator.last_error is not None
+            assert "noc.broken" in coordinator.last_error
+            assert "ValueError" in coordinator.last_error
+            # Never fully decided, so there is no moment it last worked.
+            assert coordinator.last_success is None
+            assert any(
+                record.levelname == "ERROR" and "noc.broken" in record.getMessage()
+                for record in caplog.records
+            ), [record.getMessage() for record in caplog.records]
 
             await coordinator.async_unload()
         finally:
