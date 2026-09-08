@@ -132,6 +132,14 @@ def test_time_window_straddling_midnight_honours_seconds():
     assert evaluate_condition(cond, world(now=dt.datetime(2026, 8, 20, 0, 0, 45))) is False
 
 
+def test_today_at_honours_seconds_like_parse_hhmm():
+    # `parse_hhmm` was changed to honour seconds; `today_at` must not zero
+    # them again, or a template comparison is up to 59 s early.
+    cond = {"condition": "template", "value_template": "{{ now() >= today_at('13:00:30') }}"}
+    assert evaluate_condition(cond, world(now=dt.datetime(2026, 8, 19, 13, 0, 15))) is False
+    assert evaluate_condition(cond, world(now=dt.datetime(2026, 8, 19, 13, 0, 45))) is True
+
+
 def test_and_or_not():
     w = world({"a": "on"})
     on = {"condition": "state", "entity_id": "a", "state": "on"}

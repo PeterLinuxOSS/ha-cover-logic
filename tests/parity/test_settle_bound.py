@@ -210,15 +210,27 @@ def _writes_any(automation: dict, read: set[str]) -> set[str]:
     return hit
 
 
-def _delayed_reactions(read: set[str]) -> dict[tuple[str, str, float], set[str]]:
-    """Every (automation, trigger, delay) that writes something in `read`."""
-    automations = yaml.safe_load(AUTOMATIONS.read_text(encoding="utf-8"))
+def _triggers(automation: dict) -> list:
+    """`triggers:`/`trigger:` as a list -- Home Assistant also allows a single mapping.
+
+    Iterating a mapping yields its KEYS, which are strings, so the
+    `isinstance(trigger, dict)` guard below then skipped the whole automation
+    and it passed this gate without ever being reviewed.
+    """
+    raw = automation.get("triggers") or automation.get("trigger") or []
+    if isinstance(raw, dict):
+        return [raw]
+    return list(raw) if isinstance(raw, list) else []
+
+
+def _reactions(automations, read: set[str]) -> dict[tuple[str, str, float], set[str]]:
+    """Every (automation, trigger, delay) in `automations` that writes something in `read`."""
     found: dict[tuple[str, str, float], set[str]] = {}
     for automation in automations:
         written = _writes_any(automation, read)
         if not written:
             continue
-        for trigger in automation.get("triggers") or automation.get("trigger") or []:
+        for trigger in _triggers(automation):
             if not isinstance(trigger, dict):
                 continue
             held = _seconds(trigger.get("for"))
@@ -229,12 +241,52 @@ def _delayed_reactions(read: set[str]) -> dict[tuple[str, str, float], set[str]]
     return found
 
 
+def _delayed_reactions(read: set[str]) -> dict[tuple[str, str, float], set[str]]:
+    """The same, for this house's `/config/automations.yaml`."""
+    return _reactions(yaml.safe_load(AUTOMATIONS.read_text(encoding="utf-8")), read)
+
+
 @pytest.fixture(scope="module")
 def read_entities(fixtures_dir) -> set[str]:
     config = load_config_file(fixtures_dir / "dom_peter.yaml")
     return {
         entry[0] if isinstance(entry, tuple) else entry for entry in referenced_entities(config)
     }
+
+
+# A hand-written automation whose `trigger:` is a single mapping rather than a
+# list -- valid Home Assistant, and the shape this gate used to skip. Built
+# here instead of read from the house so the hole stays covered on a checkout
+# where nobody happens to have written one yet.
+SINGLE_MAPPING_TRIGGER = {
+    "alias": "Single mapping trigger",
+    "trigger": {
+        "id": "lonely",
+        "platform": "state",
+        "entity_id": "binary_sensor.postel",
+        "for": "00:00:10",
+    },
+    "action": [
+        {
+            "service": "input_boolean.turn_on",
+            "target": {"entity_id": "input_boolean.zaluzie_aktivna_peter"},
+        }
+    ],
+}
+
+
+def test_a_single_mapping_trigger_is_seen_by_the_gate(read_entities):
+    """`trigger:` as a mapping must reach the gate, not be skipped as a string."""
+    found = _reactions([SINGLE_MAPPING_TRIGGER], read_entities)
+
+    assert ("Single mapping trigger", "lonely", 10.0) in found
+
+
+def test_a_single_mapping_trigger_would_be_reported_unreviewed(read_entities):
+    """And once seen it must be *reported*, exactly like a list-shaped one."""
+    found = _reactions([SINGLE_MAPPING_TRIGGER], read_entities)
+
+    assert [key for key in found if key not in REVIEWED]
 
 
 def test_no_unreviewed_delayed_reaction(read_entities):

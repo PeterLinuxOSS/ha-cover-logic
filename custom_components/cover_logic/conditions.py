@@ -266,7 +266,10 @@ def _template_globals(world: World) -> dict[str, Any]:
 
     def today_at(text: str = "00:00") -> dt.datetime:
         moment = parse_hhmm(text)
-        return world.now.replace(hour=moment.hour, minute=moment.minute, second=0, microsecond=0)
+        # Seconds carried through, not zeroed: `parse_hhmm` honours them.
+        return world.now.replace(
+            hour=moment.hour, minute=moment.minute, second=moment.second, microsecond=0
+        )
 
     return {
         "is_state": is_state,

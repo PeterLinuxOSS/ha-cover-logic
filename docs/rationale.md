@@ -1134,6 +1134,84 @@ what it will not do is what its author's ordering says. Since #63 that reaches
 the owner as a repair issue, which is why the check is narrow: the house's own
 fixture must, and does, come out clean.
 
+## `tests/scenarios.py`
+
+### Why the clock is the axis and the sky is a constant
+
+`tests/scenarios.py` derives its scenario space from the configuration, and two
+condition kinds read no entity at all: `condition: time` compares `World.now`
+against a wall-clock boundary, and `condition: sun` compares it against sunrise
+or sunset shifted by an offset. Both therefore need *something* to vary, and
+there are two candidates: move the sun, or move the clock.
+
+Moving the sun does not work, and the reason is worth keeping because it is not
+obvious. A witness frequently has to satisfy two sun clauses at once with
+*opposite* truth values -- this house's `vecer` asks for `after: sunset` with
+`after_offset: -1200` while `je_noc` asks for `after: sunset` with
+`before_offset: -1260`, so the two windows overlap almost entirely and differ
+by sixty seconds at each end. Separating them needs the sun placed to the
+minute, and a witness that pins the sky for the first clause can then never
+falsify the second.
+
+Moving the clock has none of that trouble: one axis, one value per world, and
+the boundaries a configuration can distinguish are all computable in advance
+from the offsets it contains. So `SUN` is a constant (sunrise 06:00, sunset
+20:00 on `NOW`'s date, with hours of slack either side so any realistic offset
+still lands inside the day) and `CLOCK_AXIS` carries the instants. Probes are
+each derived boundary ± 1 minute -- the resolution issue #6 specified, and
+exactly what the `vecer`/`je_noc` pair needs.
+
+The boundary instant itself is deliberately absent. This axis exists so that
+every clock clause can be made both true and false, and ± 1 minute is the
+smallest set that does it, while whether the comparison *at* the exact instant
+is `<` or `<=` is already `test_conditions.py`'s subject. A third probe per
+boundary would grow the covering array by half to answer a question asked
+elsewhere.
+
+### Why the clock is enumerated around the solve
+
+Every other axis in `_require` is chosen where it is read, and conflicts are
+resolved by the backtracking already built into the `and`-false and `or`-true
+choice points: a child that cannot be satisfied against the current pins
+raises, the parent restores its snapshot, and the next child is tried.
+
+The clock cannot rely on that alone, because the requirements contending for it
+are not siblings. `_solve_rule_witness` issues several independent top-level
+requirements -- the rule's own guard true, its mode's `when` true, every
+earlier mode's `when` false, every earlier rule in the list false -- and two of
+those can both read the clock with opposite truth values while sharing no
+common `and`/`or` node. There is no parent to backtrack into, so pinning the
+first instant that satisfies the first clause and raising when a later one
+disagrees loses the witness for a rule that is plainly reachable. That is
+exactly the failure recorded in `docs/sourcery-audit-2026-09-08.md`.
+
+The clock is therefore enumerated *around* the whole solve: each candidate
+instant is tried as the sole pre-pin, and a failure anywhere moves to the next.
+It is affordable because the axis is small by construction (twelve instants for
+this house) and a witness solve is cheap. It is not generalised to the other
+axes on purpose: doing that for every axis is the combinatorial explosion the
+covering array exists to avoid, and the clock is the only axis several
+unrelated clauses are *forced* to share, precisely because those clauses name
+no entity of their own.
+
+### Why `pairwise` plants a row instead of giving up
+
+The docstring promised "every pair of values appears in at least one row" and
+the code did not deliver it: when the greedy pass reached a configuration where
+changing any single coordinate covered nothing new, it `break`ed and returned
+what it had. On this house's own fixture that left **192 pairs uncovered** --
+measured, not theorised -- so the guarantee the module's name rests on was
+quietly false, and the coverage tests that stand on it were weaker than they
+read.
+
+It now plants the smallest still-uncovered pair (by `_pair_sort_key`) into a
+row and hill-climbs the free coordinates from there. Termination is not an
+assumption: the planted pair is covered by construction, so `needed` shrinks
+every iteration. Smallest rather than arbitrary because `next(iter(...))` over
+a set of strings is not stable across interpreters -- a scenario set that
+differs between runs cannot be reproduced, and a test suite that cannot be
+reproduced cannot be bisected.
+
 ## `planner.py`
 
 ### Why the plan is a sequence with an explicit wait, not two service calls
@@ -1594,6 +1672,41 @@ next_boundary` reads the same conditions the engine does, house-wide, so one
 bad offset raised there would fly past `_execute` and the zones that *did*
 decide would never be commanded. It is contained to "nothing pending" and
 logged.
+
+**The snapshot belongs inside that `try` too**, and it took a second review to
+notice it was not. The first version of this fix guarded `evaluate()` and left
+`build_world` on the line above, so a house that could not be read reproduced
+the whole bug one line higher: the exception escaped into the settle timer's
+own callback, where nothing sets `last_error`, tells the listeners or re-arms
+anything. A snapshot that cannot be taken is an evaluation failure like any
+other, and there is no third kind.
+
+Moving it in forces a second question, about the pending manual-movement
+event. It used to be consumed on the way into the snapshot
+(`pending, self._pending_event = self._pending_event, None`), which is right
+for the success path -- an event describes one moment, and reporting it twice
+would invent a second movement -- and wrong for the failure path, because
+nothing re-fires it: the movement would be lost to a snapshot that never got
+to report it. So it is read before the `try` and cleared only once
+`build_world` has returned. Reported at most once, dropped never.
+
+### Why `matica_diff` compares the union of both sides
+
+`matica_diff` is the attribute this house checks after every deployment, and
+until 2026-09-08 it could report parity it had not established. It iterated
+the legacy matrix's entities and asked whether the engine agreed about each
+one, so a blind the engine decided a target for but the matrix never named was
+simply not asked about -- and an empty diff read as "they agree".
+
+That is the wrong way round for a migration check. The interesting failure
+during a migration is not two sides disagreeing about a blind they both know;
+it is one side having a blind the other has forgotten. The comparison is now
+over the union, and an entity only one side names is itself a difference.
+
+This is the same shape as the migration gate's own known limitation: what is
+missing from *both* sides is invisible to a comparison. Nothing fixes that.
+What is fixed is the narrower and more embarrassing case, where the evidence
+was available on one side and the comparison declined to look.
 
 ### Why a configuration change reloads the entry
 

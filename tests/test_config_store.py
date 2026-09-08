@@ -708,6 +708,27 @@ def test_tied_order_breaks_ties_by_subentry_id_not_by_subentries_mapping_order()
     assert rule_owner_ids(entry) == {"rA": "m.z#0", "rB": "m.z#1"}
 
 
+def test_tied_mode_order_breaks_ties_by_subentry_id_not_by_subentries_mapping_order() -> None:
+    """The mode mirror of the rule test above, and it matters for the same
+    reason: mode resolution is first-match-wins, so which of two modes tied on
+    `order` wins is behaviour -- and leaving it to `entry.subentries`'s
+    iteration order means a storage round-trip that reorders that mapping can
+    change the answer with nothing in the config having changed.
+
+    Constructed with `FakeEntry` rather than `make_entry` for the same reason:
+    `make_entry`'s `s0`, `s1`, ... ids follow insertion order, which would
+    make the id order and the insertion order indistinguishable.
+    """
+    entry = FakeEntry(
+        subentries={
+            "mB": FakeSubentry("mode", {"id": "second", "order": 0}),
+            "mA": FakeSubentry("mode", {"id": "first", "order": 0}),
+        }
+    )
+
+    assert [mode.id for mode in config_from_subentries(entry).modes] == ["first", "second"]
+
+
 # --- subentries_from_config: the write side (task 5) ------------------------
 #
 # `subentries_from_config` is the inverse of `config_from_subentries` above,

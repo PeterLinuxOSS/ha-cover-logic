@@ -173,7 +173,12 @@ _Loader.add_constructor("!ref", lambda loader, node: RefTag(loader.construct_sca
 
 def load_config(text: str) -> Config:
     """Parse YAML config text into a frozen `Config`, raising `ConfigError` on any problem."""
-    raw = yaml.load(text, Loader=_Loader) or {}
+    try:
+        raw = yaml.load(text, Loader=_Loader) or {}
+    except yaml.YAMLError as err:
+        # Every caller catches `(ConfigError, OSError)`, so a parser error has to arrive as one.
+        msg = f"config is not valid YAML: {err}"
+        raise ConfigError(msg) from err
     raw = _expect_mapping(raw, "top level config")
     _check_keys(raw, _TOP_LEVEL_KEYS, "top level")
 

@@ -2769,14 +2769,28 @@ def test_every_guard_problem_code_is_declared_in_one_of_the_two_owner_dicts(
 def test_a_broken_guard_blocks_no_subentry_save(subentry_entry, subentry_hass):
     """The deadlock check, from the guards side.
 
-    `entry.data["guards"]` is shared by every candidate entry the flows
-    validate, so a guard error attributed to a form that cannot fix it would
-    block *every* save of that type at once, permanently -- there is no guard
-    form to go and repair it in. A blind add is the sharpest case: it is the
-    first thing a new house needs and it has no guard field of any kind.
+    The guard is a real guard *subentry*: since entry version 3 that is the
+    only place guards live, so seeding `entry.data["guards"]` -- what this
+    test did until 2026-09-08 -- produced no guard problem at all and the
+    save succeeded for the wrong reason. It would then have kept passing even
+    if a broken guard wrongly blocked every save in the entry.
+
+    Every candidate entry the flows validate carries the same guards, so a
+    guard error attributed to a form that cannot fix it would block *every*
+    save of that type at once, permanently. A blind add is the sharpest case:
+    it is the first thing a new house needs and it has no guard field of any
+    kind.
     """
-    entry = subentry_entry(data={"guards": [{"policy": "nonsense"}]})
+    entry = subentry_entry()
     entry.add_subentry(ZONE, {"id": "z", "members": ["cover.b"], "occupants": []})
+    entry.add_subentry(GUARD, {"policy": "nonsense", "order": 10})
+    problems = [
+        problem.code
+        for problem in validate(config_from_subentries(entry))
+        if problem.severity == ERROR and problem.code.startswith("guard_")
+    ]
+    assert problems == ["guard_unknown_policy"], "the broken guard must be visible to validate()"
+
     flow = _make_flow(BlindSubentryFlowHandler, subentry_hass(entry), BLIND)
 
     result = asyncio.run(

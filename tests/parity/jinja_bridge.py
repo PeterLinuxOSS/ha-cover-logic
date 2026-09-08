@@ -15,16 +15,24 @@ HA_TESTS = Path(os.environ.get("HA_TESTS_DIR", "/config/tests"))
 if str(HA_TESTS) not in sys.path:
     sys.path.insert(0, str(HA_TESTS))
 
-import matica  # noqa: E402
-
-Stav = matica.Stav
-ciele = matica.ciele
-rezim = matica.rezim
-VSETKY = matica.VSETKY
+_EXPORTS = ("Stav", "ciele", "rezim", "VSETKY")
 
 
 def available() -> bool:
     return (HA_TESTS / "matica.py").exists()
+
+
+def __getattr__(name: str):
+    """Re-export matica lazily -- an eager import beats `available()` and every
+    `skipif` built on it, so a checkout without `/config/tests/matica.py`
+    failed collection instead of skipping the host-only parity tests.
+    """
+    if name in _EXPORTS:
+        import matica  # noqa: PLC0415
+
+        return getattr(matica, name)
+    msg = f"module {__name__!r} has no attribute {name!r}"
+    raise AttributeError(msg)
 
 
 def now_for(stav) -> dt.datetime:

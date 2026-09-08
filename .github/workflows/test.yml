@@ -11,7 +11,7 @@ jobs:
     strategy:
       matrix:
         # 3.12 is this project's floor (see `requires-python` in
-        # pyproject.toml); 3.14 is the version Home Assistant 2026.8 itself
+        # pyproject.toml); 3.14 is what the `ha` extra's Home Assistant
         # requires. Both ends, plus the version in between, are covered.
         python-version: ["3.12", "3.13", "3.14"]
     steps:
@@ -61,4 +61,5 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: home-assistant/actions/hassfest@master
+      # A branch-head SHA for the same reason as the HACS action in `hacs.yml`.
+      - uses: home-assistant/actions/hassfest@a7c616ce81ccda50150bf1595786c71b1883fabb # master @ 2026-08-03

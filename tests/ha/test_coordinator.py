@@ -28,6 +28,7 @@ from cover_logic.const import COMMAND_WOULD_CALL
 from cover_logic.coordinator import (
     CoverLogicCoordinator,
     _manual_move_blinds,
+    build_world as real_build_world,
     evaluate as real_evaluate,
 )
 from cover_logic.engine import EngineError
@@ -247,6 +248,51 @@ def test_a_failing_settle_evaluation_arms_a_fresh_recheck_timer(
             await asyncio.sleep(_WAIT)
 
             assert coordinator.last_error == "ValueError: boom"
+            assert coordinator._unsub_recheck is not None  # noqa: SLF001
+            assert coordinator._unsub_recheck is not armed  # noqa: SLF001
+
+            await coordinator.async_unload()
+        finally:
+            await hass.async_stop(force=True)
+
+    asyncio.run(_run())
+
+
+def _raise_no_snapshot(*_args, **_kwargs):
+    """Stand in for `build_world` when the house cannot be read at all."""
+    msg = "no snapshot"
+    raise RuntimeError(msg)
+
+
+def test_a_failing_snapshot_is_recorded_and_arms_a_fresh_recheck_timer(
+    config, hass_factory, runtime_entry, monkeypatch
+):
+    """The snapshot belongs inside the guarded section, not one line above it.
+
+    `build_world` sat above the `try`, so a failure to read the house escaped
+    with no `last_error`, no listener notification and no re-armed timer --
+    exactly the defect the `finally` was added to prevent, just earlier in the
+    same method.
+    """
+
+    async def _run():
+        hass = hass_factory()
+        try:
+            coordinator = CoverLogicCoordinator(hass, config, runtime_entry())
+            notified = []
+            coordinator.add_listener(lambda: notified.append(1))
+            await coordinator.async_setup()
+            await asyncio.sleep(_WAIT)
+            armed = coordinator._unsub_recheck  # noqa: SLF001
+            assert armed is not None  # counter: the good path arms it
+            notified.clear()
+
+            monkeypatch.setattr("cover_logic.coordinator.build_world", _raise_no_snapshot)
+            hass.states.async_set("input_boolean.a", "on")
+            await asyncio.sleep(_WAIT)
+
+            assert coordinator.last_error == "RuntimeError: no snapshot"
+            assert notified, "a failure nobody is told about leaves a stale answer on screen"
             assert coordinator._unsub_recheck is not None  # noqa: SLF001
             assert coordinator._unsub_recheck is not armed  # noqa: SLF001
 
@@ -673,6 +719,33 @@ def test_the_event_does_not_survive_into_the_next_evaluation(
         worlds.clear()
         _moved(hass, context=Context(), position=50)
         assert (await _event_after(hass, coordinator, worlds)).kind == "state_change"
+
+    _detect_case(hass_factory, runtime_entry, monkeypatch, _body)
+
+
+def test_a_manual_move_survives_a_failed_snapshot(hass_factory, runtime_entry, monkeypatch):
+    """The event is consumed by the snapshot that used it, never by one that raised.
+
+    A movement is a single moment and nothing re-fires it, so a snapshot
+    failure that swallowed the pending event would lose that movement for
+    good -- and the rules asking `condition: manual_move` would never see it.
+    """
+
+    async def _body(hass, coordinator, worlds):
+        monkeypatch.setattr("cover_logic.coordinator.build_world", _raise_no_snapshot)
+        _moved(hass, context=Context(user_id="u1"))
+        await asyncio.sleep(_WAIT)
+        assert not worlds, "the snapshot raised, so no evaluation can have run"
+        assert coordinator.last_error == "RuntimeError: no snapshot"
+
+        # Readable again, and a second movement with no user context: it
+        # triggers an evaluation but is not itself a manual move, so a
+        # `manual_move` here can only be the retried one.
+        monkeypatch.setattr("cover_logic.coordinator.build_world", real_build_world)
+        _moved(hass, context=Context(), position=50)
+        event = await _event_after(hass, coordinator, worlds)
+        assert event.kind == "manual_move"
+        assert event.blind == "cover.a"
 
     _detect_case(hass_factory, runtime_entry, monkeypatch, _body)
 

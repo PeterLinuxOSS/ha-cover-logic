@@ -2,7 +2,7 @@
 name = "cover-logic"
 version = "0.1.0"
 description = "Universal rule-based cover (blind) controller for Home Assistant"
-# Home Assistant 2026.8.0 itself requires Python >=3.14.2. The floor here is
+# Home Assistant 2026.9.0 itself requires Python >=3.14.2. The floor here is
 # lower on purpose: the decision core (`custom_components/cover_logic/`) is
 # pure Python with no Home Assistant imports and is meant to be testable
 # standalone, including on whatever Python a contributor's machine happens to
@@ -17,7 +17,12 @@ dev = ["pytest>=8.0", "hypothesis>=6.100"]
 # of `dev` because it needs Python >= 3.14.2, which this project's floor
 # (3.12) does not meet -- so `pip install -e '.[dev]'` has to keep working
 # on the older interpreters the matrix still covers.
-ha = ["homeassistant>=2026.8"]
+#
+# The ceiling is the point: with an open upper bound the job tested whatever
+# was newest that morning, so an upstream break could not be told apart from a
+# break introduced here. The floor stays at 2026.8 deliberately -- `MODELS.md`
+# forbids re-pinning it as a side effect of touching this file.
+ha = ["homeassistant>=2026.8,<2026.10"]
 
 # Without this, setuptools auto-discovery sees `custom_components`, `fixtures`
 # and `tests` as competing top-level packages and `pip install -e .` fails with

@@ -2,21 +2,22 @@
 
 Builds it from Home Assistant config subentries instead of YAML text.
 
-`config_schema.py` parses one YAML document with up to seven top-level keys.
-Six of them are naturally "many small items" -- a list or a mapping of
+`config_schema.py` parses one YAML document whose top-level keys are, bar
+`manual_detection`, all "many small items" -- a list or a mapping of
 individually-editable entries -- and each becomes its own subentry type here:
-`blind`, `zone`, `mode`, `condition`, `value`, `rule`. The seventh, `guards`,
-is not one of them *yet*: it lives in `entry.data["guards"]` as the list of
-mappings a YAML `guards:` key holds, and is parsed out of there by
-`config_schema.parse_guards` -- the same function the YAML door uses, on the
-same shape, so the two doors cannot disagree about what a guard means. Only
-the *storage* differs, and only until a `guard` subentry type exists; nothing
-about the schema is deferred any more.
+`blind`, `zone`, `mode`, `condition`, `value`, `rule` and, since config entry
+version 3, `guard`. A guard subentry is parsed by `config_schema.parse_guards`
+-- the same function the YAML door uses, on the same shape, so the two doors
+cannot disagree about what a guard means. Guards used to live in
+`entry.data["guards"]` instead; `__init__.py`'s version-3 migration moved them
+into subentries and deleted that key, and `config_from_subentries` reads
+guards from subentries only, so a leftover copy of that key (an old backup, a
+hand-edited `.storage`) is inert rather than a second source.
 
-`guards_to_data` is the inverse and the only place that writes that key --
-`__init__.py`'s migration, `config_flow.py`'s first run and `services.py`'s
-import all call it rather than each building the list themselves, because a
-`Guard` is no longer something `list()` can turn back into storable data.
+`guards_to_data` is the inverse -- a `Guard` is not something `list()` can
+turn back into storable data -- and feeds `guard_subentry_items`, which is
+what `subentries_from_config` and `__init__.py`'s migration both write their
+guard subentries from rather than each building the list themselves.
 
 **Ordering.** A `rule` subentry carries an explicit integer `order`, and so
 does a `mode` subentry. Home Assistant subentries are a flat list with no
@@ -210,11 +211,28 @@ def _build_values(entry: Any) -> dict[str, Any]:
     return _parse_values(raw)
 
 
+def _ordered_modes(entry: Any) -> list[tuple[str, dict]]:
+    """Every mode subentry as `(subentry id, data)`, in first-match-wins order.
+
+    The mode counterpart of `_ordered_guards`, and the single place mode
+    subentries get sorted. The `(order, subentry id)` sort key -- not `order`
+    alone -- is what makes the sort total; see the module docstring's
+    "Ordering" section. Mode resolution is first-match-wins too, so a tie left
+    to `entry.subentries`'s iteration order would let a storage round-trip
+    change which mode wins.
+    """
+    items = [
+        (subentry_id, dict(subentry.data))
+        for subentry_id, subentry in entry.subentries.items()
+        if subentry.subentry_type == MODE
+    ]
+    items.sort(key=lambda item: (_order(item[1], "mode subentry"), item[0]))
+    return items
+
+
 def _build_modes(entry: Any, raw_conditions: dict[str, dict]) -> tuple[Mode, ...]:
-    items = _of_type(entry, MODE)
-    items.sort(key=lambda data: _order(data, "mode subentry"))
     modes = []
-    for data in items:
+    for _subentry_id, data in _ordered_modes(entry):
         mode_id = _require(data, _ID_KEY, "mode subentry")
         _reject_dot(mode_id, "mode id")
         when = _parse_condition(_to_reftag(data.get("when")), raw_conditions)
@@ -586,15 +604,17 @@ class _StubEntry:
 
 
 def guards_to_data(config: Config) -> list[dict[str, Any]]:
-    """`config.guards` as the plain list of mappings `entry.data["guards"]` holds.
+    """`config.guards` as the plain list of storable mappings a guard subentry's `data` holds.
 
     The inverse of the `parse_guards` call in `config_from_subentries`, and
-    the only writer of that key: `__init__.async_migrate_entry`,
-    `config_flow`'s two entry-creating steps and `services._async_import_
-    config` all go through here. Before guards were parsed, each of those
-    wrote `list(config.guards)` -- with `Guard` a frozen dataclass that would
-    now store objects Home Assistant cannot serialize into `.storage`, and
-    four independent places to notice it.
+    the only place that shape is derived from a `Config`:
+    `subentries_from_config` -- hence `config_flow`'s entry-creating steps and
+    `services._async_import_config` -- goes through here and then
+    `guard_subentry_items`. (`__init__.async_migrate_entry` needs only the
+    second of those: what it moves is already storage-shaped.) Before guards
+    were parsed, each writer used `list(config.guards)` -- with `Guard` a
+    frozen dataclass that would now store objects Home Assistant cannot
+    serialize into `.storage`, and several independent places to notice it.
 
     Uses this module's own `{"ref": "<name>"}` marker, not the YAML `!ref`
     tag, for the same reason `_ref_marker` exists at all: subentry data is

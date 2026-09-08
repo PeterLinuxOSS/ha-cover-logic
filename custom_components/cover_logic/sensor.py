@@ -203,6 +203,10 @@ class CoverLogicModeSensor(SensorEntity):
         when the comparison ran and found no disagreement. The two must never
         be confusable: `None` means "not checked", `[]` means "checked, they
         agree".
+
+        "Agree" is over the union of both sides' entities: one side naming a
+        blind the other omits is itself a disagreement, since an entity that
+        was never compared cannot be evidence of parity.
         """
         hass = self.hass
         state = hass.states.get(LEGACY_MATRIX_ENTITY) if hass is not None else None
@@ -216,7 +220,7 @@ class CoverLogicModeSensor(SensorEntity):
 
         try:
             ciele = json.loads(raw_ciele)
-            entities = ciele.items()
+            legacy = dict(ciele.items())
         except (TypeError, ValueError, AttributeError) as err:
             _LOGGER.warning(
                 "cover_logic: could not parse %s's ciele attribute: %s",
@@ -232,9 +236,16 @@ class CoverLogicModeSensor(SensorEntity):
         teplotna_ochrana = teplotna_state is not None and teplotna_state.state == "on"
 
         diff: list[str] = []
-        for entity, item in entities:
+        # The union of both sides, not just the matrix's keys: an entity only
+        # one of them names was never compared, and is a disagreement.
+        for entity in set(legacy) | set(decision.targets):
+            if entity not in legacy:
+                diff.append(entity)
+                continue
             try:
-                want = expected_actions(item, variant="state", teplotna_ochrana=teplotna_ochrana)
+                want = expected_actions(
+                    legacy[entity], variant="state", teplotna_ochrana=teplotna_ochrana
+                )
             except (KeyError, TypeError, AssertionError) as err:
                 _LOGGER.warning(
                     "cover_logic: could not translate %s's legacy target for %s: %s",
