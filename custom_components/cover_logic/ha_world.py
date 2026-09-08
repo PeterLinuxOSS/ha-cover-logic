@@ -60,14 +60,18 @@ def build_world(hass: HomeAssistant, config: Config, event: Event | None = None)
                 continue
             attributes[(entity_id, attribute)] = state.attributes[attribute]
         else:
+            entity_id = entry
             state = hass.states.get(entry)
             if state is None:
                 continue
             states[entry] = state.state
-            # `last_changed`, never `last_updated`: an attribute-only write
-            # must not restart a `for:` that is counting how long the *state*
-            # has held. Naive local, matching `World.now`.
-            since[entry] = dt_util.as_local(state.last_changed).replace(tzinfo=None)
+        # Dated whichever way it was read: an entity referenced only through an
+        # attribute is still one whose `for:` has to be enforced, and
+        # `last_changed` is the same value on both branches so they cannot
+        # disagree. Never `last_updated` -- an attribute-only write must not
+        # restart a `for:` counting how long the *state* has held. Naive local,
+        # matching `World.now`.
+        since[entity_id] = dt_util.as_local(state.last_changed).replace(tzinfo=None)
 
     now = dt_util.now()
     return World(

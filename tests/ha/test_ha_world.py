@@ -181,6 +181,28 @@ def test_build_world_fills_since_from_last_changed(config, fake_hass):
     assert world.held_for("input_boolean.never_set", world.now) is None
 
 
+def test_an_entity_read_only_through_an_attribute_is_still_dated(config, fake_hass):
+    """Without this, `for:` on an attribute-compare condition fails OPEN.
+
+    `cover.a` is referenced only as `(cover.a, current_position)`, so the
+    tuple branch used to fill `attributes` and leave `since` untouched.
+    `World.held_for` then answered `None`, and `conditions._held_long_enough`
+    treats `None` as "no timing information, ignore `for:`" -- so the debounce
+    was skipped entirely rather than enforced. Wrong direction for a debounce:
+    a momentary blip satisfies a condition meant to require ten minutes.
+
+    `last_changed` is a property of the entity, not of the way it was read, so
+    dating both branches cannot make the two disagree about one entity.
+    """
+    hass = fake_hass({"cover.a": State("cover.a", "open", {"current_position": 100})})
+
+    world = build_world(hass, config)
+
+    assert world.attribute("cover.a", "current_position") == 100
+    assert "cover.a" in world.since
+    assert world.held_for("cover.a", world.now) is not None
+
+
 def test_since_uses_last_changed_not_last_updated(config, fake_hass):
     """An attribute-only write must not restart a `for:` counting state duration.
 

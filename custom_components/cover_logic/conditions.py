@@ -138,9 +138,10 @@ def _held_long_enough(cond: dict, world: World) -> bool:
 
     A missing `since` entry **ignores** `for:` rather than failing the
     condition: absence of timing information should not change what the
-    condition means, and `ha_world` fills `since` for every entity it
-    snapshots (pinned by its own test), so this path never runs in a live
-    house.
+    condition means. `ha_world` dates every entity it snapshots, however it
+    was read, so this path does not run in a live house -- a claim that was
+    false until 2026-09-08, when an entity referenced only through an
+    `attribute:` got no `since` at all and had its `for:` silently skipped.
     """
     held = world.held_for(cond["entity_id"], world.now)
     if held is None:
