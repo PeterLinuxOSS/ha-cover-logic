@@ -3,3 +3,14 @@ __pycache__/
 .pytest_cache/
 .hypothesis/
 .venv/
+# Bootstrap venv holding `uv`, which fetches the standalone CPython 3.14 that
+# Home Assistant 2026.8 requires. The system interpreter here is 3.12.
+.uvenv/
+
+# SDD scratch: progress ledger, task briefs, review packages
+.superpowers/
+
+# Scratch space for review tooling: diffs and before/after copies of the
+# fixture. Swept into a commit once by a careless `git add -A`; ignored so
+# that cannot happen again.
+.review-tmp/

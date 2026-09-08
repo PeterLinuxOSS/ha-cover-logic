@@ -1,0 +1,27 @@
+# HACS's own validation of this repository, alongside the `hassfest` job in
+# `test.yml` that validates the integration's manifest. The two check
+# different things and neither implies the other: hassfest is Home Assistant
+# core's manifest/translation linter, while this checks what HACS itself
+# requires of a repository before it can install from it -- `hacs.json`, the
+# release/topic/description metadata, and the layout under
+# `custom_components/`. Without it, the first sign of a HACS problem would be
+# a user unable to install.
+name: hacs
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # HACS's requirements change without this repository changing, so a
+    # weekly run is what notices that rather than the next release attempt.
+    - cron: "0 4 * * 1"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hacs/action@main
+        with:
+          category: integration
