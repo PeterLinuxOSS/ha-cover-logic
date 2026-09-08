@@ -9,10 +9,15 @@ import os
 import subprocess
 import sys
 
+import pytest
 from scenarios import (
     CLOCK_AXIS,
     SUN,
     _clock_probes,
+    _Infeasible,
+    _require,
+    _require_template,
+    _template_literals,
     derive_axes,
     fired_rules,
     pairwise,
@@ -21,6 +26,7 @@ from scenarios import (
 )
 
 from cover_logic.config_schema import load_config
+from cover_logic.world import Event
 
 
 def dead_rules(config, all_worlds):
@@ -31,6 +37,119 @@ def dead_rules(config, all_worlds):
         for index in range(len(rules))
         if f"{key}#{index}" not in fired
     ]
+
+
+TEMPLATE_GATED = """
+blinds: [{entity: cover.a}]
+zones: {z: {members: [cover.a]}}
+modes: [{id: den}]
+conditions:
+  tmpl:
+    condition: template
+    value_template: "{{ is_state('input_boolean.x', 'on') }}"
+values: {}
+rules:
+  den.z:
+    - {if: !ref tmpl, then: {position: 100}}
+    - {then: {position: 0}}
+"""
+
+
+def test_a_template_gated_rule_is_not_reported_dead():
+    """Issue #7's example verbatim: `condition: template` is the escape hatch.
+
+    `derive_axes` understood only `state` and `numeric_state`, so a rule
+    guarded by a template got no axis for the entity it tests, never fired in
+    the derived space, and was reported unreachable. The first user to reach
+    for the documented escape hatch lost all coverage for that rule and was
+    sent hunting a bug that did not exist.
+    """
+    config = load_config(TEMPLATE_GATED)
+    assert dead_rules(config, worlds(config)) == []
+
+
+def test_a_template_contributes_both_the_entity_and_the_value_it_compares():
+    """Both come off the source: the id from `is_state`, the value from its argument."""
+    axes = derive_axes(load_config(TEMPLATE_GATED))
+    assert "input_boolean.x" in axes
+    assert "on" in axes["input_boolean.x"]
+
+
+def test_a_template_naming_no_entity_adds_no_entity_axis():
+    """Best effort is not a licence to invent an axis."""
+    config = load_config(
+        TEMPLATE_GATED.replace("{{ is_state('input_boolean.x', 'on') }}", "{{ 1 + 1 == 2 }}")
+    )
+    assert not [key for key in derive_axes(config) if str(key).startswith("input_boolean")]
+
+
+# `_require_template` is exercised directly rather than through `worlds()`: the
+# covering array happens to reach every template rule tried here, so a test
+# routed through it would pass with the solver deleted and prove nothing. The
+# solver earns its place on the witness path, where a rule the array misses is
+# reported dead unless something can pin its guard on purpose.
+
+TEMPLATE_NODE = {
+    "condition": "template",
+    "value_template": "{{ is_state('input_boolean.x', 'on') }}",
+}
+TEMPLATE_AXES = {"input_boolean.x": ["on", "__other__"]}
+
+
+def test_requiring_a_template_true_pins_the_value_that_satisfies_it():
+    values: dict = {}
+    _require_template(TEMPLATE_NODE, True, values, TEMPLATE_AXES)
+    assert values == {"input_boolean.x": "on"}
+
+
+def test_requiring_a_template_false_pins_a_value_that_falsifies_it():
+    values: dict = {}
+    _require_template(TEMPLATE_NODE, False, values, TEMPLATE_AXES)
+    assert values == {"input_boolean.x": "__other__"}
+
+
+def test_requiring_a_template_honours_a_pin_another_clause_already_made():
+    """A solver that overwrote an existing pin would break the clause that made it."""
+    values = {"input_boolean.x": "on"}
+    _require_template(TEMPLATE_NODE, True, values, TEMPLATE_AXES)
+    assert values == {"input_boolean.x": "on"}
+
+    with pytest.raises(_Infeasible):
+        _require_template(TEMPLATE_NODE, False, {"input_boolean.x": "on"}, TEMPLATE_AXES)
+
+
+def test_requiring_a_template_that_names_no_entity_is_infeasible_not_silently_true():
+    """A computed entity id is unsolvable here, and saying so beats guessing."""
+    with pytest.raises(_Infeasible):
+        _require_template({"condition": "template", "value_template": "{{ 1 }}"}, True, {}, {})
+
+
+def test_a_dotted_comparison_value_is_still_probed():
+    """`'1.5'` is a state to compare against, not an entity id.
+
+    The first version of `_template_literals` dropped every quoted literal
+    containing a dot, reasoning that a dot is what makes an id an id. It is
+    not: `'1.5'` and `'foo.bar'` are perfectly good states, and discarding
+    them left the axis without the one value that satisfies the template, so
+    the rule came out infeasible. What must be excluded is the ids
+    `node_reads` actually found -- nothing more.
+    """
+    node = {"condition": "template", "value_template": "{{ states('sensor.x') == '1.5' }}"}
+    assert _template_literals(node) == ["1.5"]
+
+    values: dict = {}
+    _require_template(node, True, values, {"sensor.x": ["1.5", "__other__"]})
+    assert values == {"sensor.x": "1.5"}
+
+
+def test_require_routes_a_template_node_to_the_solver():
+    """The wiring, not the solver: `_require` used to fall through to
+    `entity_id is None` and give up on every template node, which is the half
+    of issue #7 that made a template-gated rule look unreachable.
+    """
+    values: dict = {}
+    _require(TEMPLATE_NODE, True, values, TEMPLATE_AXES, {}, None, Event())
+    assert values == {"input_boolean.x": "on"}
 
 
 TWO_AZIMUTH_OVERRIDES = """

@@ -139,6 +139,17 @@ from the template body. Failing that, at least distinguish "unreachable" from
 "not solvable from the axis vocabulary" in the dead-rule message, so nobody is
 sent hunting a bug that does not exist.
 
+**FIXED 2026-09-08**, the minimum-viable way -- and it turned out to be two
+defects rather than one. The scan for `states(...)` / `is_state(...)` /
+`state_attr(...)` went into `config_schema.node_reads`, so the *integration*
+benefits too: those entities were in no `referenced_entities` at all, which
+meant nothing watched them and a change was picked up only when the reconcile
+floor came round. That half was never in this finding. `derive_axes` now takes
+both the axis key and its probe values off the same source, and
+`scenarios._require_template` solves such a condition by evaluating it against
+candidates rather than inverting it. Reasoning in `docs/rationale.md` -- "Why
+a template's reads are found by reading the source".
+
 ## 6. The package cannot tell phase 2 which entities to watch — *important* (#8)
 
 There is no entity-enumeration API in `custom_components/cover_logic/`. The only
