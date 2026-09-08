@@ -3,8 +3,9 @@
 Reviewed as PRs #70-#76 (the repository split by layer, since Sourcery caps a
 review at 500 000 diff characters and the whole-repo PR #12 is ~2 000 000).
 
-19 findings. Triaged below against the code; the three false positives are
-recorded with their evidence so nobody re-litigates them.
+23 findings, triaged below against the code: **18** worth fixing, **2** that
+independently confirm items already known and written down, and **3** false
+positives, each recorded with its evidence so nobody re-litigates it.
 
 ## Real, worth fixing
 
