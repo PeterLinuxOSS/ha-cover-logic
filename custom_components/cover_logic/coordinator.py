@@ -515,16 +515,26 @@ class CoverLogicCoordinator:
         **The recheck timer is armed in a `finally`, and that is a safety
         property, not tidiness.** See docs/rationale.md -- "Why a failing
         evaluation must still arm the next one".
+
+        The snapshot itself is inside that same `try`, and the pending
+        manual-movement event is consumed only once it has succeeded: a house
+        that cannot be read is an evaluation failure like any other, and a
+        movement the failed snapshot never got to report has to stay pending
+        for the next evaluation, because nothing re-fires it.
         """
-        # Consumed, not merely read: an event describes one moment, and
-        # letting it survive into the next evaluation would report the same
-        # movement twice.
-        pending, self._pending_event = self._pending_event, None
-        world = build_world(self.hass, self.config, event=pending)
+        pending = self._pending_event
         # Whether this evaluation got far enough to arm the timer with its own
         # answer; the `finally` must not overwrite a guard's deadline with the floor.
         armed = False
         try:
+            # Inside the `try`: a snapshot that cannot be taken is a failed
+            # evaluation like any other, and must record `last_error`, tell the
+            # listeners and re-arm the timer rather than escape into the settle
+            # timer's own callback where none of that happens.
+            world = build_world(self.hass, self.config, event=pending)
+            # Consumed by the snapshot that used it, not before: an event describes one
+            # moment, so it must neither be reported twice nor be lost to a failed snapshot.
+            self._pending_event = None
             # From this same snapshot, never a second read of `hass.states`:
             # otherwise "was the world readable" and "what did the world say"
             # are answers about two different instants. Inside the `try` for

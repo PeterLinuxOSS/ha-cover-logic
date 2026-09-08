@@ -225,6 +225,35 @@ def test_matica_diff_names_exactly_the_differing_entities(fake_hass):
     assert attrs["matica_diff"] == ["cover.a"]
 
 
+def test_matica_diff_flags_a_blind_the_legacy_matrix_never_names(fake_hass):
+    """Parity is a claim about both target sets, not about the matrix's alone.
+
+    A blind the engine decides and the matrix omits was never compared, so
+    reporting `[]` would have this attribute -- the primary post-deploy check
+    in the house -- claim agreement it never established.
+    """
+    ciele = {"cover.a": {"akcia": "pozicia", "hodnota": 50, "tilt": 30}}
+    hass = fake_hass({LEGACY_MATRIX_ENTITY: _matica_state("bezny_den", ciele)})
+
+    attrs = _sensor(hass=hass).extra_state_attributes
+
+    assert attrs["matica_diff"] == ["cover.b"]
+
+
+def test_matica_diff_flags_a_blind_the_engine_never_decides(fake_hass):
+    """The other half of the same union: a matrix-only entity is a difference too."""
+    ciele = {
+        "cover.a": {"akcia": "pozicia", "hodnota": 50, "tilt": 30},
+        "cover.b": {"akcia": "nechat", "hodnota": None, "tilt": None},
+        "cover.c": {"akcia": "zavriet", "hodnota": 0, "tilt": 0},
+    }
+    hass = fake_hass({LEGACY_MATRIX_ENTITY: _matica_state("bezny_den", ciele)})
+
+    attrs = _sensor(hass=hass).extra_state_attributes
+
+    assert attrs["matica_diff"] == ["cover.c"]
+
+
 def test_matica_diff_is_none_when_matrix_entity_is_absent(fake_hass):
     """`None`, never `[]` -- there is nothing to compare against, not "checked, they agree"."""
     hass = fake_hass({})
