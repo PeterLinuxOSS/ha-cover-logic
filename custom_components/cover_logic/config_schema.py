@@ -8,6 +8,7 @@ drift apart.
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+import re
 from typing import Any
 
 import yaml
@@ -848,10 +849,10 @@ def referenced_reads(config: Config) -> set[Read]:
       `engine._resolve_value`, which calls `world.number(value.entity, ...)`
       with no `attribute`).
 
-    A `template` condition's `value_template` is not parsed for entity
-    references -- Jinja templates are an intentional escape hatch (see
-    `conditions._template`) and are not enumerable the way the structured
-    condition dialect is.
+    A `template` condition's `value_template` is scanned for the entities it
+    names *literally* -- best effort, since Jinja is not enumerable the way the
+    structured dialect is and an id can be computed. Not looking at all was
+    worse: nothing watched those entities. See `_template_reads`.
 
     A `values:` helper is reported undefaulted even though `values:` requires a
     `default` -- that fallback resolves to a *position*, so acting on it is the
@@ -898,4 +899,37 @@ def node_reads(node: Mapping[str, Any]) -> set[Read]:
     elif kind == COND_SUN_HITS_TARGET:
         add(node.get("sun_entity", SUN_ENTITY))
         add(node.get("azimuth_entity", DEFAULT_AZIMUTH_ENTITY), node.get("azimuth_attribute"))
+    elif kind == "template":
+        # Best effort, and always defaulted -- see `_template_reads`.
+        out |= _template_reads(str(node.get("value_template", "")))
+    return out
+
+
+# `states('x')`, `is_state('x', ...)` and `state_attr('x', 'a')` -- the three
+# globals `conditions._template_globals` exposes that name an entity.
+_TEMPLATE_STATE_READ = re.compile(r"\b(?:is_state|states)\(\s*['\"]([\w.]+)['\"]")
+_TEMPLATE_ATTR_READ = re.compile(r"\bstate_attr\(\s*['\"]([\w.]+)['\"]\s*,\s*['\"]([\w.]+)['\"]")
+
+
+def _template_reads(body: str) -> set[Read]:
+    """The entities a `value_template` names literally, best effort.
+
+    Jinja is not enumerable in general -- an entity id can be computed, and no
+    parse of the source will find it. But *not looking at all* was worse than
+    looking imperfectly: the entity a template tests was absent from
+    `referenced_entities`, so nothing watched it and the change that should
+    have prompted a decision prompted none until the reconcile floor came
+    round. A literal id is what nearly every template contains in practice,
+    and finding it can only add reads, never remove one.
+
+    Every read is reported `defaulted`: `states()` answers `unknown` for a
+    missing entity instead of raising, so a template is total over an absent
+    value the way a `numeric_state` with `default:` is, and readiness must not
+    veto on one. See docs/rationale.md -- "Why a template's reads are found by
+    reading the source".
+    """
+    out = {Read(entity, None, True) for entity in _TEMPLATE_STATE_READ.findall(body)}
+    out |= {
+        Read(entity, attribute, True) for entity, attribute in _TEMPLATE_ATTR_READ.findall(body)
+    }
     return out

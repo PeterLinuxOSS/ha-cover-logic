@@ -529,6 +529,41 @@ checks.
 
 ## `config_schema.py`
 
+### Why a template's reads are found by reading the source
+
+`condition: template` is the documented escape hatch, and for a long time it
+was also a hole. `node_reads` skipped it entirely, on the stated ground that
+Jinja "is not enumerable the way the structured condition dialect is". True,
+and the wrong conclusion: it meant the entity a template tests appeared in no
+`referenced_entities`, so **nothing watched it**. The change that should have
+prompted a decision prompted none, and the new value was picked up only when
+the reconcile floor next came round -- minutes later, and only because that
+floor exists at all. An escape hatch is not an exemption from being read.
+
+So the `value_template` is now scanned for the three globals that name an
+entity -- `states('x')`, `is_state('x', …)`, `state_attr('x', 'a')` -- and
+every id found becomes a read. Best effort, and deliberately so: an id can be
+computed, and no scan of the source will find that one. But looking
+imperfectly fails *strictly better* than not looking, because finding an id
+can only add a watched entity, never remove one; what is not found leaves
+exactly today's behaviour.
+
+Every such read is reported `defaulted`, and that is not a technicality.
+`states()` answers `unknown` for a missing entity rather than raising, so a
+template is total over an absent value the way a `numeric_state` carrying
+`default:` is -- and marking these reads undefaulted would let one entity
+named inside one template veto every blind whose decision touches it. See "Why
+a stated `default:` is not a readiness fault".
+
+The test generator needs the same information for a different reason and gets
+it from the same place: issue #7, where a template-gated rule was reported
+unreachable because `derive_axes` had no axis for the entity it tests. Values
+come off the source too -- `is_state('x', 'on')` says `on` is worth probing.
+And `scenarios._require_template` solves such a condition by *evaluating* it
+against candidate values rather than pattern-matching its source, so a
+template no parser here understands still gets a real verdict as long as its
+entities are named literally.
+
 ### Why a mode or zone id must not contain a dot
 
 `engine.evaluate` builds a rule key as `f"{mode}.{zone}"`, joining the two

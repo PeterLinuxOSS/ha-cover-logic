@@ -509,6 +509,54 @@ def test_a_defaulted_attribute_read_keeps_its_attribute_in_the_subscription_shap
     assert {read.key for read in node_reads(node)} == {("weather.forecast_home", "wind_speed")}
 
 
+def test_node_reads_extracts_the_entities_a_template_names():
+    """Otherwise the integration never re-evaluates when they change.
+
+    A `template` condition used to contribute no read at all, so the entity it
+    tests was not in `referenced_entities` and therefore not watched: the
+    change that should have prompted a decision prompted nothing, and the new
+    value was picked up only when the reconcile floor came round minutes
+    later. Templates are an escape hatch, not an exemption from being read.
+    """
+    node = {
+        "condition": "template",
+        "value_template": (
+            "{{ is_state('input_boolean.x', 'on') and states('sensor.y') != 'off' }}"
+        ),
+    }
+    assert node_reads(node) == {
+        Read("input_boolean.x", None, True),
+        Read("sensor.y", None, True),
+    }
+
+
+def test_a_template_read_is_defaulted_so_readiness_cannot_veto_on_it():
+    """`states()` answers `unknown` for a missing entity rather than raising.
+
+    So a template is total over a missing value, exactly like a
+    `numeric_state` carrying `default:` -- and marking these reads undefaulted
+    would let one absent entity named inside a template veto every blind whose
+    decision touches it. See `docs/rationale.md` -- "Why a stated `default:` is
+    not a readiness fault".
+    """
+    node = {"condition": "template", "value_template": "{{ states('sensor.y') }}"}
+    assert all(read.defaulted for read in node_reads(node))
+
+
+def test_node_reads_extracts_an_attribute_a_template_names():
+    node = {
+        "condition": "template",
+        "value_template": "{{ state_attr('cover.a', 'current_position') > 50 }}",
+    }
+    assert node_reads(node) == {Read("cover.a", "current_position", True)}
+
+
+def test_a_template_naming_no_entity_reads_nothing():
+    """Best effort is not a licence to invent reads."""
+    node = {"condition": "template", "value_template": "{{ 1 + 1 == 2 }}"}
+    assert node_reads(node) == set()
+
+
 # --- dump_config / dump_config_file: the write side (task 5) ---------------
 #
 # `dump_config` is the inverse of `load_config`, used by the `export_config`

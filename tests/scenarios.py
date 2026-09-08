@@ -6,10 +6,11 @@ the scenarios that exercise it appear without anyone writing them.
 
 import datetime as dt
 import itertools
+import re
 from typing import Any
 
 from cover_logic.conditions import evaluate_condition, parse_hhmm
-from cover_logic.config_schema import all_condition_nodes
+from cover_logic.config_schema import all_condition_nodes, node_reads
 from cover_logic.engine import evaluate
 from cover_logic.model import Config
 from cover_logic.world import Event, SunTimes, Target, World
@@ -245,6 +246,15 @@ def derive_axes(config: Config) -> dict[str, list]:
                 probes.update({str(bound - 1), str(bound), str(bound + 1)})
             add(key, probes)
 
+    # Templates last: their axes come off the source, not off `entity_id`
+    # (issue #7), so they cannot be read by the loop above.
+    for node in all_condition_nodes(config):
+        if node.get("condition") != "template":
+            continue
+        literals = _template_literals(str(node.get("value_template", "")))
+        for template_key in _template_axis_keys(node):
+            add(template_key, [*literals, "__other__"])
+
     azimuth_probes = _azimuth_probes(config)
     for sun_entity, azimuth_key in _sun_entity_pairs(config):
         add(sun_entity, ["above_horizon", "below_horizon"])
@@ -357,6 +367,65 @@ def _probe_world(key: str, value: Any) -> World:
     if attribute is None:
         return World(states={entity: value}, attributes={}, now=NOW, event=Event())
     return World(states={}, attributes={(entity, attribute): value}, now=NOW, event=Event())
+
+
+def _multi_probe_world(pinned: dict[str, Any]) -> World:
+    """A world with several axes pinned at once, for a condition reading several."""
+    states: dict[str, str] = {}
+    attributes: dict[tuple[str, str], Any] = {}
+    for key, value in pinned.items():
+        entity, attribute = _split_axis_key(key)
+        if attribute is None:
+            states[entity] = value
+        else:
+            attributes[(entity, attribute)] = value
+    return World(states=states, attributes=attributes, now=NOW, event=Event(), sun=SUN)
+
+
+def _template_axis_keys(node: dict) -> list[str]:
+    """The axis keys a `template` condition's own source names."""
+    return sorted(_axis_key(read.entity, read.attribute) for read in node_reads(node))
+
+
+def _template_literals(body: str) -> list[str]:
+    """The quoted values a template compares against, minus the entity ids.
+
+    An axis needs values as well as a key, and a template states its
+    interesting ones itself: `is_state('x', 'on')` says `on` matters. Entity
+    ids are excluded because they are the key, not a value -- they are the
+    strings containing a dot, which is exactly what makes an id an id.
+    """
+    quoted = re.findall(r"['\"]([^'\"]*)['\"]", body)
+    return sorted({literal for literal in quoted if "." not in literal})
+
+
+def _require_template(
+    cond: dict, want_true: bool, values: dict[str, Any], axes: dict[str, list]
+) -> None:
+    """Solve a `template` condition by *evaluating* it, not by pattern-matching it.
+
+    Jinja cannot be inverted, so this enumerates the axis values of the
+    entities its source names, honours anything already pinned, and keeps the
+    first combination answering `want_true`. Correct rather than clever:
+    whatever the template computes is what decides, so a template no parser
+    here understands still gets a real verdict as long as its entities are
+    named literally. See docs/rationale.md -- "Why a template's reads are
+    found by reading the source".
+    """
+    keys = _template_axis_keys(cond)
+    if not keys:
+        msg = f"template names no entity this generator can vary: {cond}"
+        raise _Infeasible(msg)
+
+    candidates = [[values[key]] if key in values else list(axes.get(key, [])) for key in keys]
+    for combination in itertools.product(*candidates):
+        pinned = dict(zip(keys, combination, strict=True))
+        if evaluate_condition(cond, _multi_probe_world(pinned), None, {}) == want_true:
+            values.update(pinned)
+            return
+
+    msg = f"no combination of {keys} makes {cond} answer {want_true}"
+    raise _Infeasible(msg)
 
 
 def _sun_probe(
@@ -586,6 +655,10 @@ def _require(
             msg = f"event {event} cannot make {cond} answer {want_true}"
             raise _Infeasible(msg)
 
+        return
+
+    if kind == "template":
+        _require_template(cond, want_true, values, axes)
         return
 
     entity = cond.get("entity_id")
