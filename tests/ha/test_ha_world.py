@@ -8,6 +8,7 @@ must stay green without this suite ever running there.
 """
 
 import datetime as dt
+import zoneinfo
 
 import pytest
 
@@ -201,6 +202,33 @@ def test_an_entity_read_only_through_an_attribute_is_still_dated(config, fake_ha
     assert world.attribute("cover.a", "current_position") == 100
     assert "cover.a" in world.since
     assert world.held_for("cover.a", world.now) is not None
+
+
+def test_held_for_is_real_elapsed_time_across_a_dst_fall_back(config, fake_hass, monkeypatch):
+    """Naive local subtraction is wrong by the size of the clock jump.
+
+    `World.now` and `since` are naive local, because every other reader of
+    `now` compares wall-clock components. `held_for` is the one reader that
+    subtracts them, and on the night the clocks go back an hour that answers
+    **negative**: a sensor that changed at 02:30 CEST reads 02:30, "now" at
+    02:10 CET reads 02:10, so a `for: 120` debounce is unsatisfied after forty
+    real minutes. Spring-forward is the mirror image -- a `for: 3600` would
+    satisfy itself twenty minutes early.
+
+    Europe/Prague, 2026-10-25: 03:00 CEST becomes 02:00 CET.
+    """
+    prague = zoneinfo.ZoneInfo("Europe/Prague")
+    monkeypatch.setattr(dt_util, "DEFAULT_TIME_ZONE", prague)
+
+    changed = dt.datetime(2026, 10, 25, 0, 30, tzinfo=dt.UTC)  # 02:30 CEST
+    now = dt.datetime(2026, 10, 25, 1, 10, tzinfo=dt.UTC)  # 02:10 CET, 40 min later
+    monkeypatch.setattr(dt_util, "now", lambda: dt_util.as_local(now))
+
+    hass = fake_hass({"input_boolean.a": State("input_boolean.a", "on", last_changed=changed)})
+    world = build_world(hass, config)
+
+    assert now - changed == dt.timedelta(minutes=40)
+    assert world.held_for("input_boolean.a", world.now) == dt.timedelta(minutes=40)
 
 
 def test_since_uses_last_changed_not_last_updated(config, fake_hass):

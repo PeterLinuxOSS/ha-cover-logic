@@ -25,6 +25,34 @@ caller mutating the dict it passed in. This module exists to guarantee that
 one evaluation sees one consistent state, so that guarantee is enforced here
 rather than left to callers.
 
+### Why `since` is `now` minus the elapsed time
+
+`World.now` and `World.since` are naive local, and that is deliberate: every
+other reader of `now` compares wall-clock components (`condition: time` takes
+`.time()`, `condition: sun` compares against today's sunrise and sunset, a
+template's `now()` must read like the house's clock). `ha_world`'s docstring
+justified stripping tzinfo on the grounds that "the tzinfo itself is never
+consulted by the pure engine -- only the wall-clock reading".
+
+`held_for` is the exception, and it went unnoticed: it *subtracts* two naive
+local readings. On the night the clocks go back, that answers negative. A
+sensor that changed at 02:30 CEST reads 02:30; "now" at 02:10 CET reads 02:10;
+so `held_for` is **−20 minutes** after forty real ones, and a `for: 120`
+debounce stays unsatisfied for up to an hour. Spring-forward is the mirror
+image, and worse in kind: a `for: 3600` satisfies itself twenty minutes early,
+so a debounce written to wait an hour releases early exactly once a year.
+
+The fix keeps both properties instead of trading one for the other. `since` no
+longer stores the wall-clock reading of the change; it stores **`now` minus the
+real elapsed time**, computed from the two *aware* timestamps before either is
+flattened. `held_for` subtracts as before and gets the true duration by
+construction, while `now` stays the naive local reading everything else needs.
+
+The cost is that `since` is not the instant the entity changed, and on a DST
+night it deliberately is not. That is safe because `held_for` is its only
+reader -- nothing formats or displays it -- but it is exactly the kind of field
+whose meaning drifts if nobody writes it down, hence this section.
+
 ## Manual movements: an event, not a state
 
 "Somebody moved that blind, and which way" cannot be an entity read. `World`
@@ -1393,6 +1421,44 @@ a standing configuration error, so `validation._check_blinds` reports it once,
 statically, and `subentry_flow`'s own `travel_time` selector will not offer a
 non-positive value in the first place. `plan()` does not second-guess the
 number it is handed.
+
+## `runner.py`
+
+### Why the tilt hand-over is re-planned
+
+A cancellation always has a successor (there is no standalone "stop"), and if
+the cancelled sequence had not yet issued its `SetTilt`, that command has to
+survive: `keep` on the successor's tilt axis means nobody else owns the slats,
+so dropping it ends the movement with untouched slats -- the 2026-08-21
+incident verbatim.
+
+It used to survive by being **appended** to the successor's plan. That put it
+after the successor's own commands, and when the successor also moved the
+position there was no arrival wait between them -- so the tilt went out while
+the blind was still travelling, and these motors discard exactly that. The
+hand-over that exists to prevent the incident reproduced it. The function's
+own docstring recorded the wrinkle and named the fix rather than taking it,
+which is the right instinct and one review too patient: an independent review
+reached the same conclusion, and it is not a wrinkle, it is the incident.
+
+The carried tilt is now folded into the successor's `Action` and the successor
+is planned from that, so `plan()` -- the one module that knows a tilt needs an
+arrival wait in front of it -- inserts the wait itself. Two consequences worth
+stating. The condition stays on the `Action` and not on the `Plan`: a
+successor that *names* a tilt owns the axis and the abandoned value is
+correctly discarded, even when the dead band left no `SetTilt` in its plan,
+because asking the plan would resurrect precisely the command the dead band
+just suppressed. And folding subjects the hand-over to that same dead band,
+which appending bypassed -- a cancellation whose slats had meanwhile reached
+the abandoned target no longer re-sends it, and a repeated absolute tilt
+command is what visibly moves a blind for no reason.
+
+What this does not fix: nothing in this package issues `cover.stop_cover`, and
+`async_apply`'s CANCEL only sets an `asyncio.Event`, so the cancelled
+sequence's motor keeps running. A successor that moves only the slats can
+still have its tilt land during that inherited travel. Re-planning cannot see
+that, because `plan()` is handed a position reading and not a direction; it is
+a separate question about whether cancellation should brake.
 
 ## `coordinator.py`
 

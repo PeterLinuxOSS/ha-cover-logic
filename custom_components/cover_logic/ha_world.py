@@ -52,6 +52,9 @@ def build_world(hass: HomeAssistant, config: Config, event: Event | None = None)
     attributes: dict[tuple[str, str], Any] = {}
     since: dict[str, Any] = {}
 
+    now = dt_util.now()
+    now_naive = now.replace(tzinfo=None)
+
     for entry in referenced_entities(config):
         if isinstance(entry, tuple):
             entity_id, attribute = entry
@@ -65,19 +68,21 @@ def build_world(hass: HomeAssistant, config: Config, event: Event | None = None)
             if state is None:
                 continue
             states[entry] = state.state
-        # Dated whichever way it was read: an entity referenced only through an
-        # attribute is still one whose `for:` has to be enforced, and
-        # `last_changed` is the same value on both branches so they cannot
-        # disagree. Never `last_updated` -- an attribute-only write must not
-        # restart a `for:` counting how long the *state* has held. Naive local,
-        # matching `World.now`.
-        since[entity_id] = dt_util.as_local(state.last_changed).replace(tzinfo=None)
+        # `World.now` minus the *real* elapsed time, not the wall-clock reading
+        # of the change: naive local readings differ by the clock jump across a
+        # DST transition, and `held_for` subtracts them. See docs/rationale.md
+        # -- "Why `since` is `now` minus the elapsed time".
+        #
+        # Dated whichever way the entity was read: one referenced only through
+        # an attribute still has a `for:` to enforce. Never `last_updated` --
+        # an attribute-only write must not restart a `for:` counting how long
+        # the *state* has held.
+        since[entity_id] = now_naive - (now - state.last_changed)
 
-    now = dt_util.now()
     return World(
         states=states,
         attributes=attributes,
-        now=now.replace(tzinfo=None),
+        now=now_naive,
         event=event if event is not None else Event(),
         sun=_sun_times(hass, now),
         since=since,
