@@ -1,0 +1,22 @@
+import_config:
+  fields:
+    path:
+      required: true
+      example: "/config/cover_logic.yaml"
+      selector:
+        text:
+    dry_run:
+      default: false
+      selector:
+        boolean:
+    overwrite:
+      default: false
+      selector:
+        boolean:
+export_config:
+  fields:
+    path:
+      required: true
+      example: "/config/cover_logic_export.yaml"
+      selector:
+        text:
