@@ -4,8 +4,6 @@ This is what makes exhaustive testing possible: no HA, no event loop, no I/O.
 If someone adds `from homeassistant...` to one of these modules, this fails.
 """
 
-from __future__ import annotations
-
 import ast
 from pathlib import Path
 
@@ -16,8 +14,27 @@ PURE_MODULES = [
     "world.py",
     "conditions.py",
     "config_schema.py",
+    "config_store.py",
+    "conformance.py",
     "engine.py",
+    "guards.py",
     "validation.py",
+    "legacy.py",
+    "starter_config.py",
+    "planner.py",
+    # Execution-layer, but genuinely HA-free and listed here so it has to stay
+    # that way. `command_log.py` holds no clock (its timestamp is injected);
+    # `deferrals.py` holds no clock either (`now` is an argument) and no
+    # storage. Both are one convenience import away from needing `hass`, and
+    # that import should have to argue with a failing test first.
+    "command_log.py",
+    "deferrals.py",
+    "boundaries.py",
+    "capabilities.py",
+    # `readiness.py` reads its verdict off the same `World` the decision was
+    # made from; being on this list is what stops that becoming a second,
+    # later read of `hass.states` that could disagree with the decision.
+    "readiness.py",
 ]
 
 PKG = Path(__file__).resolve().parent.parent / "custom_components" / "cover_logic"
