@@ -1595,6 +1595,41 @@ bad offset raised there would fly past `_execute` and the zones that *did*
 decide would never be commanded. It is contained to "nothing pending" and
 logged.
 
+**The snapshot belongs inside that `try` too**, and it took a second review to
+notice it was not. The first version of this fix guarded `evaluate()` and left
+`build_world` on the line above, so a house that could not be read reproduced
+the whole bug one line higher: the exception escaped into the settle timer's
+own callback, where nothing sets `last_error`, tells the listeners or re-arms
+anything. A snapshot that cannot be taken is an evaluation failure like any
+other, and there is no third kind.
+
+Moving it in forces a second question, about the pending manual-movement
+event. It used to be consumed on the way into the snapshot
+(`pending, self._pending_event = self._pending_event, None`), which is right
+for the success path -- an event describes one moment, and reporting it twice
+would invent a second movement -- and wrong for the failure path, because
+nothing re-fires it: the movement would be lost to a snapshot that never got
+to report it. So it is read before the `try` and cleared only once
+`build_world` has returned. Reported at most once, dropped never.
+
+### Why `matica_diff` compares the union of both sides
+
+`matica_diff` is the attribute this house checks after every deployment, and
+until 2026-09-08 it could report parity it had not established. It iterated
+the legacy matrix's entities and asked whether the engine agreed about each
+one, so a blind the engine decided a target for but the matrix never named was
+simply not asked about -- and an empty diff read as "they agree".
+
+That is the wrong way round for a migration check. The interesting failure
+during a migration is not two sides disagreeing about a blind they both know;
+it is one side having a blind the other has forgotten. The comparison is now
+over the union, and an entity only one side names is itself a difference.
+
+This is the same shape as the migration gate's own known limitation: what is
+missing from *both* sides is invisible to a comparison. Nothing fixes that.
+What is fixed is the narrower and more embarrassing case, where the evidence
+was available on one side and the comparison declined to look.
+
 ### Why a configuration change reloads the entry
 
 `async_setup_entry` parses the `Config` **once**, and the coordinator holds

@@ -22,6 +22,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: hacs/action@main
+      # A branch-head SHA rather than `@main` or the 2022 release tag -- see
+      # docs/sourcery-audit-2026-09-08.md for why, and how to re-resolve it.
+      - uses: hacs/action@1ebf01c408f29afcb6406bd431bc98fd8cbb15aa # main @ 2026-06-08
         with:
           category: integration
