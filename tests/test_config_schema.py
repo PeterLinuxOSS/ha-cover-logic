@@ -1,6 +1,7 @@
 import re
 
 import pytest
+import yaml
 
 from cover_logic.conditions import evaluate_condition
 from cover_logic.config_schema import (
@@ -296,6 +297,24 @@ def test_mode_entry_as_a_bare_string_raises_config_error_not_type_error():
     )
     with pytest.raises(ConfigError):
         load_config(bad)
+
+
+def test_malformed_yaml_raises_config_error_not_a_yaml_error():
+    # Every caller catches `(ConfigError, OSError)` only, so a parser error
+    # arriving as `yaml.YAMLError` is unhandled in config flow validation,
+    # entry setup, migration and `import_config`.
+    with pytest.raises(ConfigError, match="not valid YAML") as excinfo:
+        load_config("blinds: [cover.a\n")
+    assert isinstance(excinfo.value.__cause__, yaml.YAMLError)
+    # The parser detail is what says *where* the file is broken.
+    assert "line" in str(excinfo.value)
+
+
+def test_load_config_file_turns_malformed_yaml_into_config_error(tmp_path):
+    path = tmp_path / "broken.yaml"
+    path.write_text("blinds: [cover.a\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match="not valid YAML"):
+        load_config_file(path)
 
 
 def test_blind_entry_as_a_bare_string_raises_config_error():
