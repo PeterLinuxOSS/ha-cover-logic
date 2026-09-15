@@ -31,6 +31,31 @@
   now=NOW, event=Event(), sun=SunTimes())` directly, or adds an
   `attributes=None` parameter to that helper. `PURE_MODULES` in
   `tests/test_purity.py` holds bare filenames (`"engine.py"`).
+- **The `rules:` shape in YAML is a MAPPING, and a value reference is a TAG.**
+  Every config snippet below is written as an illustrative dict and is wrong on
+  both counts — rewrite it as YAML in this shape, which is what
+  `config_schema.py:228` actually parses and what `tests/test_engine.py`'s `CFG`
+  uses:
+
+  ```text
+  blinds:
+    - {entity: cover.a, facade_azimuth: 180, slat_distance: 60, slat_depth: 80}
+  zones:
+    z: {members: [cover.a]}
+  values:
+    angle: {type: slat_angle, default: 50}
+  modes:
+    - {id: day}
+  rules:
+    day.z:
+      - {then: {tilt: !ref angle}}
+  ```
+
+  So: `rules` is keyed `"<mode>.<zone>"` with a LIST of rules under each key —
+  never a list of `{mode, zone, then}` objects — and a reference is `!ref angle`,
+  never `{"ref": "angle"}`. (`{"ref": name}` is the **subentry/JSON** spelling
+  that `config_store.py` reads from `.storage`; the two doors differ here and
+  Task 6 is the one that touches the JSON side.)
 - **`ruff` is a blocking CI job, not advisory** (`.github/workflows/test.yml` runs
   `ruff check .` and `ruff format --check .`). Run BOTH before every commit. Two rules bite
   this work specifically: `PLR2004` forbids a bare magic number in production code (named
