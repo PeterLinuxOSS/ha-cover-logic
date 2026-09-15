@@ -19,6 +19,18 @@
 - **Parity first.** The migration gate in `tests/parity/test_migration_gate.py` must stay green through all of Phase 1. Phase 1 changes **no** house behaviour.
 - **Purity.** `engine.py`, `conditions.py`, `model.py`, `config_schema.py`, `geometry.py` and the rest of `tests/test_purity.py::PURE_MODULES` must never import `homeassistant`.
 - **No numpy.** `manifest.json` declares no dependencies and must keep declaring none; the formula uses `math`.
+- **Test conventions, verified in this repo — the plan's snippets follow them:**
+  `pyproject.toml` sets `pythonpath = ["custom_components", "tests"]`, so tests
+  import `from cover_logic.engine import ...` — **never** a
+  `custom_components.` prefix. `load_config(text: str)` takes **YAML text, not a
+  dict**; every snippet below that shows a config must be written as a YAML
+  string, in the style of `CFG` at the top of `tests/test_engine.py`. The local
+  `world()` helper in `tests/test_engine.py` hardcodes `attributes={}` and takes
+  no attributes argument, so a test needing an attribute read (sun elevation)
+  constructs `World(states=..., attributes={("sun.sun", "elevation"): "40"},
+  now=NOW, event=Event(), sun=SunTimes())` directly, or adds an
+  `attributes=None` parameter to that helper. `PURE_MODULES` in
+  `tests/test_purity.py` holds bare filenames (`"engine.py"`).
 - Run the pure suite with `python3 -m pytest tests/ -q` and the full suite with `.venv/bin/python -m pytest tests/ -q` (see `MODELS.md` §"Running the tests"). **Both** must pass before every commit.
 
 ---
@@ -66,7 +78,7 @@ Create `tests/test_geometry.py`:
 
 import pytest
 
-from custom_components.cover_logic.geometry import gamma, slat_angle_percent
+from cover_logic.geometry import gamma, slat_angle_percent
 
 
 def test_gamma_is_zero_when_the_sun_is_dead_on_the_facade():
@@ -124,7 +136,7 @@ def test_the_result_never_leaves_the_axis_range():
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `cd /config/dev/cover-logic && python3 -m pytest tests/test_geometry.py -q`
-Expected: FAIL — `ModuleNotFoundError: No module named 'custom_components.cover_logic.geometry'`
+Expected: FAIL — `ModuleNotFoundError: No module named 'cover_logic.geometry'`
 
 - [ ] **Step 3: Write minimal implementation**
 
@@ -233,8 +245,8 @@ Append to `tests/test_config_schema.py`:
 
 ```python
 def test_a_slat_angle_value_parses_with_its_defaults_filled_in():
-    from custom_components.cover_logic.config_schema import load_config
-    from custom_components.cover_logic.model import SlatAngle
+    from cover_logic.config_schema import load_config
+    from cover_logic.model import SlatAngle
 
     config = load_config(
         {
@@ -258,8 +270,8 @@ def test_a_slat_angle_value_parses_with_its_defaults_filled_in():
 
 
 def test_an_entity_value_still_parses_as_a_ref():
-    from custom_components.cover_logic.config_schema import load_config
-    from custom_components.cover_logic.model import Ref
+    from cover_logic.config_schema import load_config
+    from cover_logic.model import Ref
 
     config = load_config(
         {
@@ -276,7 +288,7 @@ def test_an_entity_value_still_parses_as_a_ref():
 def test_a_slat_angle_value_rejects_an_entity_key():
     import pytest
 
-    from custom_components.cover_logic.config_schema import ConfigError, load_config
+    from cover_logic.config_schema import ConfigError, load_config
 
     with pytest.raises(ConfigError, match="slat_angle"):
         load_config(
@@ -291,7 +303,7 @@ def test_a_slat_angle_value_rejects_an_entity_key():
 
 
 def test_a_slat_angle_value_survives_a_dump_and_reload():
-    from custom_components.cover_logic.config_schema import dump_config, load_config
+    from cover_logic.config_schema import dump_config, load_config
 
     raw = {
         "blinds": [{"entity": "cover.a", "facade_azimuth": 180, "slat_distance": 60, "slat_depth": 80}],
@@ -496,8 +508,8 @@ Append to `tests/test_engine.py`:
 ```python
 def test_a_slat_angle_axis_resolves_from_the_target_blinds_facade(make_world):
     """Two blinds, two facades, one value: each gets its own angle."""
-    from custom_components.cover_logic.config_schema import load_config
-    from custom_components.cover_logic.engine import evaluate
+    from cover_logic.config_schema import load_config
+    from cover_logic.engine import evaluate
 
     config = load_config(
         {
@@ -525,8 +537,8 @@ def test_a_slat_angle_axis_resolves_from_the_target_blinds_facade(make_world):
 
 
 def test_a_slat_angle_axis_falls_back_to_its_default_at_night(make_world):
-    from custom_components.cover_logic.config_schema import load_config
-    from custom_components.cover_logic.engine import evaluate
+    from cover_logic.config_schema import load_config
+    from cover_logic.engine import evaluate
 
     config = load_config(
         {
@@ -545,8 +557,8 @@ def test_a_slat_angle_axis_falls_back_to_its_default_at_night(make_world):
 
 
 def test_a_slat_angle_axis_falls_back_when_the_blind_has_no_geometry(make_world):
-    from custom_components.cover_logic.config_schema import load_config
-    from custom_components.cover_logic.engine import evaluate
+    from cover_logic.config_schema import load_config
+    from cover_logic.engine import evaluate
 
     config = load_config(
         {
@@ -702,8 +714,8 @@ Append to `tests/test_readiness.py`:
 ```python
 def test_a_slat_angle_axis_blocks_the_blind_when_the_sun_entity_is_unavailable(make_world):
     """Same rule as a Ref axis: a stated default is not a readiness answer."""
-    from custom_components.cover_logic.config_schema import load_config
-    from custom_components.cover_logic.readiness import assess
+    from cover_logic.config_schema import load_config
+    from cover_logic.readiness import assess
 
     config = load_config(
         {
@@ -723,8 +735,8 @@ Append to `tests/test_capabilities.py`:
 
 ```python
 def test_a_slat_angle_tilt_axis_needs_the_tilt_setter():
-    from custom_components.cover_logic.capabilities import SET_TILT_POSITION, required_features
-    from custom_components.cover_logic.config_schema import load_config
+    from cover_logic.capabilities import SET_TILT_POSITION, required_features
+    from cover_logic.config_schema import load_config
 
     config = load_config(
         {
@@ -742,7 +754,7 @@ Append to `tests/test_config_schema.py`:
 
 ```python
 def test_a_slat_angle_value_reports_the_sun_entities_it_reads():
-    from custom_components.cover_logic.config_schema import load_config, referenced_entities
+    from cover_logic.config_schema import load_config, referenced_entities
 
     config = load_config(
         {
@@ -830,8 +842,8 @@ Append to `tests/test_validation.py`:
 
 ```python
 def test_a_slat_angle_on_a_blind_without_geometry_warns():
-    from custom_components.cover_logic.config_schema import load_config
-    from custom_components.cover_logic.validation import validate
+    from cover_logic.config_schema import load_config
+    from cover_logic.validation import validate
 
     config = load_config(
         {
@@ -847,8 +859,8 @@ def test_a_slat_angle_on_a_blind_without_geometry_warns():
 
 
 def test_a_slat_angle_on_a_tilt_less_blind_warns():
-    from custom_components.cover_logic.config_schema import load_config
-    from custom_components.cover_logic.validation import validate
+    from cover_logic.config_schema import load_config
+    from cover_logic.validation import validate
 
     config = load_config(
         {
@@ -872,8 +884,8 @@ def test_a_slat_angle_on_a_tilt_less_blind_warns():
 
 
 def test_a_slat_angle_on_the_position_axis_warns():
-    from custom_components.cover_logic.config_schema import load_config
-    from custom_components.cover_logic.validation import validate
+    from cover_logic.config_schema import load_config
+    from cover_logic.validation import validate
 
     config = load_config(
         {
@@ -889,8 +901,8 @@ def test_a_slat_angle_on_the_position_axis_warns():
 
 
 def test_a_fully_specified_slat_angle_warns_about_nothing():
-    from custom_components.cover_logic.config_schema import load_config
-    from custom_components.cover_logic.validation import validate
+    from cover_logic.config_schema import load_config
+    from cover_logic.validation import validate
 
     config = load_config(
         {
@@ -961,8 +973,8 @@ Append to `tests/test_config_store.py`:
 ```python
 def test_a_slat_angle_value_subentry_builds_the_same_object_as_yaml():
     """One owner, two doors: the UI path and the YAML path must agree."""
-    from custom_components.cover_logic.config_schema import load_config
-    from custom_components.cover_logic.model import SlatAngle
+    from cover_logic.config_schema import load_config
+    from cover_logic.model import SlatAngle
 
     from_yaml = load_config(
         {
