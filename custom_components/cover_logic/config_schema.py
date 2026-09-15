@@ -23,6 +23,7 @@ from .const import (
     GUARD_STAGE_OUTPUT,
     RULE_DEFAULT_ZONE,
 )
+from .geometry import SCALE_HALF, SCALES
 from .model import (
     KEEP,
     UNSET,
@@ -34,6 +35,7 @@ from .model import (
     Mode,
     Ref,
     Rule,
+    SlatAngle,
     Value,
     Zone,
 )
@@ -53,6 +55,8 @@ _BLIND_KEYS = {
     "entity",
     "facade_azimuth",
     "has_tilt",
+    "slat_depth",
+    "slat_distance",
     "tilt_after_arrival",
     "tolerance",
     "travel_time",
@@ -82,7 +86,6 @@ _TOP_LEVEL_KEYS = {
     "zones",
 }
 _MANUAL_DETECTION_KEYS = {"ignore_while_on"}
-_VALUE_KEYS = {"default", "entity"}
 _ZONE_KEYS = {"members", "occupants"}
 
 # A cover's position and tilt are both percentages.
@@ -338,16 +341,17 @@ def unparse_axis(value: Any, ref_names: dict[int, str], ref_factory: Callable[[s
 
     `ref_names` maps `id(ref)` -- identity, not equality: two differently
     named `values:` entries could coincidentally share `entity`/`default` --
-    to the name that produced it. Every `Ref` a parsed `Config` holds on an
-    action axis was put there by `_parse_axis` resolving a `RefTag`/
-    `{"ref": ...}` against `values[name]` and handing back that exact object
-    (see `_parse_axis`'s `RefTag` branch above), so for any `Config` that
-    actually came from `load_config`/`config_from_subentries`, `ref_names`
-    (built by the caller from `config.values`) always has an entry for it.
+    to the name that produced it. Every `Ref`/`SlatAngle` a parsed `Config`
+    holds on an action axis was put there by `_parse_axis` resolving a
+    `RefTag`/`{"ref": ...}` against `values[name]` and handing back that exact
+    object (see `_parse_axis`'s `RefTag` branch above), so for any `Config`
+    that actually came from `load_config`/`config_from_subentries`,
+    `ref_names` (built by the caller from `config.values`) always has an
+    entry for it.
     """
     if value is KEEP:
         return "keep"
-    if isinstance(value, Ref):
+    if isinstance(value, (Ref, SlatAngle)):
         return ref_factory(ref_names[id(value)])
     return value
 
@@ -367,7 +371,30 @@ def _blind_to_dict(blind: Blind) -> dict[str, Any]:
     out["travel_time"] = blind.travel_time
     out["has_tilt"] = blind.has_tilt
     out["tilt_after_arrival"] = blind.tilt_after_arrival
+    if blind.slat_distance is not None:
+        out["slat_distance"] = blind.slat_distance
+    if blind.slat_depth is not None:
+        out["slat_depth"] = blind.slat_depth
     return out
+
+
+def _value_to_dict(value: Ref | SlatAngle) -> dict[str, Any]:
+    if isinstance(value, Ref):
+        return {"entity": value.entity, "default": value.default}
+    body: dict[str, Any] = {"type": VALUE_TYPE_SLAT_ANGLE, "default": value.default}
+    if value.scale != SCALE_HALF:
+        body["scale"] = value.scale
+    if value.sun_entity != SUN_ENTITY:
+        body["sun_entity"] = value.sun_entity
+    if value.azimuth_entity != DEFAULT_AZIMUTH_ENTITY:
+        body["azimuth_entity"] = value.azimuth_entity
+    if value.azimuth_attribute is not None:
+        body["azimuth_attribute"] = value.azimuth_attribute
+    if value.elevation_entity != SUN_ENTITY:
+        body["elevation_entity"] = value.elevation_entity
+    if value.elevation_attribute != "elevation":
+        body["elevation_attribute"] = value.elevation_attribute
+    return body
 
 
 def _zone_to_dict(zone: Zone) -> dict[str, Any]:
@@ -478,8 +505,7 @@ def dump_config(config: Config) -> str:
         }
     if config.values:
         doc["values"] = {
-            name: {"entity": ref.entity, "default": ref.default}
-            for name, ref in sorted(config.values.items())
+            name: _value_to_dict(value) for name, value in sorted(config.values.items())
         }
     if config.conditions:
         doc["conditions"] = {
@@ -509,25 +535,76 @@ def dump_config_file(path: str | Path, config: Config) -> None:
     Path(path).write_text(dump_config(config), encoding="utf-8")
 
 
-def _parse_values(raw: dict[str, Any]) -> dict[str, Ref]:
-    out: dict[str, Ref] = {}
+_VALUE_KEYS_ENTITY = {"default", "entity"}
+_VALUE_KEYS_SLAT = {
+    "default",
+    "type",
+    "scale",
+    "sun_entity",
+    "azimuth_entity",
+    "azimuth_attribute",
+    "elevation_entity",
+    "elevation_attribute",
+}
+VALUE_TYPE_ENTITY = "entity"
+VALUE_TYPE_SLAT_ANGLE = "slat_angle"
+
+
+def _parse_values(raw: dict[str, Any]) -> dict[str, Ref | SlatAngle]:
+    out: dict[str, Ref | SlatAngle] = {}
     for name, raw_body in raw.items():
         body = _expect_mapping(raw_body, f"value {name!r}")
-        _check_keys(body, _VALUE_KEYS, f"value {name!r}")
-        try:
-            entity = body["entity"]
-            default = int(body["default"])
-        except (KeyError, TypeError, ValueError) as err:
-            msg = f"value {name!r} needs 'entity' and integer 'default'"
-            raise ConfigError(msg) from err
-        # See docs/rationale.md -- "Why a `!ref` default is range-checked
-        # exactly like a literal".
-        if not _AXIS_MIN <= default <= _AXIS_MAX:
-            msg = f"value {name!r} default must be 0..100, got {default}"
+        kind = body.get("type", VALUE_TYPE_ENTITY)
+        if kind == VALUE_TYPE_SLAT_ANGLE:
+            out[name] = _parse_slat_angle(name, body)
+        elif kind == VALUE_TYPE_ENTITY:
+            out[name] = _parse_entity_value(name, body)
+        else:
+            msg = f"value {name!r} has unknown type {kind!r}"
             raise ConfigError(msg)
-
-        out[name] = Ref(entity=entity, default=default)
     return out
+
+
+def _value_default(name: str, body: dict[str, Any]) -> int:
+    try:
+        default = int(body["default"])
+    except (KeyError, TypeError, ValueError) as err:
+        msg = f"value {name!r} needs an integer 'default'"
+        raise ConfigError(msg) from err
+    # See docs/rationale.md -- "Why a `!ref` default is range-checked
+    # exactly like a literal".
+    if not _AXIS_MIN <= default <= _AXIS_MAX:
+        msg = f"value {name!r} default must be 0..100, got {default}"
+        raise ConfigError(msg)
+    return default
+
+
+def _parse_entity_value(name: str, body: dict[str, Any]) -> Ref:
+    _check_keys(body, _VALUE_KEYS_ENTITY, f"value {name!r}")
+    default = _value_default(name, body)
+    try:
+        entity = body["entity"]
+    except KeyError as err:
+        msg = f"value {name!r} needs 'entity'"
+        raise ConfigError(msg) from err
+    return Ref(entity=entity, default=default)
+
+
+def _parse_slat_angle(name: str, body: dict[str, Any]) -> SlatAngle:
+    _check_keys(body, _VALUE_KEYS_SLAT, f"value {name!r} of type slat_angle")
+    scale = body.get("scale", SCALE_HALF)
+    if scale not in SCALES:
+        msg = f"value {name!r} of type slat_angle has unknown scale {scale!r}"
+        raise ConfigError(msg)
+    return SlatAngle(
+        default=_value_default(name, body),
+        scale=scale,
+        sun_entity=body.get("sun_entity", SUN_ENTITY),
+        azimuth_entity=body.get("azimuth_entity", DEFAULT_AZIMUTH_ENTITY),
+        azimuth_attribute=body.get("azimuth_attribute"),
+        elevation_entity=body.get("elevation_entity", SUN_ENTITY),
+        elevation_attribute=body.get("elevation_attribute", "elevation"),
+    )
 
 
 def _parse_blind(item: Any) -> Blind:
@@ -538,6 +615,8 @@ def _parse_blind(item: Any) -> Blind:
         raise ConfigError(msg)
 
     azimuth = item.get("facade_azimuth")
+    slat_distance = item.get("slat_distance")
+    slat_depth = item.get("slat_depth")
     return Blind(
         entity=item["entity"],
         facade_azimuth=None if azimuth is None else float(azimuth),
@@ -545,6 +624,8 @@ def _parse_blind(item: Any) -> Blind:
         travel_time=float(item.get("travel_time", 60.0)),
         tilt_after_arrival=bool(item.get("tilt_after_arrival", True)),
         has_tilt=bool(item.get("has_tilt", True)),
+        slat_distance=None if slat_distance is None else float(slat_distance),
+        slat_depth=None if slat_depth is None else float(slat_depth),
     )
 
 
@@ -570,7 +651,7 @@ def _parse_condition(node: Any, conditions: dict[str, Any]) -> dict | list | Non
     raise ConfigError(msg)
 
 
-def _parse_axis(node: Any, values: dict[str, Ref]) -> Value:
+def _parse_axis(node: Any, values: dict[str, Ref | SlatAngle]) -> Value:
     if node is None or node == "keep":
         return KEEP
     if isinstance(node, RefTag):
@@ -607,7 +688,7 @@ def _parse_axis(node: Any, values: dict[str, Ref]) -> Value:
     return number
 
 
-def _parse_action(node: Any, values: dict[str, Ref]) -> Action:
+def _parse_action(node: Any, values: dict[str, Ref | SlatAngle]) -> Action:
     node = _expect_mapping(node, "action")
     _check_keys(node, _ACTION_KEYS, "action")
     return Action(
@@ -651,7 +732,9 @@ def _parse_seconds(node: Any, where: str) -> int:
     return seconds
 
 
-def _parse_guard(item: Any, conditions: dict[str, Any], values: dict[str, Ref]) -> Guard:
+def _parse_guard(
+    item: Any, conditions: dict[str, Any], values: dict[str, Ref | SlatAngle]
+) -> Guard:
     """One `guards:` entry into a frozen `Guard`.
 
     Shape only. Whether `policy` names a policy that exists, whether a
@@ -721,7 +804,9 @@ def _parse_guard(item: Any, conditions: dict[str, Any], values: dict[str, Ref]) 
     )
 
 
-def parse_guards(raw: Any, conditions: dict[str, Any], values: dict[str, Ref]) -> tuple[Guard, ...]:
+def parse_guards(
+    raw: Any, conditions: dict[str, Any], values: dict[str, Ref | SlatAngle]
+) -> tuple[Guard, ...]:
     """Every `guards:` entry, in written order -- order is first-match-wins meaning.
 
     Public because `config_store.py` reads the identical list out of
@@ -734,7 +819,7 @@ def parse_guards(raw: Any, conditions: dict[str, Any], values: dict[str, Ref]) -
     )
 
 
-def _parse_rule(item: Any, conditions: dict[str, Any], values: dict[str, Ref]) -> Rule:
+def _parse_rule(item: Any, conditions: dict[str, Any], values: dict[str, Ref | SlatAngle]) -> Rule:
     item = _expect_mapping(item, "rule entry")
     _check_keys(item, _RULE_KEYS, "rule entry")
     if "then" not in item:
