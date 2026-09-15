@@ -255,7 +255,9 @@ def test_a_slat_angle_value_parses_with_its_defaults_filled_in():
 
     config = load_config(
         {
-            "blinds": [{"entity": "cover.a", "facade_azimuth": 180, "slat_distance": 60, "slat_depth": 80}],
+            "blinds": [
+                {"entity": "cover.a", "facade_azimuth": 180, "slat_distance": 60, "slat_depth": 80}
+            ],
             "zones": {"z": {"members": ["cover.a"]}},
             "values": {"angle": {"type": "slat_angle", "default": 50}},
             "modes": [{"id": "day"}],
@@ -311,7 +313,9 @@ def test_a_slat_angle_value_survives_a_dump_and_reload():
     from cover_logic.config_schema import dump_config, load_config
 
     raw = {
-        "blinds": [{"entity": "cover.a", "facade_azimuth": 180, "slat_distance": 60, "slat_depth": 80}],
+        "blinds": [
+            {"entity": "cover.a", "facade_azimuth": 180, "slat_distance": 60, "slat_depth": 80}
+        ],
         "zones": {"z": {"members": ["cover.a"]}},
         "values": {"angle": {"type": "slat_angle", "default": 50, "scale": "full"}},
         "modes": [{"id": "day"}],
@@ -440,7 +444,8 @@ Add to the imports at the top of `config_schema.py`: `from .geometry import SCAL
 
 Replace the dump block at line 479:
 
-```python
+<!-- text, not python: this fragment is indented for its destination, and ruff format would dedent it and overrun line-length at its real indent -->
+```text
     if config.values:
         doc["values"] = {
             name: _value_to_dict(value) for name, value in sorted(config.values.items())
@@ -519,8 +524,18 @@ def test_a_slat_angle_axis_resolves_from_the_target_blinds_facade(make_world):
     config = load_config(
         {
             "blinds": [
-                {"entity": "cover.south", "facade_azimuth": 180, "slat_distance": 60, "slat_depth": 80},
-                {"entity": "cover.west", "facade_azimuth": 270, "slat_distance": 60, "slat_depth": 80},
+                {
+                    "entity": "cover.south",
+                    "facade_azimuth": 180,
+                    "slat_distance": 60,
+                    "slat_depth": 80,
+                },
+                {
+                    "entity": "cover.west",
+                    "facade_azimuth": 270,
+                    "slat_distance": 60,
+                    "slat_depth": 80,
+                },
             ],
             "zones": {"z": {"members": ["cover.south", "cover.west"]}},
             "values": {"angle": {"type": "slat_angle", "default": 7}},
@@ -547,7 +562,9 @@ def test_a_slat_angle_axis_falls_back_to_its_default_at_night(make_world):
 
     config = load_config(
         {
-            "blinds": [{"entity": "cover.a", "facade_azimuth": 180, "slat_distance": 60, "slat_depth": 80}],
+            "blinds": [
+                {"entity": "cover.a", "facade_azimuth": 180, "slat_distance": 60, "slat_depth": 80}
+            ],
             "zones": {"z": {"members": ["cover.a"]}},
             "values": {"angle": {"type": "slat_angle", "default": 42}},
             "modes": [{"id": "day"}],
@@ -724,7 +741,9 @@ def test_a_slat_angle_axis_blocks_the_blind_when_the_sun_entity_is_unavailable(m
 
     config = load_config(
         {
-            "blinds": [{"entity": "cover.a", "facade_azimuth": 180, "slat_distance": 60, "slat_depth": 80}],
+            "blinds": [
+                {"entity": "cover.a", "facade_azimuth": 180, "slat_distance": 60, "slat_depth": 80}
+            ],
             "zones": {"z": {"members": ["cover.a"]}},
             "values": {"angle": {"type": "slat_angle", "default": 50}},
             "modes": [{"id": "day"}],
@@ -745,7 +764,9 @@ def test_a_slat_angle_tilt_axis_needs_the_tilt_setter():
 
     config = load_config(
         {
-            "blinds": [{"entity": "cover.a", "facade_azimuth": 180, "slat_distance": 60, "slat_depth": 80}],
+            "blinds": [
+                {"entity": "cover.a", "facade_azimuth": 180, "slat_distance": 60, "slat_depth": 80}
+            ],
             "zones": {"z": {"members": ["cover.a"]}},
             "values": {"angle": {"type": "slat_angle", "default": 50}},
             "modes": [{"id": "day"}],
@@ -763,7 +784,9 @@ def test_a_slat_angle_value_reports_the_sun_entities_it_reads():
 
     config = load_config(
         {
-            "blinds": [{"entity": "cover.a", "facade_azimuth": 180, "slat_distance": 60, "slat_depth": 80}],
+            "blinds": [
+                {"entity": "cover.a", "facade_azimuth": 180, "slat_distance": 60, "slat_depth": 80}
+            ],
             "zones": {"z": {"members": ["cover.a"]}},
             "values": {"angle": {"type": "slat_angle", "default": 50}},
             "modes": [{"id": "day"}],
@@ -894,7 +917,9 @@ def test_a_slat_angle_on_the_position_axis_warns():
 
     config = load_config(
         {
-            "blinds": [{"entity": "cover.a", "facade_azimuth": 180, "slat_distance": 60, "slat_depth": 80}],
+            "blinds": [
+                {"entity": "cover.a", "facade_azimuth": 180, "slat_distance": 60, "slat_depth": 80}
+            ],
             "zones": {"z": {"members": ["cover.a"]}},
             "values": {"angle": {"type": "slat_angle", "default": 50}},
             "modes": [{"id": "day"}],
@@ -911,7 +936,9 @@ def test_a_fully_specified_slat_angle_warns_about_nothing():
 
     config = load_config(
         {
-            "blinds": [{"entity": "cover.a", "facade_azimuth": 180, "slat_distance": 60, "slat_depth": 80}],
+            "blinds": [
+                {"entity": "cover.a", "facade_azimuth": 180, "slat_distance": 60, "slat_depth": 80}
+            ],
             "zones": {"z": {"members": ["cover.a"]}},
             "values": {"angle": {"type": "slat_angle", "default": 50}},
             "modes": [{"id": "day"}],
@@ -983,7 +1010,9 @@ def test_a_slat_angle_value_subentry_builds_the_same_object_as_yaml():
 
     from_yaml = load_config(
         {
-            "blinds": [{"entity": "cover.a", "facade_azimuth": 180, "slat_distance": 60, "slat_depth": 80}],
+            "blinds": [
+                {"entity": "cover.a", "facade_azimuth": 180, "slat_distance": 60, "slat_depth": 80}
+            ],
             "zones": {"z": {"members": ["cover.a"]}},
             "values": {"angle": {"type": "slat_angle", "default": 50, "scale": "half"}},
             "modes": [{"id": "day"}],
