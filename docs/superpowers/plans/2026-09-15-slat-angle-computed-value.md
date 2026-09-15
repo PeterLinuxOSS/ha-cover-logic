@@ -856,7 +856,7 @@ def _action_reads(action: Action) -> set[Read]:
 
 Import `SlatAngle` there. In `capabilities.py`, make each of `_position_feature`, `_tilt_feature` and `_is_number` treat `SlatAngle` exactly as they treat `Ref` (a `SlatAngle` is "could be any number", so it charges the setter). Import `SlatAngle`.
 
-In `config_schema.py`, wherever the `values:` refs are turned into `Read`s (see the docstring at line 848), add the `SlatAngle` branch producing the same three reads as `readiness._action_reads` above — and keep them **undefaulted**, for the same reason a `Ref`'s is.
+In `config_schema.py`, the `values:` branch of `referenced_reads()` needs the same three reads, **undefaulted**. **This may already be done:** Task 2's fix round had to repair it, because the widened `Config.values` made its unconditional `ref.entity` crash with `AttributeError` on a `SlatAngle`. Read it first — if the three reads are already emitted there, add nothing and say so in your report; only close what is actually missing. The same applies to `config_store.subentries_from_config()`, repaired in the same fix round.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
