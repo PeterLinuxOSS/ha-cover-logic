@@ -15,7 +15,7 @@ def test_gamma_is_signed_and_wraps_the_short_way_around_north():
     assert gamma(350.0, 0.0) == pytest.approx(-10.0)
 
 
-def test_a_known_geometry_gives_a_known_percentage():
+def test_it_clamps_a_past_closed_geometry_to_the_axis_maximum():
     # 45 deg elevation, sun on the normal, 60/80 mm slats: the formula gives a
     # slat angle of ~103 deg, which is past fully closed on a 90 deg scale.
     assert slat_angle_percent(45.0, 0.0, 60.0, 80.0) == 100
@@ -24,14 +24,17 @@ def test_a_known_geometry_gives_a_known_percentage():
 def test_a_low_sun_needs_less_closing_than_a_high_one():
     low = slat_angle_percent(15.0, 0.0, 60.0, 80.0)
     high = slat_angle_percent(60.0, 0.0, 60.0, 80.0)
-    assert low is not None and high is not None
+    assert low is not None
+    assert high is not None
     assert low < high
 
 
 def test_the_full_scale_halves_the_percentage_of_the_half_scale():
+    # Holds only while the half scale is unclamped; once it clamps to 100 the two diverge.
     half = slat_angle_percent(20.0, 0.0, 60.0, 80.0, scale="half")
     full = slat_angle_percent(20.0, 0.0, 60.0, 80.0, scale="full")
-    assert half is not None and full is not None
+    assert half is not None
+    assert full is not None
     assert full == half // 2
 
 

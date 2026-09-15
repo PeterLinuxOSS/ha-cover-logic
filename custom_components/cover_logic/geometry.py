@@ -13,6 +13,7 @@ SCALES = (SCALE_HALF, SCALE_FULL)
 
 _AXIS_MIN = 0
 _AXIS_MAX = 100
+_EDGE_ON_DEGREES = 90.0
 
 
 def gamma(azimuth: float, facade_azimuth: float) -> float:
@@ -36,7 +37,7 @@ def slat_angle_percent(
     if elevation <= 0.0 or slat_depth <= 0.0 or slat_distance < 0.0:
         return None
     # At or past edge-on there is no beam to block, and cos(gamma) would flip sign.
-    if abs(gamma_deg) >= 90.0:
+    if abs(gamma_deg) >= _EDGE_ON_DEGREES:
         return None
 
     tan_beta = math.tan(math.radians(elevation)) / math.cos(math.radians(gamma_deg))
