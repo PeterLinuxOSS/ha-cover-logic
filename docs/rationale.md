@@ -2088,3 +2088,12 @@ or performance obstacle in this codebase as it stands today. This entry
 records that the omission was investigated and is being left exactly as
 found, rather than "fixed" or given a fabricated justification -- if the
 original reason resurfaces, it belongs here.
+
+## `geometry.py`
+
+### Why the computed slat angle clamps when the engine does not
+
+The engine deliberately does not clamp a resolved `Ref` -- a helper's value is
+the user's business, not the decision core's to second-guess. A slat angle in
+degrees past the slat's own travel is not a position the hardware has, so the
+degrees-to-percent conversion in `slat_angle_percent` clamps to `[0, 100]`.
