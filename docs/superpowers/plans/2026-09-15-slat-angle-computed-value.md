@@ -135,7 +135,7 @@ def test_the_result_never_leaves_the_axis_range():
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd /config/dev/cover-logic && python3 -m pytest tests/test_geometry.py -q`
+Run: `cd /config/dev/_wt/slat-angle && python3 -m pytest tests/test_geometry.py -q`
 Expected: FAIL — `ModuleNotFoundError: No module named 'cover_logic.geometry'`
 
 - [ ] **Step 3: Write minimal implementation**
@@ -200,14 +200,14 @@ def slat_angle_percent(
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd /config/dev/cover-logic && python3 -m pytest tests/test_geometry.py -q`
+Run: `cd /config/dev/_wt/slat-angle && python3 -m pytest tests/test_geometry.py -q`
 Expected: PASS (11 tests)
 
 - [ ] **Step 5: Add the module to the purity gate**
 
 In `tests/test_purity.py`, add `"geometry.py"` to the `PURE_MODULES` list (keep the list's existing order convention).
 
-Run: `cd /config/dev/cover-logic && python3 -m pytest tests/test_purity.py -q`
+Run: `cd /config/dev/_wt/slat-angle && python3 -m pytest tests/test_purity.py -q`
 Expected: PASS
 
 - [ ] **Step 6: Record the clamping decision**
@@ -217,7 +217,7 @@ Append to `docs/rationale.md` a section titled **"Why the computed slat angle cl
 - [ ] **Step 7: Commit**
 
 ```bash
-cd /config/dev/cover-logic
+cd /config/dev/_wt/slat-angle
 git add custom_components/cover_logic/geometry.py tests/test_geometry.py tests/test_purity.py docs/rationale.md
 git commit -m "Add pure solar geometry for a computed slat angle"
 ```
@@ -320,7 +320,7 @@ def test_a_slat_angle_value_survives_a_dump_and_reload():
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd /config/dev/cover-logic && python3 -m pytest tests/test_config_schema.py -q -k "slat_angle or entity_value"`
+Run: `cd /config/dev/_wt/slat-angle && python3 -m pytest tests/test_config_schema.py -q -k "slat_angle or entity_value"`
 Expected: FAIL — `ImportError: cannot import name 'SlatAngle'`
 
 - [ ] **Step 3: Write minimal implementation**
@@ -470,18 +470,18 @@ Widen the annotations that mention values: `Config.values` in `model.py`, and th
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd /config/dev/cover-logic && python3 -m pytest tests/test_config_schema.py tests/test_model.py -q`
+Run: `cd /config/dev/_wt/slat-angle && python3 -m pytest tests/test_config_schema.py tests/test_model.py -q`
 Expected: PASS
 
 - [ ] **Step 5: Run both full suites**
 
-Run: `cd /config/dev/cover-logic && python3 -m pytest tests/ -q && .venv/bin/python -m pytest tests/ -q`
+Run: `cd /config/dev/_wt/slat-angle && python3 -m pytest tests/ -q && .venv/bin/python -m pytest tests/ -q`
 Expected: PASS, same counts as before this task plus the new tests. **If `tests/parity/test_migration_gate.py` fails, stop** — Phase 1 must not change any decision.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /config/dev/cover-logic
+cd /config/dev/_wt/slat-angle
 git add custom_components/cover_logic/model.py custom_components/cover_logic/config_schema.py tests/
 git commit -m "Model and parse a computed slat_angle value"
 ```
@@ -580,7 +580,7 @@ If `tests/test_engine.py` has no `make_world` fixture with an `attributes` argum
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd /config/dev/cover-logic && python3 -m pytest tests/test_engine.py -q -k slat_angle`
+Run: `cd /config/dev/_wt/slat-angle && python3 -m pytest tests/test_engine.py -q -k slat_angle`
 Expected: FAIL — the tilt comes back as the `SlatAngle` object, not an int (a `Ref`-shaped object reaching an axis is exactly what `planner.plan` raises on).
 
 - [ ] **Step 3: Write minimal implementation**
@@ -670,25 +670,25 @@ At both call sites (lines 228 and 294), build the target from the config the cal
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd /config/dev/cover-logic && python3 -m pytest tests/test_engine.py tests/test_guards.py -q`
+Run: `cd /config/dev/_wt/slat-angle && python3 -m pytest tests/test_engine.py tests/test_guards.py -q`
 Expected: PASS
 
 - [ ] **Step 5: Add the guard-side test**
 
 Append to `tests/test_guards.py` a test that a `force` guard whose `then` holds a `slat_angle` ref resolves per blind, mirroring the engine test above: two blinds on different facades in the guard's `targets`, one `force` guard, assert the two outcomes carry different tilt ints.
 
-Run: `cd /config/dev/cover-logic && python3 -m pytest tests/test_guards.py -q`
+Run: `cd /config/dev/_wt/slat-angle && python3 -m pytest tests/test_guards.py -q`
 Expected: PASS
 
 - [ ] **Step 6: Run both full suites**
 
-Run: `cd /config/dev/cover-logic && python3 -m pytest tests/ -q && .venv/bin/python -m pytest tests/ -q`
+Run: `cd /config/dev/_wt/slat-angle && python3 -m pytest tests/ -q && .venv/bin/python -m pytest tests/ -q`
 Expected: PASS including the parity gate.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-cd /config/dev/cover-logic
+cd /config/dev/_wt/slat-angle
 git add custom_components/cover_logic/engine.py custom_components/cover_logic/guards.py tests/
 git commit -m "Resolve a computed slat angle relative to the blind being decided"
 ```
@@ -774,7 +774,7 @@ def test_a_slat_angle_value_reports_the_sun_entities_it_reads():
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cd /config/dev/cover-logic && python3 -m pytest tests/test_readiness.py tests/test_capabilities.py tests/test_config_schema.py -q -k slat_angle`
+Run: `cd /config/dev/_wt/slat-angle && python3 -m pytest tests/test_readiness.py tests/test_capabilities.py tests/test_config_schema.py -q -k slat_angle`
 Expected: FAIL — the new value type is invisible to all three.
 
 - [ ] **Step 3: Write minimal implementation**
@@ -807,18 +807,18 @@ In `config_schema.py`, wherever the `values:` refs are turned into `Read`s (see 
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd /config/dev/cover-logic && python3 -m pytest tests/test_readiness.py tests/test_capabilities.py tests/test_config_schema.py -q`
+Run: `cd /config/dev/_wt/slat-angle && python3 -m pytest tests/test_readiness.py tests/test_capabilities.py tests/test_config_schema.py -q`
 Expected: PASS
 
 - [ ] **Step 5: Run both full suites**
 
-Run: `cd /config/dev/cover-logic && python3 -m pytest tests/ -q && .venv/bin/python -m pytest tests/ -q`
+Run: `cd /config/dev/_wt/slat-angle && python3 -m pytest tests/ -q && .venv/bin/python -m pytest tests/ -q`
 Expected: PASS including the parity gate and `tests/ha/test_capabilities_mirror.py`.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /config/dev/cover-logic
+cd /config/dev/_wt/slat-angle
 git add custom_components/cover_logic/readiness.py custom_components/cover_logic/capabilities.py custom_components/cover_logic/config_schema.py tests/
 git commit -m "Make a computed slat angle visible to readiness, capabilities and entity reporting"
 ```
@@ -920,7 +920,7 @@ def test_a_fully_specified_slat_angle_warns_about_nothing():
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cd /config/dev/cover-logic && python3 -m pytest tests/test_validation.py -q -k slat_angle`
+Run: `cd /config/dev/_wt/slat-angle && python3 -m pytest tests/test_validation.py -q -k slat_angle`
 Expected: FAIL — the codes are never emitted.
 
 - [ ] **Step 3: Write minimal implementation**
@@ -936,18 +936,18 @@ Add matching text for both codes to `strings.json` under the same key path the e
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd /config/dev/cover-logic && python3 -m pytest tests/test_validation.py tests/test_translations.py -q`
+Run: `cd /config/dev/_wt/slat-angle && python3 -m pytest tests/test_validation.py tests/test_translations.py -q`
 Expected: PASS
 
 - [ ] **Step 5: Run both full suites**
 
-Run: `cd /config/dev/cover-logic && python3 -m pytest tests/ -q && .venv/bin/python -m pytest tests/ -q`
+Run: `cd /config/dev/_wt/slat-angle && python3 -m pytest tests/ -q && .venv/bin/python -m pytest tests/ -q`
 Expected: PASS
 
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /config/dev/cover-logic
+cd /config/dev/_wt/slat-angle
 git add custom_components/cover_logic/validation.py custom_components/cover_logic/strings.json custom_components/cover_logic/translations tests/
 git commit -m "Warn when a computed slat angle cannot apply to the blinds that would receive it"
 ```
@@ -1001,7 +1001,7 @@ Then extend the existing subentry→`Config` test in that file (find the test th
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd /config/dev/cover-logic && python3 -m pytest tests/test_config_store.py -q -k slat_angle`
+Run: `cd /config/dev/_wt/slat-angle && python3 -m pytest tests/test_config_store.py -q -k slat_angle`
 Expected: FAIL — `config_store` drops the unknown keys or raises.
 
 - [ ] **Step 3: Write minimal implementation**
@@ -1017,25 +1017,25 @@ Add every new form label, description and selector option to `strings.json` and 
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd /config/dev/cover-logic && python3 -m pytest tests/test_config_store.py -q && .venv/bin/python -m pytest tests/ha/test_options_flow.py tests/test_translations.py -q`
+Run: `cd /config/dev/_wt/slat-angle && python3 -m pytest tests/test_config_store.py -q && .venv/bin/python -m pytest tests/ha/test_options_flow.py tests/test_translations.py -q`
 Expected: PASS
 
 - [ ] **Step 5: Add a flow test**
 
 Append to `tests/ha/test_options_flow.py` a test that walks the `value` subentry flow choosing `slat_angle`, submits `default: 50` and `scale: half`, and asserts the created subentry's `data` equals `{"id": ..., "type": "slat_angle", "default": 50, "scale": "half"}`. Mirror the assertions and helper usage of the neighbouring `value` flow test in that file.
 
-Run: `cd /config/dev/cover-logic && .venv/bin/python -m pytest tests/ha/test_options_flow.py -q`
+Run: `cd /config/dev/_wt/slat-angle && .venv/bin/python -m pytest tests/ha/test_options_flow.py -q`
 Expected: PASS
 
 - [ ] **Step 6: Run both full suites**
 
-Run: `cd /config/dev/cover-logic && python3 -m pytest tests/ -q && .venv/bin/python -m pytest tests/ -q`
+Run: `cd /config/dev/_wt/slat-angle && python3 -m pytest tests/ -q && .venv/bin/python -m pytest tests/ -q`
 Expected: PASS. `tests/parity/test_subentry_conformance.py` must still pass — it reads the real `.storage`, which this task does not touch.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-cd /config/dev/cover-logic
+cd /config/dev/_wt/slat-angle
 git add custom_components/cover_logic tests/
 git commit -m "Let a computed slat angle and slat geometry be configured from the UI"
 ```
@@ -1059,7 +1059,7 @@ git commit -m "Let a computed slat angle and slat geometry be configured from th
 Run the migration gate alone and record the number:
 
 ```bash
-cd /config/dev/cover-logic && .venv/bin/python -m pytest tests/parity/test_migration_gate.py -q
+cd /config/dev/_wt/slat-angle && .venv/bin/python -m pytest tests/parity/test_migration_gate.py -q
 ```
 
 Expected: PASS, the same scenario count as before this plan (92 160). **This is the gate for the whole of Phase 1**: no `slat_angle` value exists in the house's fixture yet, so every decision must be identical.
@@ -1067,7 +1067,7 @@ Expected: PASS, the same scenario count as before this plan (92 160). **This is 
 - [ ] **Step 2: Prove the deployed house config is untouched**
 
 ```bash
-cd /config/dev/cover-logic && .venv/bin/python -m pytest tests/parity/test_subentry_conformance.py -q
+cd /config/dev/_wt/slat-angle && .venv/bin/python -m pytest tests/parity/test_subentry_conformance.py -q
 ```
 
 Expected: PASS — the live `.storage` still matches `fixtures/dom_peter.yaml`, because Phase 1 added no subentry.
@@ -1098,7 +1098,7 @@ Append to `docs/rationale.md` a section **"Why a computed slat angle does not im
 - [ ] **Step 5: Run everything one more time**
 
 ```bash
-cd /config/dev/cover-logic && python3 -m pytest tests/ -q && .venv/bin/python -m pytest tests/ -q && ruff check . && ruff format --check .
+cd /config/dev/_wt/slat-angle && python3 -m pytest tests/ -q && .venv/bin/python -m pytest tests/ -q && ruff check . && ruff format --check .
 ```
 
 Expected: all PASS.
@@ -1106,10 +1106,14 @@ Expected: all PASS.
 - [ ] **Step 6: Commit and release per MODELS.md**
 
 ```bash
-cd /config/dev/cover-logic
+cd /config/dev/_wt/slat-angle
 git add MODELS.md README.md docs/
 git commit -m "Document the computed slat_angle value"
 ```
+
+**Note for whoever runs Task 7:** the release, the deploy and the merge happen in the MAIN
+checkout (`/config/dev/cover-logic`) after this branch is merged via PR — not in the worktree.
+Every `cd` above points at the worktree because Tasks 1-6 live there.
 
 Then release. `MODELS.md` has **no** release section, so the process is the repo's convention, confirmed by `git log`: bump `"version"` in `custom_components/cover_logic/manifest.json` (currently `0.4.0` → `0.5.0`, since this adds a capability), commit as `Release 0.5.0`, tag `v0.5.0`, push the tag, then `gh release create`. **`git push --tags` is not a release** — HACS goes by releases, so verify with `gh release list`, not `git ls-remote --tags`.
 
