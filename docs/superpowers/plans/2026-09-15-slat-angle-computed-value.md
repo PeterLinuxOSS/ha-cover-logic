@@ -31,6 +31,11 @@
   now=NOW, event=Event(), sun=SunTimes())` directly, or adds an
   `attributes=None` parameter to that helper. `PURE_MODULES` in
   `tests/test_purity.py` holds bare filenames (`"engine.py"`).
+- **`ruff` is a blocking CI job, not advisory** (`.github/workflows/test.yml` runs
+  `ruff check .` and `ruff format --check .`). Run BOTH before every commit. Two rules bite
+  this work specifically: `PLR2004` forbids a bare magic number in production code (named
+  constants only — it is exempted for `tests/**`, not for `custom_components/**`), and
+  `PT018` forbids a compound `assert a and b` in a test (split it into two asserts).
 - Run the pure suite with `python3 -m pytest tests/ -q` and the full suite with `.venv/bin/python -m pytest tests/ -q` (see `MODELS.md` §"Running the tests"). **Both** must pass before every commit.
 
 ---
