@@ -528,6 +528,41 @@ rules:
     assert verdict.blocked_by("cover.b") == ()
 
 
+def test_a_slat_angle_axis_blocks_the_blind_whose_action_reads_it() -> None:
+    """Same rule as a `!ref` axis: a stated `default` is not a readiness answer.
+
+    See `docs/rationale.md` -- "Why a `values:` default is not an answer".
+    """
+    text = """
+blinds:
+  - {entity: cover.a, facade_azimuth: 180, slat_distance: 60, slat_depth: 80}
+  - entity: cover.b
+zones:
+  za:
+    members: [cover.a]
+  zb:
+    members: [cover.b]
+values:
+  angle:
+    type: slat_angle
+    default: 50
+modes:
+  - id: den
+rules:
+  den.za:
+    - then: {tilt: !ref angle}
+  den.zb:
+    - then: {position: 0}
+"""
+    cfg = config(text)
+    # `sun.sun` is left out entirely: it backs both `sun_entity` and the
+    # default `elevation_entity`, so it alone must block `cover.a`.
+    verdict = assess(cfg, world({"sensor.sun_solar_azimuth": "180"}))
+    assert verdict.blocked_by("cover.a") == ("sun.sun",)
+    # Counter: `zb`'s literal action reads nothing, so it is not blocked.
+    assert verdict.blocked_by("cover.b") == ()
+
+
 # ---------------------------------------------------------------------------
 # Truncation, and the reason line.
 # ---------------------------------------------------------------------------
