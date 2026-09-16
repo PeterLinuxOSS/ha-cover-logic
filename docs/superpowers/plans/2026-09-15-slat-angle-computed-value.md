@@ -993,7 +993,11 @@ Expected: FAIL — the codes are never emitted.
 
 Add to `validation.py` a check that walks every rule's and guard's `then` (reusing whatever walk the module already has for the existing action-shaped checks — read the file and follow its pattern, do not add a second walk):
 
-- For each action axis holding a `SlatAngle`, resolve which blinds can receive it (the rule's zone members, or `guard_blinds` for a guard). Emit **one** `slat_angle_without_geometry` WARNING per offending blind, naming the blind and which of `facade_azimuth` / `slat_distance` / `slat_depth` / `has_tilt` is the problem.
+- For each action axis holding a `SlatAngle`, resolve which blinds can receive it (the rule's zone members, or `guard_blinds` for a guard). Emit **one** `slat_angle_without_geometry` WARNING per offending blind, naming the blind and which of `facade_azimuth` / `slat_distance` / `slat_depth` is missing.
+
+  **Do NOT include `has_tilt` in that check.** `_check_tilt_on_tiltless_blinds` at `validation.py:153` already warns (`tilt_on_tiltless_blind`) on *any* non-`KEEP` tilt reaching a blind with no tilt, and a `SlatAngle` is a non-`KEEP` tilt — so covering it here too would emit two warnings for one fault. Follow that function's shape: it catches `EngineError` from `resolve_ownership` and returns `[]`, because `validate` must never raise on the malformed configurations it exists to report on.
+
+  **Deliberately do NOT register either new code in `subentry_flow._CODE_OWNERS`.** That dict decides which form a problem *blocks*, and per `tests/ha/test_subentry_flows.py`'s own docstring a code in neither it nor `_ATTRIBUTED_CODES` "silently blocks nothing at all". That is the correct outcome here and matches `tilt_on_tiltless_blind`, which is also absent from it: both codes describe a configuration that still works and merely does less than it reads as, so a save should not be blocked. The user is still told — `__init__.py::_check_config_warnings` turns every `validate()` WARNING into a repair issue regardless of `_CODE_OWNERS`. Say this in a one-line comment next to the codes so the absence reads as a decision rather than an oversight.
 - If the `SlatAngle` sits on the `position` axis, emit `slat_angle_on_position` naming the rule or guard.
 
 Follow the module's existing `Problem` construction and severity constants exactly; both new codes are WARNING, not ERROR, because a stated `default` means the house still gets a decision.
