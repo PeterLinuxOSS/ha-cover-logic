@@ -235,13 +235,19 @@ def _action_sites(
 ) -> Iterator[tuple[Action, str, frozenset[tuple[str, str]], frozenset[str]]]:
     """Yield every action this configuration states, with the blinds it can reach.
 
-    The action-shaped counterpart of `_condition_sites`: a rule's `then` and a
-    `force` guard's `then` are the same shape and reach blinds by the same two
-    rules -- a rule through the zone its key names (a `RULE_DEFAULT_ZONE` key
-    through every owned blind), a guard through `guards.guard_blinds`. One
-    traversal so that "which blinds does this action reach" has a single
-    answer, the way `resolve_ownership` is the single answer to "which zone
-    owns this blind".
+    The action-shaped counterpart of `_condition_sites`: a rule's `then` and
+    the `then` of *any* guard that states one are the same shape and reach
+    blinds by the same two rules -- a rule through the zone its key names (a
+    `RULE_DEFAULT_ZONE` key through every owned blind), a guard through
+    `guards.guard_blinds`. One traversal so that "which blinds does this
+    action reach" has a single answer, the way `resolve_ownership` is the
+    single answer to "which zone owns this blind".
+
+    Guards are not filtered by policy, although only `force` reads `then` at
+    runtime. A `then` on any other policy is already an `ERROR`
+    (`guard_unused_field`), so yielding it over-reports only on a
+    configuration that is broken anyway -- and deciding here which guard
+    fields matter would be a second opinion about exactly that.
 
     Yields nothing at all when ownership is broken. `resolve_ownership` raises
     on a blind claimed by two zones, which `_check_ownership` has already
@@ -291,11 +297,18 @@ def _check_slat_angle_targets(config: Config) -> list[Problem]:
 
     `WARNING`, not `ERROR`, for both: a `slat_angle` states a `default`, so
     the house still gets a decision either way.
+
+    Neither code appears in `subentry_flow._CODE_OWNERS`, by decision rather
+    than by omission. That dict decides which form a problem *blocks*, and a
+    code in neither it nor `_ATTRIBUTED_CODES` blocks nothing -- which is
+    right here, exactly as it is for `tilt_on_tiltless_blind`, also absent:
+    both describe a configuration that still works and merely does less than
+    it reads as, so no save should be refused over one. The author is told
+    regardless, because `__init__._check_config_warnings` turns every
+    `validate()` WARNING into a repair issue independently of that dict.
     """
     out: list[Problem] = []
     for action, where, owners, reach in _action_sites(config):
-        # Both codes are kept out of `subentry_flow._CODE_OWNERS` by decision, like
-        # `tilt_on_tiltless_blind`: they block no save, and the repair issue still tells the user.
         if isinstance(action.position, SlatAngle):
             out.append(
                 Problem(
