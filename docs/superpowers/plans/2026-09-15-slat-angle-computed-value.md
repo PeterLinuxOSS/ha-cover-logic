@@ -920,29 +920,27 @@ def test_a_slat_angle_on_a_blind_without_geometry_warns():
     assert "slat_angle_without_geometry" in codes
 
 
-def test_a_slat_angle_on_a_tilt_less_blind_warns():
+def test_a_slat_angle_on_a_tiltless_blind_warns_only_about_the_tilt():
+    """One fault, one warning: the geometry is complete, so only the tilt check fires."""
     from cover_logic.config_schema import load_config
     from cover_logic.validation import validate
 
-    config = load_config(
-        {
-            "blinds": [
-                {
-                    "entity": "cover.a",
-                    "facade_azimuth": 180,
-                    "slat_distance": 60,
-                    "slat_depth": 80,
-                    "has_tilt": False,
-                }
-            ],
-            "zones": {"z": {"members": ["cover.a"]}},
-            "values": {"angle": {"type": "slat_angle", "default": 50}},
-            "modes": [{"id": "day"}],
-            "rules": [{"mode": "day", "zone": "z", "then": {"tilt": {"ref": "angle"}}}],
-        }
-    )
+    config = load_config("""
+blinds:
+  - {entity: cover.a, facade_azimuth: 180, slat_distance: 60, slat_depth: 80, has_tilt: false}
+zones:
+  z: {members: [cover.a]}
+values:
+  angle: {type: slat_angle, default: 50}
+modes:
+  - {id: day}
+rules:
+  day.z:
+    - {then: {tilt: !ref angle}}
+""")
     codes = [problem.code for problem in validate(config)]
-    assert "slat_angle_without_geometry" in codes
+    assert "tilt_on_tiltless_blind" in codes
+    assert "slat_angle_without_geometry" not in codes
 
 
 def test_a_slat_angle_on_the_position_axis_warns():
