@@ -1026,7 +1026,7 @@ git commit -m "Warn when a computed slat angle cannot apply to the blinds that w
 
 **Files:**
 - Modify: `custom_components/cover_logic/subentry_flow.py` (the `value` flow and the `blind` flow)
-- Modify: `custom_components/cover_logic/config_store.py`
+- Read only (needs no change, see Step 3): `custom_components/cover_logic/config_store.py`
 - Modify: `custom_components/cover_logic/strings.json`, `translations/*.json`
 - Test: `tests/test_config_store.py`, `tests/ha/test_options_flow.py`
 
@@ -1076,7 +1076,7 @@ Expected: FAIL — `config_store` drops the unknown keys or raises.
 
 - [ ] **Step 3: Write minimal implementation**
 
-In `config_store.py`, the `value` branch must dispatch on `type` exactly as `config_schema._parse_values` does — call into `config_schema` rather than re-implementing the dispatch, so there is one parser. The `blind` branch passes `slat_distance` / `slat_depth` through.
+**`config_store.py` needs NO change — verified, not assumed.** `_build_values` (`config_store.py:207`) strips `_ID_KEY` and hands the rest straight to `config_schema._parse_values`, which Task 2 taught to dispatch on `type`; and the `blind` branch already passes unknown keys through. Proven by direct call against a stand-in entry: a `value` subentry `{"id": "angle", "type": "slat_angle", "default": 50, "scale": "full"}` builds a correct `SlatAngle`, and `{"id": "poz", "entity": "input_number.x", "default": 34}` still builds a `Ref`. The export direction was already fixed in Task 2's fix round. **Read it, confirm it, add nothing, and say so in your report.**
 
 In `subentry_flow.py`:
 - The `value` add/edit form gains a `type` `SelectSelector` with options `entity` and `slat_angle`. When `slat_angle` is chosen, the form shows `default` (`NumberSelector` 0–100) and `scale` (`SelectSelector` `half`/`full`) and **not** `entity`; when `entity` is chosen it shows today's fields. Follow the file's existing two-step pattern if it already has one (read `_build_schema` / `_to_data` / `_to_form_values` first); if it does not, add a menu step that picks the type and then routes to the right form.
