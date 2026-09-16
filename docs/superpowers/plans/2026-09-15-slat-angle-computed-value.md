@@ -713,7 +713,16 @@ def _outcome(
 
 and at line 339 `return Outcome(action=resolve_action(guard.then, world, target), **common)`.
 
-At both call sites (lines 228 and 294), build the target from the config the caller already holds — `Target(blind=config.blinds[entity], zone=config.zones[owner[entity]])` where `owner` is the `resolve_ownership(config)` mapping the module already imports. Where a guard fires on a blind no zone owns, pass `None`.
+At both call sites, **a `target` variable is already in scope** — `screen()` builds it at `guards.py:220` and `review()` at `guards.py:277`, both inside the very loop that calls `_outcome`. So pass `target`; do not re-derive ownership. (`screen()` also `continue`s past any entity not in `owners` at line 215, so the target is always a real `Target`, never `None`, at both sites.)
+
+**One more change in this file, which the rest of this plan missed.** `_direction_matches` at `guards.py:388` guards the invariant that a decision reaching a guard has its refs already resolved:
+
+```python
+    if isinstance(position, Ref):
+        raise GuardError(...)
+```
+
+An unresolved `SlatAngle` must hit that same invariant, or it falls through to the position comparison below and an object gets compared against an int. Widen it to `isinstance(position, (Ref, SlatAngle))` and extend the error message so it names either kind rather than only a `Ref`. Add a test in `tests/test_guards.py` that an unresolved `SlatAngle` in a `decided` action raises `GuardError`, mirroring whatever test covers the `Ref` case today.
 
 - [ ] **Step 4: Run test to verify it passes**
 
