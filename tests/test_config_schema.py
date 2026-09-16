@@ -993,6 +993,7 @@ def test_a_slat_angle_value_parses_with_its_defaults_filled_in():
     assert value.scale == "half"
     assert value.sun_entity == "sun.sun"
     assert value.azimuth_entity == "sensor.sun_solar_azimuth"
+    assert value.azimuth_attribute is None
     assert value.elevation_entity == "sun.sun"
     assert value.elevation_attribute == "elevation"
     assert config.blinds["cover.a"].slat_distance == 60.0
@@ -1028,7 +1029,31 @@ def test_a_slat_angle_value_rejects_an_entity_key():
 
 
 def test_a_slat_angle_value_survives_a_dump_and_reload():
-    once = load_config(SLAT_ANGLE_CFG.replace("default: 50}", "default: 50, scale: full}"))
+    """Every field away from its default at once, not just `scale` -- a
+    broken conditional-omit on any other field would pass unnoticed
+    otherwise, since the emitted dict would just be missing that one key.
+    """
+    once = load_config(
+        SLAT_ANGLE_CFG.replace(
+            "angle: {type: slat_angle, default: 50}",
+            "angle: {type: slat_angle, default: 50, scale: full, "
+            "sun_entity: sun.other, azimuth_entity: sensor.az, "
+            "azimuth_attribute: azimuth, elevation_entity: sensor.elev, "
+            "elevation_attribute: value}",
+        )
+    )
     twice = load_config(dump_config(once))
     assert twice.values == once.values
     assert twice.blinds == once.blinds
+
+
+def test_referenced_entities_covers_a_slat_angles_three_inputs():
+    """A `slat_angle` value used to be invisible to `referenced_reads`, so a
+    coordinator subscribing off `referenced_entities` never watched its inputs.
+    """
+    cfg = load_config(SLAT_ANGLE_CFG)
+    assert referenced_entities(cfg) >= {
+        "sun.sun",
+        "sensor.sun_solar_azimuth",
+        ("sun.sun", "elevation"),
+    }

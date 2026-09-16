@@ -778,6 +778,40 @@ def test_subentries_from_config_round_trips_the_real_fixture(fixtures_dir):
     assert rebuilt == original
 
 
+def test_subentries_from_config_round_trips_a_slat_angle_value():
+    """A `slat_angle` value used to export as `{"entity": ref.entity, ...}`
+    unconditionally (`ref.entity` copied from the `Ref` shape), crashing with
+    `AttributeError` on anything but a `Ref`. Also checks the omit-when-
+    equal-to-default fields (`azimuth_attribute` set, `sun_entity` and
+    `elevation_entity` left at their defaults and therefore absent).
+    """
+    text = """
+blinds:
+  - {entity: cover.a, facade_azimuth: 180, slat_distance: 60, slat_depth: 80}
+zones:
+  z: {members: [cover.a]}
+values:
+  angle: {type: slat_angle, default: 50, scale: full, azimuth_attribute: azimuth}
+modes:
+  - {id: day}
+rules:
+  day.z:
+    - {then: {tilt: !ref angle}}
+"""
+    original = load_config(text)
+    items = subentries_from_config(original)
+    value_items = {data["id"]: data for kind, data in items if kind == "value"}
+    assert value_items["angle"] == {
+        "id": "angle",
+        "type": "slat_angle",
+        "default": 50,
+        "scale": "full",
+        "azimuth_attribute": "azimuth",
+    }
+    rebuilt = config_from_subentries(entry_from_subentry_items(items))
+    assert rebuilt == original
+
+
 def test_subentries_from_config_rejects_a_bare_list_as_a_named_conditions_body():
     """`Config.conditions` is typed `dict[str, dict]` (see `model.Config`),
     but `load_config` does not itself enforce that a named condition's body

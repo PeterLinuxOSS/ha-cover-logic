@@ -944,12 +944,22 @@ def referenced_reads(config: Config) -> set[Read]:
     house moving on a world nobody read, which is the opposite of an answer that
     avoids a movement. See `docs/rationale.md` -- "Why a `values:` default is
     not an answer".
+
+    A `slat_angle` value's three inputs (`sun_entity`, `azimuth_entity`,
+    `elevation_entity`) are collected the same way, undefaulted -- same
+    reasoning as above, see `docs/rationale.md` -- "Why a `values:` default is
+    not an answer".
     """
     out: set[Read] = set()
     for node in all_condition_nodes(config):
         out |= node_reads(node)
-    for ref in config.values.values():
-        out.add(Read(ref.entity))
+    for value in config.values.values():
+        if isinstance(value, SlatAngle):
+            out.add(Read(value.sun_entity))
+            out.add(Read(value.azimuth_entity, value.azimuth_attribute))
+            out.add(Read(value.elevation_entity, value.elevation_attribute))
+        else:
+            out.add(Read(value.entity))
     return out
 
 
