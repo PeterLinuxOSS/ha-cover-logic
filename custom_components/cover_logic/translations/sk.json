@@ -684,7 +684,7 @@
     },
     "config_warnings": {
       "title": "Konfigurácia má varovania",
-      "description": "Počet varovaní o tejto konfigurácii: {count}. {warnings}. Nič z toho integráciu nezastaví, a každé znamená, že sa niečo ticho neriadi — zóna bez pravidiel, pravidlo zatienené skorším, poistka, ktorá nikdy nevystrelí, žalúzia, ku ktorej sa nehlási žiadna zóna, alebo lamely žiadané od žalúzie, ktorá ich nemá. Oprav to v dotknutom subentry, alebo potvrď, že to chovanie je zámer."
+      "description": "Počet varovaní o tejto konfigurácii: {count}. {warnings}. Nič z toho integráciu nezastaví, a každé znamená, že sa niečo ticho neriadi — zóna bez pravidiel, pravidlo zatienené skorším, poistka, ktorá nikdy nevystrelí, žalúzia, ku ktorej sa nehlási žiadna zóna, lamely žiadané od žalúzie, ktorá ich nemá, počítaný uhol lamiel žiadaný od žalúzie, ktorá neuvádza azimut fasády ani rozmery lamiel, alebo počítaný uhol lamiel na osi pozície namiesto osi lamiel. Oprav to v dotknutom subentry, alebo potvrď, že to chovanie je zámer."
     }
   },
   "services": {

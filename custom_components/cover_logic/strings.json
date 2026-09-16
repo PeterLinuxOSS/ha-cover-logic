@@ -684,7 +684,7 @@
     },
     "config_warnings": {
       "title": "The configuration has warnings",
-      "description": "{count} warning(s) about this configuration: {warnings}. None of these stop the integration, and each one means something is quietly not being decided -- a zone with no rules, a rule shadowed by an earlier one, a guard that can never fire, a blind no zone claims, or tilt asked of a blind that has none. Fix them in the affected subentry, or confirm the behaviour is what you intended."
+      "description": "{count} warning(s) about this configuration: {warnings}. None of these stop the integration, and each one means something is quietly not being decided -- a zone with no rules, a rule shadowed by an earlier one, a guard that can never fire, a blind no zone claims, tilt asked of a blind that has none, a computed slat angle asked of a blind that states no facade or slat geometry, or a computed slat angle placed on the position axis instead of the tilt axis. Fix them in the affected subentry, or confirm the behaviour is what you intended."
     }
   },
   "services": {
