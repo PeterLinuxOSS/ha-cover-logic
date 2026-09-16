@@ -70,6 +70,18 @@
         "west": "West",
         "northwest": "Northwest"
       }
+    },
+    "value_type": {
+      "options": {
+        "entity": "Read from an entity",
+        "slat_angle": "Computed slat angle"
+      }
+    },
+    "scale": {
+      "options": {
+        "half": "Half turn (0-90°)",
+        "full": "Full turn (0-180°)"
+      }
     }
   },
   "config_subentries": {
@@ -88,7 +100,13 @@
             "tolerance": "Sun sector tolerance",
             "travel_time": "Full travel time",
             "has_tilt": "Has a tilt (slat) axis",
-            "tilt_after_arrival": "Tilt only after the position finishes moving"
+            "tilt_after_arrival": "Tilt only after the position finishes moving",
+            "slat_distance": "Slat distance",
+            "slat_depth": "Slat depth"
+          },
+          "data_description": {
+            "slat_distance": "Measured on the blind itself, in millimetres: the gap between adjacent slats.",
+            "slat_depth": "Measured on the blind itself, in millimetres: the width of one slat."
           }
         },
         "reconfigure": {
@@ -99,7 +117,13 @@
             "tolerance": "Sun sector tolerance",
             "travel_time": "Full travel time",
             "has_tilt": "Has a tilt (slat) axis",
-            "tilt_after_arrival": "Tilt only after the position finishes moving"
+            "tilt_after_arrival": "Tilt only after the position finishes moving",
+            "slat_distance": "Slat distance",
+            "slat_depth": "Slat depth"
+          },
+          "data_description": {
+            "slat_distance": "Measured on the blind itself, in millimetres: the gap between adjacent slats.",
+            "slat_depth": "Measured on the blind itself, in millimetres: the width of one slat."
           }
         }
       },
@@ -149,19 +173,31 @@
       "step": {
         "user": {
           "title": "Add value",
-          "description": "A helper entity read at decision time, for use as !ref in an action.",
+          "description": "A helper entity read at decision time, for use as !ref in an action -- or a slat angle computed from solar geometry.",
           "data": {
             "id": "Value id",
+            "type": "Type",
             "entity": "Helper entity",
-            "default": "Default (used if the entity is missing or unreadable)"
+            "default": "Default (used if the entity is missing or unreadable, or when a computed slat angle has no answer)",
+            "scale": "Scale"
+          },
+          "data_description": {
+            "type": "Whether this value is read from a helper entity, or computed automatically from solar geometry.",
+            "scale": "For a computed slat angle: which half of the slat's travel counts as fully open. Ignored for a value that reads an entity."
           }
         },
         "reconfigure": {
           "title": "Edit value",
           "data": {
             "id": "Value id",
+            "type": "Type",
             "entity": "Helper entity",
-            "default": "Default (used if the entity is missing or unreadable)"
+            "default": "Default (used if the entity is missing or unreadable, or when a computed slat angle has no answer)",
+            "scale": "Scale"
+          },
+          "data_description": {
+            "type": "Whether this value is read from a helper entity, or computed automatically from solar geometry.",
+            "scale": "For a computed slat angle: which half of the slat's travel counts as fully open. Ignored for a value that reads an entity."
           }
         }
       },
@@ -564,9 +600,13 @@
           "travel_time": "Full travel time",
           "has_tilt": "Has a tilt (slat) axis",
           "tilt_after_arrival": "Tilt only after the position finishes moving",
+          "slat_distance": "Slat distance",
+          "slat_depth": "Slat depth",
           "members": "Blinds in this zone",
           "occupants": "Occupants",
-          "default": "Default (used if the entity is missing or unreadable)",
+          "type": "Type",
+          "default": "Default (used if the entity is missing or unreadable, or when a computed slat angle has no answer)",
+          "scale": "Scale",
           "condition": "Condition",
           "numeric_state_default": "Fallback for a numeric comparison",
           "order": "Order (lower is tried first; the fallback mode must have the highest order)",
@@ -574,6 +614,12 @@
           "when": "Inline condition (leave empty if using a named condition, or to make this the fallback mode)",
           "mode": "Mode",
           "zone": "Zone"
+        },
+        "data_description": {
+          "slat_distance": "Measured on the blind itself, in millimetres: the gap between adjacent slats.",
+          "slat_depth": "Measured on the blind itself, in millimetres: the width of one slat.",
+          "type": "Whether this value is read from a helper entity, or computed automatically from solar geometry.",
+          "scale": "For a computed slat angle: which half of the slat's travel counts as fully open. Ignored for a value that reads an entity."
         }
       },
       "add_rule_fields": {
@@ -614,9 +660,13 @@
           "travel_time": "Full travel time",
           "has_tilt": "Has a tilt (slat) axis",
           "tilt_after_arrival": "Tilt only after the position finishes moving",
+          "slat_distance": "Slat distance",
+          "slat_depth": "Slat depth",
           "members": "Blinds in this zone",
           "occupants": "Occupants",
-          "default": "Default (used if the entity is missing or unreadable)",
+          "type": "Type",
+          "default": "Default (used if the entity is missing or unreadable, or when a computed slat angle has no answer)",
+          "scale": "Scale",
           "condition": "Condition",
           "numeric_state_default": "Fallback for a numeric comparison",
           "order": "Order (lower is tried first; the fallback mode must have the highest order)",
@@ -624,6 +674,12 @@
           "when": "Inline condition (leave empty if using a named condition, or to make this the fallback mode)",
           "mode": "Mode",
           "zone": "Zone"
+        },
+        "data_description": {
+          "slat_distance": "Measured on the blind itself, in millimetres: the gap between adjacent slats.",
+          "slat_depth": "Measured on the blind itself, in millimetres: the width of one slat.",
+          "type": "Whether this value is read from a helper entity, or computed automatically from solar geometry.",
+          "scale": "For a computed slat angle: which half of the slat's travel counts as fully open. Ignored for a value that reads an entity."
         }
       },
       "remove": {

@@ -193,7 +193,30 @@ def test_add_form_shows_the_real_blind_schema_fields(subentry_entry, options_has
         "travel_time",
         "has_tilt",
         "tilt_after_arrival",
+        "slat_distance",
+        "slat_depth",
     }
+
+
+def test_add_value_slat_angle_creates_a_subentry_through_the_shared_form(
+    subentry_entry, options_hass
+):
+    """`_render_type_form` reuses `ValueSubentryFlowHandler`'s own schema/
+    `_to_data` unchanged (see the module docstring's "one owner, two doors"),
+    so choosing `slat_angle` here must produce exactly the same shape the
+    subentry flow itself produces -- no `entity` key at all.
+    """
+    entry = subentry_entry()
+    flow = _make_flow(options_hass(entry))
+    asyncio.run(flow.async_step_values(None))
+
+    submitted = {"id": "uhol", "type": "slat_angle", "default": 50, "scale": "half"}
+    result = _menu(asyncio.run(flow.async_step_add(submitted)))
+
+    assert result["step_id"] == "values"
+    [subentry] = entry.subentries.values()
+    assert subentry.subentry_type == VALUE
+    assert subentry.data == {"id": "uhol", "type": "slat_angle", "default": 50, "scale": "half"}
 
 
 def test_edit_prefills_from_the_picked_subentry_and_saves_changes(subentry_entry, options_hass):
