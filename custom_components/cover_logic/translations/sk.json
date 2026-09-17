@@ -710,7 +710,7 @@
         "data_description": {
           "dry_run": "Zapnuté: nič sa nehýbe, každý zamýšľaný príkaz ide do logu. Vypnuté: žalúzie sa naozaj hýbu. Prejaví sa okamžite, bez reloadu.",
           "fixture_path": "Nepovinné. Cesta k YAML fixture, proti ktorej kontrola driftu porovnáva živú konfiguráciu — pre dom, ktorý má checkout inde. Prázdne znamená porovnávať proti adresáru fixtures/ vedľa custom_components/, alebo proti ničomu, ak taký nie je.",
-          "dead_band": "O koľko bodov sa smie hlásená pozícia alebo náklon žalúzie líšiť od cieľa z pravidla, kým sa táto integrácia ešte neobťažuje poslať príkaz. Príliš malá hodnota spôsobí, že žalúzia, ktorej modul po pohybe hlási mierne nepresnú pozíciu, dostane príkaz na pohyb bez dôvodu. Prejaví sa okamžite, bez reloadu."
+          "dead_band": "O koľko bodov sa smie hlásená pozícia alebo náklon žalúzie líšiť od cieľa z pravidla, kým sa táto integrácia ešte neobťažuje poslať príkaz. Príliš malá hodnota spôsobí, že žalúzia, ktorej modul po pohybe hlási mierne nepresnú pozíciu, dostane príkaz na pohyb bez dôvodu. Príliš veľká hodnota spôsobí, že integrácia prestane čokoľvek opravovať. Prejaví sa okamžite, bez reloadu."
         }
       },
       "check_matrix": {

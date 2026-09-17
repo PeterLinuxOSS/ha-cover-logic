@@ -696,11 +696,12 @@ class ValueSubentryFlowHandler(_SubentryFlowBase):
         Per-type keys are written *only* for the type that reads them, the
         same discipline `GuardSubentryFlowHandler._to_data` follows for its
         own per-policy fields: `config_schema._VALUE_KEYS_ENTITY`/
-        `_VALUE_KEYS_SLAT` are two disjoint, closed key sets, and a stray
-        `entity` surviving into a `slat_angle` body (or vice versa) would
-        trip `_check_keys`'s "unknown key(s)" rather than the type mismatch
-        it actually is. `scale` is omitted entirely when left unset, never
-        written as `None` -- `_parse_slat_angle` already defaults it to
+        `_VALUE_KEYS_SLAT` share only `default` and `type` -- `entity` is
+        exclusive to the former, `scale`/`sun_entity`/etc. to the latter --
+        so a stray `entity` surviving into a `slat_angle` body (or vice
+        versa) would trip `_check_keys`'s "unknown key(s)" rather than the
+        type mismatch it actually is. `scale` is omitted entirely when left
+        unset, never written as `None` -- `_parse_slat_angle` already defaults it to
         `SCALE_HALF`, the same fallback a YAML file that omits it gets.
         """
         value_type = user_input.get(_VALUE_TYPE_FIELD, VALUE_TYPE_ENTITY)

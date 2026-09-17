@@ -710,7 +710,7 @@
         "data_description": {
           "dry_run": "On: nothing is moved, every intended command is written to the log. Off: covers really move. This takes effect immediately, with no reload.",
           "fixture_path": "Optional. Path to the YAML fixture the drift check compares the live configuration against, for a house that keeps its checkout somewhere else. Leave empty to compare against a fixtures/ directory next to custom_components/, or against nothing if there is none.",
-          "dead_band": "How many points a cover's reported position or tilt may differ from a rule's target before this integration bothers to send a command. Too small, and a blind whose module slightly mis-reports its own position after moving will be sent to move again for no reason. Takes effect immediately, with no reload."
+          "dead_band": "How many points a cover's reported position or tilt may differ from a rule's target before this integration bothers to send a command. Too small, and a blind whose module slightly mis-reports its own position after moving will be sent to move again for no reason. Too large, and the integration stops correcting anything. Takes effect immediately, with no reload."
         }
       },
       "check_matrix": {

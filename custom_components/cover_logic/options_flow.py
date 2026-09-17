@@ -1123,7 +1123,7 @@ class CoverLogicOptionsFlow(OptionsFlow):
                         OPT_DEAD_BAND, default=int(current_dead_band)
                     ): selector.NumberSelector(
                         selector.NumberSelectorConfig(
-                            min=0, max=50, step=1, mode=selector.NumberSelectorMode.BOX
+                            min=1, max=50, step=1, mode=selector.NumberSelectorMode.BOX
                         )
                     ),
                 }

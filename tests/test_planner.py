@@ -15,6 +15,7 @@ import itertools
 from hypothesis import given, settings, strategies as st
 import pytest
 
+from cover_logic import const
 from cover_logic.model import KEEP, Action, Blind, Ref
 from cover_logic.planner import (
     ARRIVAL_TIMEOUT_FACTOR,
@@ -384,6 +385,11 @@ def test_a_dead_band_of_seven_suppresses_the_2026_09_16_incident():
     # Same inputs, the fix: 7 > 7 is false, so nothing is sent to an
     # already-closed blind.
     assert plan(_blind(), 7, 0, Action(position=0, tilt=0), dead_band=7).commands == ()
+
+
+def test_the_plan_default_and_the_house_default_are_the_same_number():
+    # planner.DEAD_BAND vs const.DEFAULT_DEAD_BAND: a comment kept them equal, not a guarantee.
+    assert DEAD_BAND == const.DEFAULT_DEAD_BAND
 
 
 def test_the_arrival_tolerance_is_the_dead_band_that_was_passed_in():
