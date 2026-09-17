@@ -1024,11 +1024,41 @@ def test_execution_stores_a_new_fixture_path(subentry_entry, options_hass):
     assert entry.options == {"dry_run": True, "fixture_path": "/new/dom_peter.yaml"}
 
 
-def test_execution_form_declares_both_fields(subentry_entry, options_hass):
+def test_execution_form_declares_all_three_fields(subentry_entry, options_hass):
     entry = subentry_entry()
     flow = _make_flow(options_hass(entry))
 
-    assert _execution_field_names(flow) == {"dry_run", "fixture_path"}
+    assert _execution_field_names(flow) == {"dry_run", "fixture_path", "dead_band"}
+
+
+def test_execution_keeps_the_dead_band_when_the_field_is_not_submitted(
+    subentry_entry, options_hass
+):
+    """The dead band follows `fixture_path`'s own rule: an absent key is not a clear.
+
+    Driven the same way as the fixture-path counterpart above -- a caller
+    that only means to flip `dry_run` must not reset a value tuned for this
+    house's own motors back to the default.
+    """
+    entry = subentry_entry(options={"dry_run": True, "dead_band": 7})
+    flow = _make_flow(options_hass(entry))
+    asyncio.run(flow.async_step_execution(None))
+
+    _menu(asyncio.run(flow.async_step_execution({"dry_run": False})))
+
+    assert entry.options["dead_band"] == 7
+    assert entry.options["dry_run"] is False
+
+
+def test_execution_stores_a_new_dead_band(subentry_entry, options_hass):
+    """The incident this field exists for: 5 missed it, 7 catches it (`docs/rationale.md`)."""
+    entry = subentry_entry()
+    flow = _make_flow(options_hass(entry))
+    asyncio.run(flow.async_step_execution(None))
+
+    _menu(asyncio.run(flow.async_step_execution({"dry_run": True, "dead_band": 7})))
+
+    assert entry.options["dead_band"] == 7
 
 
 # ---------------------------------------------------------------------------

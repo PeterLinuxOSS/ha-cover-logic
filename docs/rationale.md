@@ -1324,6 +1324,26 @@ that decides "close enough, do not send the command" and the threshold that
 decides "it has arrived" ever differ, a blind can be simultaneously close
 enough to be skipped and never close enough to finish.
 
+### Why the dead band became an option
+
+Five points was not enough for every blind. 2026-09-16, 18:34:35: `peter_zal`
+was physically closed, but its module reported 7 -- that morning's rule had
+opened the slats (`tilt 0 -> 100`), and rotating the slats moves the motor,
+which re-estimates position. At dusk `vecer` asked for `position: 0` again;
+`7 > 5` was true, so `close_cover` went out to an already-closed blind. The
+same morning's drift on every tilt blind: peter 7, mimka 5, obyvacka_3 4,
+kuchyna_3_6 4 -- mimka missed the same false command by a single point, and a
+band of 7 (not 5) is what suppresses both.
+
+So `dead_band` is now a `plan()` parameter (default `planner.DEAD_BAND`, still
+5, so no install's behaviour changes on upgrade) fed live from `entry.options`
+(`const.OPT_DEAD_BAND`) the same way `dry_run` already was -- see
+`runner.CoverRunner._dead_band`. It could not become a second module constant
+next to `DEAD_BAND`: that is exactly the "two numbers that could drift apart"
+failure the paragraph above describes, so every call site must pass it
+explicitly, and `planner.py` itself never reads the option (it stays pure,
+`tests/test_purity.py`).
+
 ### Why a clamp is reported on the `Plan`, not on the command
 
 The engine deliberately does not clamp (see "Why the engine does not clamp
