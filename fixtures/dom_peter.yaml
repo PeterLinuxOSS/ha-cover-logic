@@ -174,11 +174,15 @@ conditions:
   # helper was derived from this one sensor too. The `for:` is not decoration:
   # this gates the only rule that opens the terrace fully, and a bed sensor
   # flickering for thirty seconds would move it twice. See docs/rationale.md.
+  # `default: false` is not a fallback reading -- `_state` never reads it -- but
+  # the one thing that stops an unplugged bed sensor blocking the terrace blind
+  # all night via the readiness gate. See docs/rationale.md.
   vstali:
     condition: state
     entity_id: binary_sensor.postel_occupancy_postel_2
     state: "off"
     for: 120
+    default: false
 
   doma_peter: {condition: state, entity_id: binary_sensor.peter_home, state: "on"}
   nie_peter:  {condition: state, entity_id: binary_sensor.peter_home, state: "off"}
