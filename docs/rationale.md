@@ -2117,3 +2117,14 @@ The engine deliberately does not clamp a resolved `Ref` -- a helper's value is
 the user's business, not the decision core's to second-guess. A slat angle in
 degrees past the slat's own travel is not a position the hardware has, so the
 degrees-to-percent conversion in `slat_angle_percent` clamps to `[0, 100]`.
+
+### Why a computed slat angle does not imply a computed height
+
+`basbruss/adaptive-cover`, the source of the tilt formula, also has one for
+vertical shading (`distance / cos(gamma) * tan(elevation)`, roughly: drop the
+blind until the slat's own shadow reaches the sill). It is deliberately not
+implemented here. Measurement on this house already closed that question:
+14 days of the 9-18 window showed 31 height changes, 19 of them by a person
+-- daytime height is a place a human wants to intervene, not one an algorithm
+should own. A computed height would re-open a fight the owner already
+decided, for a formula nobody asked for.
