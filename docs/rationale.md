@@ -2088,3 +2088,43 @@ or performance obstacle in this codebase as it stands today. This entry
 records that the omission was investigated and is being left exactly as
 found, rather than "fixed" or given a fabricated justification -- if the
 original reason resurfaces, it belongs here.
+
+## The migration gate
+
+### Zone `spalna` spans two facades
+
+The gate's claim is bit-for-bit fidelity to the old Jinja matrix, and until
+2026-09-18 it held on all 92 160 scenarios with no exceptions. It now carries
+exactly one: `cover.spalna_zaluzia_dvere_1` in mode `horucava`.
+
+The cause is a modelling difference, not a bug on either side. The matrix
+derives a single `strana` ('vychod'/'juh'/'zapad') from the sun azimuth and
+then asks it once *per zone* -- `'spalna': T50 if strana == 'zapad' else T100`.
+A facade is therefore a property of the zone. Here a facade is a property of
+the *blind* (`Blind.facade_azimuth`), and `sun_hits_target` is evaluated per
+blind.
+
+That difference is invisible while every blind in a zone faces the same wall,
+which is what the placeholder azimuths (90/180/270 for all ten blinds) made
+look true. Measuring them showed the building is rotated ~43 degrees off the
+cardinals and that zone `spalna` holds two blinds on two different walls:
+`spalna_zaluzia_2` at 313 and `spalna_zaluzia_dvere_1` at 223. One zone, one
+`strana`, two answers required -- the old model cannot express it, at any
+value of its constants.
+
+The engine's answer is the correct one: the door blind faces 223 and is lit
+around midday, not at sunset. The matrix shaded it roughly six hours late.
+
+Splitting the zone in two would make the gate green again, and was rejected.
+It would mean a new zone key in eight dicts inside a 367-line Jinja template
+that is now only a fallback, plus duplicated rules and subentries here -- all
+of it to satisfy a test, changing nothing in the house, because the engine
+already models this correctly without a split. Weakening the gate to an
+allowlist was rejected for the opposite reason: it would let the next
+divergence in unnoticed.
+
+What it does instead is pin the divergence as an exact set
+(`KNOWN_DIVERGENCES`) and assert equality with what the run actually observed.
+An extra divergence fails the gate as before; a *missing* one fails it too, so
+the exception cannot quietly outlive its cause. Both directions are covered by
+mutation, and the remaining nine blinds are still held to bit-for-bit parity.
