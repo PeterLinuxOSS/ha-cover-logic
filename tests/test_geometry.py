@@ -4,6 +4,9 @@ import pytest
 
 from cover_logic.geometry import gamma, slat_angle_percent
 
+INF = float("inf")
+NAN = float("nan")
+
 
 def test_gamma_is_zero_when_the_sun_is_dead_on_the_facade():
     assert gamma(180.0, 180.0) == pytest.approx(0.0)
@@ -52,6 +55,22 @@ def test_the_full_scale_halves_the_percentage_of_the_half_scale():
 )
 def test_no_answer_returns_none(elevation, gamma_deg, distance, depth, why):
     assert slat_angle_percent(elevation, gamma_deg, distance, depth) is None, why
+
+
+@pytest.mark.parametrize(
+    ("elevation", "gamma_deg", "why"),
+    [
+        (INF, 0.0, "infinite elevation"),
+        (-INF, 0.0, "negative infinite elevation"),
+        (NAN, 0.0, "elevation reported as NaN"),
+        (30.0, NAN, "gamma computed from a NaN azimuth"),
+    ],
+)
+def test_a_non_finite_reading_has_no_answer_rather_than_raising(elevation, gamma_deg, why):
+    # A broken sensor is an undefined case like any other, not a crash in the
+    # decision layer; `engine._resolve_slat_angle` screens the azimuth but its
+    # `elevation < _ELEVATION_MIN` guard is False for both inf and NaN.
+    assert slat_angle_percent(elevation, gamma_deg, 60.0, 80.0) is None, why
 
 
 def test_the_result_never_leaves_the_axis_range():

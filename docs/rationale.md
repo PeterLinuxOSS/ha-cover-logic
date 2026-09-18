@@ -2128,3 +2128,22 @@ implemented here. Measurement on this house already closed that question:
 -- daytime height is a place a human wants to intervene, not one an algorithm
 should own. A computed height would re-open a fight the owner already
 decided, for a formula nobody asked for.
+
+### Why `slat_angle_without_geometry` fires once per site, not once per blind
+
+The plan for this feature said "one warning per offending blind". The
+implementation emits one per *action site* per blind, and
+`test_a_slat_angle_in_a_force_guards_action_is_checked_too` asserts exactly
+that: a rule and a `force` guard both naming `cover.a` produce two warnings,
+not one.
+
+That is deliberate, and the plan's wording was superseded while writing it.
+The dedupe that matters is across *axes* -- the same computed value on both
+`position` and `tilt` is one missing-geometry fault, not two -- and that one
+is in place. Across sites it is not a duplicate: each site is a separate
+place that reads as if it tracks the sun and does not, and a reader fixing
+the guard should not have to infer it from a warning that names the rule.
+
+Recorded because an automated reviewer read the plan, found the mismatch and
+proposed collapsing the warnings -- which would delete a tested behaviour to
+satisfy a superseded sentence.
