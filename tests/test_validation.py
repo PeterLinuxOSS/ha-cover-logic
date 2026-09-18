@@ -612,28 +612,40 @@ def test_numeric_state_missing_default_is_an_error():
 
 
 def test_for_on_a_condition_that_ignores_it_is_a_warning():
-    """`conditions.py` reads `for:` in `_state` and nowhere else.
+    """`conditions.py` reads `for:` in `_state` and `_numeric_state`, nowhere else.
 
-    Verified against the engine before this check was written: a
-    `numeric_state` with `for: 600`, held five seconds, answers `True`. That is
-    a config that reads as debounced and is not -- and HA's own conditions take
-    no `for:` at all, so someone porting one here has every reason to expect
-    this to work everywhere. WARNING and not ERROR: the condition still
-    answers, just sooner than it reads.
+    A kind with no reading of its own has no dwell to measure, so a `for:` on
+    one is a config that reads as debounced and is not. WARNING and not ERROR:
+    the condition still answers, just sooner than it reads.
     """
     text = BASE.replace(
         'conditions:\n  vzdy: {condition: state, entity_id: x, state: "on"}',
-        "conditions:\n  vzdy: {condition: numeric_state, entity_id: sensor.t, "
-        "above: 25, default: 0, for: 600}",
+        'conditions:\n  vzdy: {condition: time, after: "12:30", for: 600}',
     )
     assert "for_ignored" in codes(text)
 
 
 def test_for_on_a_state_condition_is_not_flagged():
-    """The counter: `state` is the one type that does honour it."""
+    """The counter: `state` is one of the two types that honour it."""
     text = BASE.replace(
         'conditions:\n  vzdy: {condition: state, entity_id: x, state: "on"}',
         'conditions:\n  vzdy: {condition: state, entity_id: x, state: "on", for: 600}',
+    )
+    assert "for_ignored" not in codes(text)
+
+
+def test_for_on_a_numeric_state_is_not_flagged():
+    """The other counter, and the reason this check changed.
+
+    It used to name `numeric_state` as the type that *cannot* take `for:`,
+    because `World.since` dates the entity's last state change and a sensor
+    rewriting its value resets that while the threshold stays crossed. It now
+    takes one, measured off its own memory of when the threshold was crossed.
+    """
+    text = BASE.replace(
+        'conditions:\n  vzdy: {condition: state, entity_id: x, state: "on"}',
+        "conditions:\n  vzdy: {condition: numeric_state, entity_id: sensor.t, "
+        "above: 25, default: 0, for: 600}",
     )
     assert "for_ignored" not in codes(text)
 

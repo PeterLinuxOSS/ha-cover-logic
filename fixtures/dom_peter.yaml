@@ -3,19 +3,24 @@
 # dnešnej šablóny. Overuje to migračná brána v tests/parity/.
 
 blinds:
-  - {entity: cover.kuchyna_zaluzia_3_6,        facade_azimuth: 180}
-  - {entity: cover.obyvacka_zaluzia_3,         facade_azimuth: 180}
-  - {entity: cover.kuchyna_zaluzia_1_4,        facade_azimuth: 90}
-  - {entity: cover.kuchyna_zaluzia_2_5,        facade_azimuth: 90}
-  - {entity: cover.obyvacka_zaluzia_dvere_1_3, facade_azimuth: 270}
-  - {entity: cover.obyvacka_zaluzia_dvere_2,   facade_azimuth: 270}
-  - {entity: cover.peter_zal,                  facade_azimuth: 270}
-  - {entity: cover.mimka_zal,                  facade_azimuth: 270}
-  - {entity: cover.spalna_zaluzia_2,           facade_azimuth: 270}
-  - {entity: cover.spalna_zaluzia_dvere_1,     facade_azimuth: 270}
+  # Measured 2026-09-18 by map ruler and GPS compass, agreeing to 4 deg; the
+  # building is rotated ~43 deg off the cardinals, so the 90/180/270 that stood
+  # here were placeholders wrong by 35-60 deg.
+  - {entity: cover.kuchyna_zaluzia_3_6,        facade_azimuth: 223}
+  # Same wall as kuchyna_3_6; its own compass reading of 175 fits no wall and is unexplained.
+  - {entity: cover.obyvacka_zaluzia_3,         facade_azimuth: 223}
+  - {entity: cover.kuchyna_zaluzia_1_4,        facade_azimuth: 133}
+  - {entity: cover.kuchyna_zaluzia_2_5,        facade_azimuth: 133}
+  - {entity: cover.obyvacka_zaluzia_dvere_1_3, facade_azimuth: 313}
+  - {entity: cover.obyvacka_zaluzia_dvere_2,   facade_azimuth: 313}
+  - {entity: cover.peter_zal,                  facade_azimuth: 223}
+  - {entity: cover.mimka_zal,                  facade_azimuth: 223}
+  - {entity: cover.spalna_zaluzia_2,           facade_azimuth: 313}
+  - {entity: cover.spalna_zaluzia_dvere_1,     facade_azimuth: 223}
 
-# Zóny sedia na svetové strany 1:1, preto stačí facade_azimuth na žalúzii.
-# tolerance 45 dáva presne dnešné pásma: [45,135) [135,225) [225,315).
+# Zones do not follow the cardinals, so `facade_azimuth` on the blind is the
+# only statement of where a window looks; at tolerance 45 the three walls give
+# the sectors [88,178), [178,268) and [268,358).
 zones:
   spolocne: {members: [cover.kuchyna_zaluzia_3_6, cover.obyvacka_zaluzia_3]}
   kvety:    {members: [cover.kuchyna_zaluzia_1_4, cover.kuchyna_zaluzia_2_5]}
@@ -136,7 +141,14 @@ conditions:
           - condition: and
             conditions:
               - {condition: not, conditions: [!ref lux_neverim]}
+              # This threshold drives a 55-second motor off a sensor that wobbles
+              # across it at dusk: 2788/2813/2742 on 2026-09-18 closed the
+              # terrace, reopened it and closed it again. `for:` refuses a dusk
+              # the sensor has not confirmed (it samples every 120 s exactly, so
+              # 180 needs a second sample to agree); `latch: daily` refuses to
+              # take one back, because dusk does not un-happen.
               - {condition: numeric_state, default: 99999, below: 2800,
+                 for: 180, latch: daily,
                  entity_id: sensor.predsien_dvere_senzor_illuminance}
       - {condition: state, entity_id: input_boolean.cover_down, state: "off"}
       - {condition: time, after: "12:30"}

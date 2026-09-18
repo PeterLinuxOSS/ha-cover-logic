@@ -1126,7 +1126,7 @@ project does not own), and `_check_unknown_condition_refs` only checks ref
 deep inside `conditions.py` at evaluation time, far from the config that
 caused it.
 
-### Why `numeric_state` cannot take `for:`
+### Why `numeric_state` takes `for:`, and why it needs its own memory
 
 `conditions._state` honours `for:`; every other condition type accepts the key
 and ignores it, and `validation`'s `for_ignored` warns about that. The warning
@@ -1161,6 +1161,60 @@ open; the settle window (8 s) does not absorb it, since dropouts run 55-132 s.
 Over 14 days there were 33 dropouts and **none** fell in the 45 minutes before
 sunset -- they cluster in daylight hours. After sunset `vecer` is held by the
 sun window, so only the lux-led dusk of an overcast evening is exposed at all.
+
+**That bet lost on 2026-09-18, and this section is the reversal.** The
+exposure named above is exactly what happened: at dusk the lux sensor read
+2788, then 2813, then 2742, four minutes apart. `vecer` went true, false and
+true again, and each flip sent both terrace door blinds on a full 55-second
+run -- closed, reopened, closed. The reasoning was not wrong about the
+mechanism, only about the odds: it measured dropouts, which cluster in
+daylight, and did not measure a *bounce across the threshold itself*, which
+can only happen at dusk because that is the only time the value is near it.
+
+So the memory got built after all, and it is smaller than this section feared.
+`debounce.py` records one datetime per debounced threshold -- when its
+predicate last became true -- resolved once from the finished snapshot in
+`build_world` and folded into `World.numeric_since`. Resolving it there rather
+than inside the condition is what keeps the rules, the guards and the
+readiness gate reading one answer per evaluation instead of each recomputing
+against a half-built world.
+
+Two properties make it safe to add to a live decision core. A missing key
+means *no memory at all* and falls back to the plain threshold, so every
+existing test and all 92 160 migration-gate scenarios evaluate exactly as
+before -- the gate could not have caught a regression here, so the fallback
+had to make one impossible instead. And a true predicate keeps the moment it
+first became true rather than restamping it, so a dwell measures one unbroken
+stretch.
+
+The alternative the old text recommended -- "read a helper that latches the
+answer" -- is what the house did before phase 7, and undoing that was the
+whole point: a helper another automation maintains is exactly the dependency
+this integration exists to shed. The `for:` is stated where the threshold is.
+
+**`latch: daily` is the other half, and neither works alone.** A dwell only
+qualifies the *entry*: it refuses a dusk the sensor has not confirmed. It says
+nothing about the *exit*, so a wobble an hour later still reopens a house that
+was correctly closed -- and at dusk the value sits near the threshold for a
+long time, which is precisely when a wobble is likely. Dusk does not un-happen,
+so once the threshold has genuinely been crossed today it stays crossed until
+the local date rolls over. `Dwell.held_on` is a date for that reason: the reset
+is the calendar, not another timer that could itself be tuned wrong.
+
+The latch is deliberately useless on its own, and a test says so
+(`test_without_the_dwell_a_single_stray_reading_would_latch_the_whole_day`):
+without a dwell, one stray midday reading would hold the rest of the day.
+Entry qualified by `for:`, exit refused by `latch:` -- stating both is what
+makes either safe.
+
+A first attempt at the exit problem was a Schmitt trigger, `release_above`, and
+it had to be thrown away before it shipped. Measured over ten days, this lux
+sensor saturates around 3050 and never once exceeded 3200, so any release band
+wide enough to reject the dusk noise would never have been reached -- holding
+`vecer` true from 12:30 every day, which is the exact failure this fixture's
+own comment already warns about. Hysteresis needs headroom above the
+threshold; a saturating sensor has none. That is why the memory is a date and
+not a second number.
 
 ### Why an input guard over an earlier force is a warning
 
@@ -2147,3 +2201,42 @@ the guard should not have to infer it from a warning that names the rule.
 Recorded because an automated reviewer read the plan, found the mismatch and
 proposed collapsing the warnings -- which would delete a tested behaviour to
 satisfy a superseded sentence.
+## The migration gate
+
+### Zone `spalna` spans two facades
+
+The gate's claim is bit-for-bit fidelity to the old Jinja matrix, and until
+2026-09-18 it held on all 92 160 scenarios with no exceptions. It now carries
+exactly one: `cover.spalna_zaluzia_dvere_1` in mode `horucava`.
+
+The cause is a modelling difference, not a bug on either side. The matrix
+derives a single `strana` ('vychod'/'juh'/'zapad') from the sun azimuth and
+then asks it once *per zone* -- `'spalna': T50 if strana == 'zapad' else T100`.
+A facade is therefore a property of the zone. Here a facade is a property of
+the *blind* (`Blind.facade_azimuth`), and `sun_hits_target` is evaluated per
+blind.
+
+That difference is invisible while every blind in a zone faces the same wall,
+which is what the placeholder azimuths (90/180/270 for all ten blinds) made
+look true. Measuring them showed the building is rotated ~43 degrees off the
+cardinals and that zone `spalna` holds two blinds on two different walls:
+`spalna_zaluzia_2` at 313 and `spalna_zaluzia_dvere_1` at 223. One zone, one
+`strana`, two answers required -- the old model cannot express it, at any
+value of its constants.
+
+The engine's answer is the correct one: the door blind faces 223 and is lit
+around midday, not at sunset. The matrix shaded it roughly six hours late.
+
+Splitting the zone in two would make the gate green again, and was rejected.
+It would mean a new zone key in eight dicts inside a 367-line Jinja template
+that is now only a fallback, plus duplicated rules and subentries here -- all
+of it to satisfy a test, changing nothing in the house, because the engine
+already models this correctly without a split. Weakening the gate to an
+allowlist was rejected for the opposite reason: it would let the next
+divergence in unnoticed.
+
+What it does instead is pin the divergence as an exact set
+(`KNOWN_DIVERGENCES`) and assert equality with what the run actually observed.
+An extra divergence fails the gate as before; a *missing* one fails it too, so
+the exception cannot quietly outlive its cause. Both directions are covered by
+mutation, and the remaining nine blinds are still held to bit-for-bit parity.
