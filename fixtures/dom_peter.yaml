@@ -141,7 +141,11 @@ conditions:
           - condition: and
             conditions:
               - {condition: not, conditions: [!ref lux_neverim]}
-              - {condition: numeric_state, default: 99999, below: 2800,
+              # `for:` because this threshold drives a 55-second motor and the
+              # sensor wobbles across it at dusk -- 2788/2813/2742 on 2026-09-18
+              # closed the terrace, reopened it and closed it again. It samples
+              # every 120 s exactly, so 180 needs a second sample to agree.
+              - {condition: numeric_state, default: 99999, below: 2800, for: 180,
                  entity_id: sensor.predsien_dvere_senzor_illuminance}
       - {condition: state, entity_id: input_boolean.cover_down, state: "off"}
       - {condition: time, after: "12:30"}

@@ -1126,7 +1126,7 @@ project does not own), and `_check_unknown_condition_refs` only checks ref
 deep inside `conditions.py` at evaluation time, far from the config that
 caused it.
 
-### Why `numeric_state` cannot take `for:`
+### Why `numeric_state` takes `for:`, and why it needs its own memory
 
 `conditions._state` honours `for:`; every other condition type accepts the key
 and ignores it, and `validation`'s `for_ignored` warns about that. The warning
@@ -1161,6 +1161,36 @@ open; the settle window (8 s) does not absorb it, since dropouts run 55-132 s.
 Over 14 days there were 33 dropouts and **none** fell in the 45 minutes before
 sunset -- they cluster in daylight hours. After sunset `vecer` is held by the
 sun window, so only the lux-led dusk of an overcast evening is exposed at all.
+
+**That bet lost on 2026-09-18, and this section is the reversal.** The
+exposure named above is exactly what happened: at dusk the lux sensor read
+2788, then 2813, then 2742, four minutes apart. `vecer` went true, false and
+true again, and each flip sent both terrace door blinds on a full 55-second
+run -- closed, reopened, closed. The reasoning was not wrong about the
+mechanism, only about the odds: it measured dropouts, which cluster in
+daylight, and did not measure a *bounce across the threshold itself*, which
+can only happen at dusk because that is the only time the value is near it.
+
+So the memory got built after all, and it is smaller than this section feared.
+`debounce.py` records one datetime per debounced threshold -- when its
+predicate last became true -- resolved once from the finished snapshot in
+`build_world` and folded into `World.numeric_since`. Resolving it there rather
+than inside the condition is what keeps the rules, the guards and the
+readiness gate reading one answer per evaluation instead of each recomputing
+against a half-built world.
+
+Two properties make it safe to add to a live decision core. A missing key
+means *no memory at all* and falls back to the plain threshold, so every
+existing test and all 92 160 migration-gate scenarios evaluate exactly as
+before -- the gate could not have caught a regression here, so the fallback
+had to make one impossible instead. And a true predicate keeps the moment it
+first became true rather than restamping it, so a dwell measures one unbroken
+stretch.
+
+The alternative the old text recommended -- "read a helper that latches the
+answer" -- is what the house did before phase 7, and undoing that was the
+whole point: a helper another automation maintains is exactly the dependency
+this integration exists to shed. The `for:` is stated where the threshold is.
 
 ### Why an input guard over an earlier force is a warning
 

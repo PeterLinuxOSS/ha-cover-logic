@@ -202,6 +202,9 @@ class CoverLogicCoordinator:
         # for the same reason nothing else evaluates inline: the burst may
         # still be arriving.
         self._pending_event: WorldEvent | None = None
+        # When each debounced threshold became true, from the previous
+        # evaluation -- empty on the first, which is the plain threshold.
+        self._numeric_since: Mapping[str, Any] = {}
 
     def _build_runner(self) -> CoverRunner:
         """The executor, with its service caller bound to real `cover.*` services.
@@ -531,7 +534,11 @@ class CoverLogicCoordinator:
             # evaluation like any other, and must record `last_error`, tell the
             # listeners and re-arm the timer rather than escape into the settle
             # timer's own callback where none of that happens.
-            world = build_world(self.hass, self.config, event=pending)
+            world = build_world(
+                self.hass, self.config, event=pending, numeric_since=self._numeric_since
+            )
+            # Carried to the next evaluation: this is the engine's only memory.
+            self._numeric_since = world.numeric_since
             # Consumed by the snapshot that used it, not before: an event describes one
             # moment, so it must neither be reported twice nor be lost to a failed snapshot.
             self._pending_event = None
