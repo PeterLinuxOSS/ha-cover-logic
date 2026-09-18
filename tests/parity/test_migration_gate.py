@@ -18,6 +18,13 @@ pytestmark = pytest.mark.skipif(not bridge.available(), reason="needs /config/te
 
 MAX_REPORTED = 5
 
+# The one place the engine is deliberately unfaithful to the old matrix: the
+# matrix gives a whole zone one action, so a zone whose blinds face different
+# walls cannot be expressed in it at all. See `docs/rationale.md`, "Zone
+# `spalna` spans two facades". Pinned as an exact set, not an allowlist --
+# an extra divergence and a missing one both fail.
+KNOWN_DIVERGENCES = frozenset({("cover.spalna_zaluzia_dvere_1", "horucava")})
+
 
 @pytest.fixture(scope="module")
 def config(fixtures_dir):
@@ -47,8 +54,10 @@ def describe(stav) -> str:
     )
 
 
-def compare(config, scenarios_subset) -> list[str]:
+def compare(config, scenarios_subset) -> tuple[list[str], set[tuple[str, str]]]:
+    """Return (unexpected differences, the known divergences actually seen)."""
     problems: list[str] = []
+    seen: set[tuple[str, str]] = set()
     for stav in scenarios_subset:
         old = bridge.ciele(stav)
         for variant, event in (("state", Event()), ("arrival", Event(kind="arrival"))):
@@ -63,14 +72,17 @@ def compare(config, scenarios_subset) -> list[str]:
                 )
                 got = decision.targets[entity]
                 if got != want:
+                    if (entity, stav.rezim) in KNOWN_DIVERGENCES:
+                        seen.add((entity, stav.rezim))
+                        continue
                     problems.append(
                         f"\n  {describe(stav)}"
                         f"\n    {entity} [{variant}] new={got} old={want}"
                         f"\n    rule={decision.trace[entity]} raw={item}"
                     )
             if len(problems) >= MAX_REPORTED:
-                return problems
-    return problems
+                return problems, seen
+    return problems, seen
 
 
 def test_mode_matches_on_the_whole_space(config):
@@ -80,7 +92,7 @@ def test_mode_matches_on_the_whole_space(config):
 
 def test_parity_on_a_sample(config):
     """Fast feedback while iterating — every 97th scenario."""
-    problems = compare(config, scenarios()[::97])
+    problems, _ = compare(config, scenarios()[::97])
     assert not problems, "".join(problems)
 
 
@@ -89,8 +101,11 @@ def test_parity_on_the_whole_space(config):
     """THE GATE. All 92 160 scenarios, both variants, every entity."""
     all_scenarios = scenarios()
     assert len(all_scenarios) == 92_160, len(all_scenarios)
-    problems = compare(config, all_scenarios)
+    problems, seen = compare(config, all_scenarios)
     assert not problems, "".join(problems)
+    assert seen == KNOWN_DIVERGENCES, (
+        f"the pinned divergences no longer describe reality: seen={seen}"
+    )
 
 
 # `Stav.dvere` (the terrace door sensor) defaults to "on" (open) in every one
@@ -115,5 +130,5 @@ def test_parity_with_terrace_door_variants(config):
     whole_space` makes.
     """
     sample = [s.s(dvere=reading) for s in scenarios()[::97] for reading in DOOR_READINGS]
-    problems = compare(config, sample)
+    problems, _ = compare(config, sample)
     assert not problems, "".join(problems)

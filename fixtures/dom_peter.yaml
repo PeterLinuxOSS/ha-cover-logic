@@ -3,18 +3,26 @@
 # dnešnej šablóny. Overuje to migračná brána v tests/parity/.
 
 blinds:
-  - {entity: cover.kuchyna_zaluzia_3_6,        facade_azimuth: 180}
-  - {entity: cover.obyvacka_zaluzia_3,         facade_azimuth: 180}
-  - {entity: cover.kuchyna_zaluzia_1_4,        facade_azimuth: 90}
-  - {entity: cover.kuchyna_zaluzia_2_5,        facade_azimuth: 90}
-  - {entity: cover.obyvacka_zaluzia_dvere_1_3, facade_azimuth: 270}
-  - {entity: cover.obyvacka_zaluzia_dvere_2,   facade_azimuth: 270}
-  - {entity: cover.peter_zal,                  facade_azimuth: 270}
-  - {entity: cover.mimka_zal,                  facade_azimuth: 270}
-  - {entity: cover.spalna_zaluzia_2,           facade_azimuth: 270}
-  - {entity: cover.spalna_zaluzia_dvere_1,     facade_azimuth: 270}
+  # Azimuty zmerané 2026-09-18: pravítkom v mape po streche (stena B vyšla
+  # 133 pozdĺž, teda kolmica 223) a GPS kompasom vonku pri stene. Budova je
+  # pravouhlá na 0,5 deg, takže A a C sú dopočítané ako 223-90 a 223+90.
+  # Dovtedy tu boli odhadnuté svetové strany 90/180/270 a mýlili sa o 35-60 deg.
+  - {entity: cover.kuchyna_zaluzia_3_6,        facade_azimuth: 223}
+  # Na tej istej stene ako kuchyna_3_6 -- potvrdené užívateľom dvakrát a
+  # zodpovedá to zóne `spolocne`, ktorá ich odjakživa drží spolu. Kompas tu
+  # dal 175, čo do steny nesadne a zostáva nevysvetlené; viď dennik.
+  - {entity: cover.obyvacka_zaluzia_3,         facade_azimuth: 223}
+  - {entity: cover.kuchyna_zaluzia_1_4,        facade_azimuth: 133}
+  - {entity: cover.kuchyna_zaluzia_2_5,        facade_azimuth: 133}
+  - {entity: cover.obyvacka_zaluzia_dvere_1_3, facade_azimuth: 313}
+  - {entity: cover.obyvacka_zaluzia_dvere_2,   facade_azimuth: 313}
+  - {entity: cover.peter_zal,                  facade_azimuth: 223}
+  - {entity: cover.mimka_zal,                  facade_azimuth: 223}
+  - {entity: cover.spalna_zaluzia_2,           facade_azimuth: 313}
+  - {entity: cover.spalna_zaluzia_dvere_1,     facade_azimuth: 223}
 
-# Zóny sedia na svetové strany 1:1, preto stačí facade_azimuth na žalúzii.
+# Zóny NEsedia na svetové strany -- budova je pootočená o ~43 deg, preto je
+# facade_azimuth na žalúzii jediný zdroj pravdy o tom, kam okno hľadí.
 # tolerance 45 dáva presne dnešné pásma: [45,135) [135,225) [225,315).
 zones:
   spolocne: {members: [cover.kuchyna_zaluzia_3_6, cover.obyvacka_zaluzia_3]}
