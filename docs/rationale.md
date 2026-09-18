@@ -1207,6 +1207,17 @@ without a dwell, one stray midday reading would hold the rest of the day.
 Entry qualified by `for:`, exit refused by `latch:` -- stating both is what
 makes either safe.
 
+**The latch does not survive a restart, and that is a stated limitation rather
+than an oversight.** The memory lives in the coordinator's `_numeric_since` and
+this integration keeps no `Store` at all, so an unload, a reload or a Home
+Assistant restart empties it. What happens next is the fallback: the key is
+missing, so the threshold answers plainly. In the ordinary case that is right --
+after dark the reading is below the threshold, so plain and latched agree. It is
+wrong in one narrow window: dusk already earned, the reading currently back
+above the threshold, and a restart in those minutes. The sun arm holds `vecer`
+from sunset-20min regardless, so the exposure is the lux-led part of an overcast
+dusk only. Persisting one date per key would close it and is not done yet.
+
 A first attempt at the exit problem was a Schmitt trigger, `release_above`, and
 it had to be thrown away before it shipped. Measured over ten days, this lux
 sensor saturates around 3050 and never once exceeded 3200, so any release band

@@ -58,6 +58,11 @@ def test_the_bounds_are_part_of_the_key():
     assert threshold_key(DUSK) != threshold_key({**DUSK, "below": 2900})
 
 
+def test_the_fallback_is_part_of_the_key():
+    """Two conditions that disagree about an unreadable sensor are not one answer."""
+    assert threshold_key(DUSK) != threshold_key({**DUSK, "default": 0})
+
+
 @pytest.mark.parametrize(("value", "expected"), [(2799, True), (2801, False)])
 def test_with_no_memory_at_all_it_is_the_plain_threshold(value, expected):
     """Load-bearing: the pure tests and the migration gate evaluate exactly here.
@@ -108,7 +113,8 @@ def test_the_incident_this_exists_for():
     answers, _ = replay(DEBOUNCED, samples)
 
     # Dusk arrives once, at 18:36, instead of three times in four minutes: the
-    # bounce clears the memory, and the dwell restarts from the second descent.
+    # bounce clears the memory, the dwell restarts from the descent at 18:32,
+    # and 180 s of it have passed by the third sample after that.
     assert answers == [False, False, False, False, True]
 
 
