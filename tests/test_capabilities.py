@@ -104,6 +104,25 @@ rules:
     assert required_features(config)["cover.a"] == SET_POSITION
 
 
+def test_a_slat_angle_tilt_axis_needs_the_tilt_setter():
+    """A computed `slat_angle` is "could be any number", exactly like a `!ref`."""
+    config = load_config("""
+blinds:
+  - {entity: cover.a, facade_azimuth: 180, slat_distance: 60, slat_depth: 80}
+zones:
+  z: {members: [cover.a]}
+values:
+  angle: {type: slat_angle, default: 50}
+modes:
+  - {id: den}
+rules:
+  den.z:
+    - {then: {tilt: !ref angle}}
+""")
+
+    assert required_features(config)["cover.a"] & SET_TILT_POSITION
+
+
 def test_a_force_guard_counts_too():
     """The guard that fires when something has already gone wrong is the worst
     moment to discover the blind cannot carry its command out.

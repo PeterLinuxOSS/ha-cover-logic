@@ -14,7 +14,7 @@ from cover_logic.config_schema import (
     node_reads,
     referenced_entities,
 )
-from cover_logic.model import KEEP, UNSET, Action, Ref
+from cover_logic.model import KEEP, UNSET, Action, Ref, SlatAngle
 from cover_logic.world import World
 
 MINIMAL = """
@@ -964,3 +964,116 @@ def test_manual_detection_round_trips_through_dump():
         MINIMAL + "manual_detection:\n  ignore_while_on: [script.a, input_boolean.b]\n"
     )
     assert load_config(dump_config(original)) == original
+
+
+# ---------------------------------------------------------------------------
+# `values:` type `slat_angle` -- a computed value, not a helper read.
+# ---------------------------------------------------------------------------
+
+SLAT_ANGLE_CFG = """
+blinds:
+  - {entity: cover.a, facade_azimuth: 180, slat_distance: 60, slat_depth: 80}
+zones:
+  z: {members: [cover.a]}
+values:
+  angle: {type: slat_angle, default: 50}
+modes:
+  - {id: day}
+rules:
+  day.z:
+    - {then: {tilt: !ref angle}}
+"""
+
+
+def test_a_slat_angle_value_parses_with_its_defaults_filled_in():
+    config = load_config(SLAT_ANGLE_CFG)
+    value = config.values["angle"]
+    assert isinstance(value, SlatAngle)
+    assert value.default == 50
+    assert value.scale == "half"
+    assert value.sun_entity == "sun.sun"
+    assert value.azimuth_entity == "sensor.sun_solar_azimuth"
+    assert value.azimuth_attribute is None
+    assert value.elevation_entity == "sun.sun"
+    assert value.elevation_attribute == "elevation"
+    assert config.blinds["cover.a"].slat_distance == 60.0
+    assert config.blinds["cover.a"].slat_depth == 80.0
+
+
+def test_an_entity_value_still_parses_as_a_ref():
+    config = load_config(
+        """
+        blinds:
+          - {entity: cover.a}
+        zones:
+          z: {members: [cover.a]}
+        values:
+          pos: {entity: input_number.x, default: 34}
+        modes:
+          - {id: day}
+        rules:
+          day.z:
+            - {then: {position: !ref pos}}
+        """
+    )
+    assert config.values["pos"] == Ref(entity="input_number.x", default=34)
+
+
+def test_an_entity_value_accepts_its_own_documented_explicit_type():
+    """MODELS.md documents `type: entity`; the parser must not reject it."""
+    config = load_config(
+        """
+        blinds:
+          - {entity: cover.a}
+        zones:
+          z: {members: [cover.a]}
+        values:
+          pos: {type: entity, entity: input_number.x, default: 34}
+        modes:
+          - {id: day}
+        rules:
+          day.z:
+            - {then: {position: !ref pos}}
+        """
+    )
+    assert config.values["pos"] == Ref(entity="input_number.x", default=34)
+
+
+def test_a_slat_angle_value_rejects_an_entity_key():
+    bad = SLAT_ANGLE_CFG.replace(
+        "angle: {type: slat_angle, default: 50}",
+        "angle: {type: slat_angle, default: 50, entity: sensor.x}",
+    )
+    with pytest.raises(ConfigError, match="slat_angle"):
+        load_config(bad)
+
+
+def test_a_slat_angle_value_survives_a_dump_and_reload():
+    """Every field away from its default at once, not just `scale` -- a
+    broken conditional-omit on any other field would pass unnoticed
+    otherwise, since the emitted dict would just be missing that one key.
+    """
+    once = load_config(
+        SLAT_ANGLE_CFG.replace(
+            "angle: {type: slat_angle, default: 50}",
+            "angle: {type: slat_angle, default: 50, scale: full, "
+            "sun_entity: sun.other, azimuth_entity: sensor.az, "
+            "azimuth_attribute: azimuth, elevation_entity: sensor.elev, "
+            "elevation_attribute: value}",
+        )
+    )
+    twice = load_config(dump_config(once))
+    assert twice.values == once.values
+    assert twice.blinds == once.blinds
+
+
+def test_referenced_entities_covers_a_slat_angles_three_inputs():
+    """A `slat_angle` value used to be invisible to `referenced_reads`, so a
+    coordinator subscribing off `referenced_entities` never watched its inputs.
+    """
+    cfg = load_config(SLAT_ANGLE_CFG)
+    assert referenced_entities(cfg) >= {
+        "sun.sun",
+        "sensor.sun_solar_azimuth",
+        ("sun.sun", "elevation"),
+    }

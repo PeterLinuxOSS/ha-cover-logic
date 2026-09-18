@@ -29,6 +29,7 @@ from cover_logic.config_store import (
     rule_owner_ids,
     subentries_from_config,
 )
+from cover_logic.model import SlatAngle
 from cover_logic.validation import ERROR, validate
 
 
@@ -778,6 +779,40 @@ def test_subentries_from_config_round_trips_the_real_fixture(fixtures_dir):
     assert rebuilt == original
 
 
+def test_subentries_from_config_round_trips_a_slat_angle_value():
+    """A `slat_angle` value used to export as `{"entity": ref.entity, ...}`
+    unconditionally (`ref.entity` copied from the `Ref` shape), crashing with
+    `AttributeError` on anything but a `Ref`. Also checks the omit-when-
+    equal-to-default fields (`azimuth_attribute` set, `sun_entity` and
+    `elevation_entity` left at their defaults and therefore absent).
+    """
+    text = """
+blinds:
+  - {entity: cover.a, facade_azimuth: 180, slat_distance: 60, slat_depth: 80}
+zones:
+  z: {members: [cover.a]}
+values:
+  angle: {type: slat_angle, default: 50, scale: full, azimuth_attribute: azimuth}
+modes:
+  - {id: day}
+rules:
+  day.z:
+    - {then: {tilt: !ref angle}}
+"""
+    original = load_config(text)
+    items = subentries_from_config(original)
+    value_items = {data["id"]: data for kind, data in items if kind == "value"}
+    assert value_items["angle"] == {
+        "id": "angle",
+        "type": "slat_angle",
+        "default": 50,
+        "scale": "full",
+        "azimuth_attribute": "azimuth",
+    }
+    rebuilt = config_from_subentries(entry_from_subentry_items(items))
+    assert rebuilt == original
+
+
 def test_subentries_from_config_rejects_a_bare_list_as_a_named_conditions_body():
     """`Config.conditions` is typed `dict[str, dict]` (see `model.Config`),
     but `load_config` does not itself enforce that a named condition's body
@@ -1004,3 +1039,86 @@ manual_detection:
     without = [pair for pair in items if pair[0] != "manual_detection"]
     assert any(kind == "manual_detection" for kind, _data in items)
     assert config_from_subentries(entry_from_subentry_items(without)) != original
+
+
+# ---------------------------------------------------------------------------
+# Task 6: a `slat_angle` value and blind slat geometry, entered through the
+# UI's subentry shape -- pinning the data contract this module needs no
+# change to honour (see `config_store.py`'s own module docstring history and
+# this task's report: `_build_values` already strips `id` and hands the rest
+# to `config_schema._parse_values`, which dispatches on `type`).
+# ---------------------------------------------------------------------------
+
+
+def test_a_slat_angle_value_subentry_builds_the_same_object_as_yaml():
+    """One owner, two doors: the UI path and the YAML path must agree.
+
+    The task brief's own version of this test passed a `dict` straight to
+    `load_config`, and wrote `rules:` as a bare list -- neither is the shape
+    `load_config` actually reads (`text: str`, parsed as YAML;
+    `rules:` keyed `"<mode>.<zone>"`, per `MODELS.md` and `config_schema.
+    load_config`'s own body). Rewritten as real YAML text below; the values
+    and the assertions are unchanged from the brief.
+    """
+    from_yaml = load_config(
+        """
+blinds:
+  - {entity: cover.a, facade_azimuth: 180, slat_distance: 60, slat_depth: 80}
+zones:
+  z: {members: [cover.a]}
+values:
+  angle: {type: slat_angle, default: 50, scale: half}
+modes:
+  - {id: day}
+rules:
+  day.z:
+    - {then: {tilt: !ref angle}}
+"""
+    )
+    assert from_yaml.values["angle"] == SlatAngle(
+        default=50,
+        scale="half",
+        sun_entity="sun.sun",
+        azimuth_entity="sensor.sun_solar_azimuth",
+        azimuth_attribute=None,
+        elevation_entity="sun.sun",
+        elevation_attribute="elevation",
+    )
+    assert from_yaml.blinds["cover.a"].slat_distance == 60.0
+
+
+def test_a_slat_angle_value_and_blind_geometry_build_from_subentries_too():
+    """The subentry door, not the YAML door: no `config_store` change needed.
+
+    `_build_values` (`config_store.py`) strips `id` off a `value` subentry
+    and hands the rest straight to `config_schema._parse_values`, which
+    already dispatches on `type` -- and `_build_blinds` passes a `blind`
+    subentry's whole `data` to `_parse_blind` unchanged, which already reads
+    `slat_distance`/`slat_depth`. This is the proof, not an assumption.
+    """
+    entry = make_entry(
+        [
+            (
+                "blind",
+                {"entity": "cover.a", "facade_azimuth": 180, "slat_distance": 60, "slat_depth": 80},
+            ),
+            ("zone", {"id": "z", "members": ["cover.a"]}),
+            ("value", {"id": "angle", "type": "slat_angle", "default": 50}),
+            ("mode", {"id": "day", "order": 0}),
+            ("rule", {"mode": "day", "zone": "z", "order": 0, "then": {"tilt": {"ref": "angle"}}}),
+        ]
+    )
+
+    config = config_from_subentries(entry)
+
+    assert config.values["angle"] == SlatAngle(
+        default=50,
+        scale="half",
+        sun_entity="sun.sun",
+        azimuth_entity="sensor.sun_solar_azimuth",
+        azimuth_attribute=None,
+        elevation_entity="sun.sun",
+        elevation_attribute="elevation",
+    )
+    assert config.blinds["cover.a"].slat_distance == 60.0
+    assert config.blinds["cover.a"].slat_depth == 80.0

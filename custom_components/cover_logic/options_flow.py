@@ -74,12 +74,13 @@ the menu.
 **One screen writes `entry.options`; the rest write subentries.** Almost all
 of this flow's point is to mutate *subentries*, which live independently of
 `ConfigEntry.options`, and until phase 3 gave this integration an executor
-nothing here touched options at all. `async_step_execution` is the exception
-and, so far, the only one: `dry_run` (`const.OPT_DRY_RUN`) is an operational
-option of the installation, not a fact about the house, and it belongs in
-options precisely because a write there reaches `runner.py` without a reload
--- see `const.OPT_DRY_RUN`'s own comment for why not `entry.data`. It is
-written with `async_update_entry(options=...)`, not `self.async_create_entry`:
+nothing here touched options at all. `async_step_execution` is the exception:
+`dry_run` (`const.OPT_DRY_RUN`) and `dead_band` (`const.OPT_DEAD_BAND`) are
+operational options of the installation, not facts about the house, and they
+belong in options precisely because a write there reaches `runner.py`/
+`planner.py` without a reload -- see each constant's own comment for why not
+`entry.data`. It is written with `async_update_entry(options=...)`, not
+`self.async_create_entry`:
 this flow never finishes. Every screen either shows another form/menu or loops
 back to one, so it simply stays open (as any menu-driven UI does) until the
 user closes it -- Home Assistant's own generic "flow aborted by the user"
@@ -114,7 +115,9 @@ from .config_store import (
 from .conformance import diff_configs, repo_fixture_path
 from .const import (
     DEFAULT_CONFIG_PATH,
+    DEFAULT_DEAD_BAND,
     DEFAULT_DRY_RUN,
+    OPT_DEAD_BAND,
     OPT_DRY_RUN,
     OPT_FIXTURE_PATH,
     RULE_DEFAULT_ZONE,
@@ -1074,13 +1077,15 @@ class CoverLogicOptionsFlow(OptionsFlow):
     async def async_step_execution(
         self, user_input: dict[str, Any] | None = None
     ) -> dict[str, Any]:
-        """Turn `runner.py`'s hands on or off, without a reload.
+        """Turn `runner.py`'s hands on or off, and tune the dead band, without a reload.
 
         The only screen in this flow that writes `ConfigEntry.options` rather
         than a subentry -- see this module's own docstring and
         `const.OPT_DRY_RUN` for why this one switch belongs there. The write is
         a merge into whatever options already exist, not a replacement: a
         future second option must not be erased by someone toggling this one.
+        `dead_band` follows the same "absent key means left alone" rule as
+        `fixture_path`, one field down.
         """
         entry = self.config_entry
         if user_input is not None:
@@ -1098,10 +1103,13 @@ class CoverLogicOptionsFlow(OptionsFlow):
                     options[OPT_FIXTURE_PATH] = path
                 else:
                     options.pop(OPT_FIXTURE_PATH, None)
+            if OPT_DEAD_BAND in user_input:
+                options[OPT_DEAD_BAND] = int(user_input[OPT_DEAD_BAND])
             self.hass.config_entries.async_update_entry(entry, options=options)
             return await self._show_main_menu()
 
         current = entry.options.get(OPT_DRY_RUN, DEFAULT_DRY_RUN)
+        current_dead_band = entry.options.get(OPT_DEAD_BAND, DEFAULT_DEAD_BAND)
         return self.async_show_form(
             step_id="execution",
             data_schema=vol.Schema(
@@ -1111,6 +1119,13 @@ class CoverLogicOptionsFlow(OptionsFlow):
                         OPT_FIXTURE_PATH,
                         description={"suggested_value": entry.options.get(OPT_FIXTURE_PATH, "")},
                     ): selector.TextSelector(),
+                    vol.Optional(
+                        OPT_DEAD_BAND, default=int(current_dead_band)
+                    ): selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=1, max=50, step=1, mode=selector.NumberSelectorMode.BOX
+                        )
+                    ),
                 }
             ),
         )

@@ -9,8 +9,17 @@ from dataclasses import dataclass
 
 from .conditions import evaluate_condition
 from .const import RULE_DEFAULT_ZONE
-from .model import Action, Config, Ref, Value, Zone
+from .geometry import gamma, slat_angle_percent
+from .model import Action, Config, Ref, SlatAngle, Value, Zone
 from .world import Target, World
+
+# A valid compass azimuth range, mirroring `conditions._AZIMUTH_MIN/_MAX`; an
+# unreadable azimuth entity defaults outside it, below.
+_AZIMUTH_MIN = 0.0
+_AZIMUTH_MAX = 360.0
+# The lowest physically possible sun elevation; an unreadable elevation entity
+# defaults well below it, below.
+_ELEVATION_MIN = -90.0
 
 
 class EngineError(Exception):
@@ -237,31 +246,68 @@ def _match_rules(
         label = f"{key}#{index}"
         if rule.name:
             label = f"{label} {rule.name}"
-        return resolve_action(rule.then, world), label
+        return resolve_action(rule.then, world, target), label
 
     return None
 
 
-def resolve_action(action: Action, world: World) -> Action:
+def resolve_action(action: Action, world: World, target: Target | None) -> Action:
     """Resolve both axes of `action` against `world`, leaving `KEEP` alone.
 
     Public because a `force` guard's `then` has to be resolved the same way a
     rule's `then` is -- same truncation, same unclamped result. Two spellings
     of that would be two answers to "what does `!ref` mean", and only one of
     them would be parity-checked.
+
+    `target` is what makes a computed value target-relative; `None` means no
+    blind is in hand, which is a fall back to the value's own `default`.
     """
     return Action(
-        position=_resolve_value(action.position, world),
-        tilt=_resolve_value(action.tilt, world),
+        position=_resolve_value(action.position, world, target),
+        tilt=_resolve_value(action.tilt, world, target),
     )
 
 
-def _resolve_value(value: Value, world: World) -> Value:
-    """Resolve a `Ref` to the helper's current value, truncated and unclamped.
+def _resolve_value(value: Value, world: World, target: Target | None) -> Value:
+    """Resolve a `Ref` or `SlatAngle`, truncated and unclamped.
 
     See docs/rationale.md -- "Why `_resolve_value` truncates instead of
     rounding" and "Why the engine does not clamp resolved values to 0..100".
     """
     if isinstance(value, Ref):
         return int(world.number(value.entity, default=float(value.default)))
+    if isinstance(value, SlatAngle):
+        return _resolve_slat_angle(value, world, target)
     return value
+
+
+def _resolve_slat_angle(value: SlatAngle, world: World, target: Target | None) -> int:
+    """The computed angle, or the value's `default` when the geometry has no answer."""
+    blind = None if target is None else target.blind
+    if (
+        blind is None
+        or blind.facade_azimuth is None
+        or blind.slat_distance is None
+        or blind.slat_depth is None
+        or world.state(value.sun_entity) != "above_horizon"
+    ):
+        return value.default
+
+    azimuth = world.number(value.azimuth_entity, default=-1.0, attribute=value.azimuth_attribute)
+    if not _AZIMUTH_MIN <= azimuth < _AZIMUTH_MAX:
+        return value.default
+    elevation = world.number(
+        value.elevation_entity, default=-999.0, attribute=value.elevation_attribute
+    )
+    # -999.0 also fails slat_angle_percent's own elevation<=0 check, so this sentinel needs no test.
+    if elevation < _ELEVATION_MIN:
+        return value.default
+
+    computed = slat_angle_percent(
+        elevation,
+        gamma(azimuth, blind.facade_azimuth),
+        blind.slat_distance,
+        blind.slat_depth,
+        value.scale,
+    )
+    return value.default if computed is None else computed

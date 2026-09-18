@@ -28,7 +28,7 @@ from cover_logic.const import (
 )
 from cover_logic.engine import Decision, evaluate
 from cover_logic.guards import NO_GUARD, GuardError, Screening, guard_blinds, review, screen
-from cover_logic.model import KEEP, Action, Ref
+from cover_logic.model import KEEP, Action, Ref, SlatAngle
 from cover_logic.validation import ERROR, validate
 from cover_logic.world import World
 
@@ -470,6 +470,24 @@ def test_a_decision_that_still_holds_a_ref_is_refused_not_guessed(house):
         review(house, w, unresolved, {BEDROOM_DOOR: 100}, screen(house, w))
 
 
+def test_a_decision_that_still_holds_a_slat_angle_is_refused_not_guessed(house):
+    # Same invariant as the `Ref` case above: `_direction_matches` must not
+    # fall through to comparing a `SlatAngle` object against an int position.
+    w = world(**{"binary_sensor.spalna_dvere_senzor_2": "on"})
+    unresolved_angle = SlatAngle(
+        default=50,
+        scale="half",
+        sun_entity="sun.sun",
+        azimuth_entity="sensor.sun_solar_azimuth",
+        azimuth_attribute=None,
+        elevation_entity="sun.sun",
+        elevation_attribute="elevation",
+    )
+    unresolved = decide(**{BEDROOM_DOOR: Action(position=unresolved_angle)})
+    with pytest.raises(GuardError, match="unresolved"):
+        review(house, w, unresolved, {BEDROOM_DOOR: 100}, screen(house, w))
+
+
 # --------------------------------------------------------------------------
 # First match wins, in written order.
 # --------------------------------------------------------------------------
@@ -565,6 +583,39 @@ def test_force_replaces_the_action_and_resolves_its_refs(house):
     assert outcome.action == Action(position=41, tilt=KEEP)
     assert result.actions[FLOWERS_A] == Action(position=41, tilt=KEEP)
     assert outcome.deferral is None
+
+
+def test_a_force_guards_slat_angle_resolves_per_blind():
+    """A `force` guard's `then` is resolved the same target-relative way a rule's is."""
+    config = load_config("""
+blinds:
+  - {entity: cover.south, facade_azimuth: 180, slat_distance: 60, slat_depth: 80}
+  - {entity: cover.west, facade_azimuth: 270, slat_distance: 60, slat_depth: 80}
+zones:
+  z: {members: [cover.south, cover.west]}
+values:
+  angle: {type: slat_angle, default: 7}
+modes: [{id: m}]
+conditions: {}
+rules:
+  m.z: [{then: {position: keep, tilt: keep}}]
+guards:
+  - {name: force angle, policy: force, then: {tilt: !ref angle}}
+""")
+    w = World(
+        states={"sun.sun": "above_horizon", "sensor.sun_solar_azimuth": "180"},
+        attributes={("sun.sun", "elevation"): "40"},
+    )
+    decision = evaluate(config, w)
+    result = guarded(config, w, decision, {"cover.south": None, "cover.west": None})
+
+    south = result.outcomes["cover.south"].action.tilt
+    west = result.outcomes["cover.west"].action.tilt
+    # The sun is on the south facade and edge-on-or-behind the west one.
+    assert isinstance(south, int)
+    assert south > 0
+    assert west == 7
+    assert south != west
 
 
 def test_a_defer_carries_its_whole_deadline_not_just_a_verdict(house):

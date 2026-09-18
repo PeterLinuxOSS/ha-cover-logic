@@ -1324,6 +1324,26 @@ that decides "close enough, do not send the command" and the threshold that
 decides "it has arrived" ever differ, a blind can be simultaneously close
 enough to be skipped and never close enough to finish.
 
+### Why the dead band became an option
+
+Five points was not enough for every blind. 2026-09-16, 18:34:35: `peter_zal`
+was physically closed, but its module reported 7 -- that morning's rule had
+opened the slats (`tilt 0 -> 100`), and rotating the slats moves the motor,
+which re-estimates position. At dusk `vecer` asked for `position: 0` again;
+`7 > 5` was true, so `close_cover` went out to an already-closed blind. The
+same morning's drift on every tilt blind: peter 7, mimka 5, obyvacka_3 4,
+kuchyna_3_6 4 -- mimka missed the same false command by a single point, and a
+band of 7 (not 5) is what suppresses both.
+
+So `dead_band` is now a `plan()` parameter (default `planner.DEAD_BAND`, still
+5, so no install's behaviour changes on upgrade) fed live from `entry.options`
+(`const.OPT_DEAD_BAND`) the same way `dry_run` already was -- see
+`runner.CoverRunner._dead_band`. It could not become a second module constant
+next to `DEAD_BAND`: that is exactly the "two numbers that could drift apart"
+failure the paragraph above describes, so every call site must pass it
+explicitly, and `planner.py` itself never reads the option (it stays pure,
+`tests/test_purity.py`).
+
 ### Why a clamp is reported on the `Plan`, not on the command
 
 The engine deliberately does not clamp (see "Why the engine does not clamp
@@ -2088,3 +2108,42 @@ or performance obstacle in this codebase as it stands today. This entry
 records that the omission was investigated and is being left exactly as
 found, rather than "fixed" or given a fabricated justification -- if the
 original reason resurfaces, it belongs here.
+
+## `geometry.py`
+
+### Why the computed slat angle clamps when the engine does not
+
+The engine deliberately does not clamp a resolved `Ref` -- a helper's value is
+the user's business, not the decision core's to second-guess. A slat angle in
+degrees past the slat's own travel is not a position the hardware has, so the
+degrees-to-percent conversion in `slat_angle_percent` clamps to `[0, 100]`.
+
+### Why a computed slat angle does not imply a computed height
+
+`basbruss/adaptive-cover`, the source of the tilt formula, also has one for
+vertical shading (`distance / cos(gamma) * tan(elevation)`, roughly: drop the
+blind until the slat's own shadow reaches the sill). It is deliberately not
+implemented here. Measurement on this house already closed that question:
+14 days of the 9-18 window showed 31 height changes, 19 of them by a person
+-- daytime height is a place a human wants to intervene, not one an algorithm
+should own. A computed height would re-open a fight the owner already
+decided, for a formula nobody asked for.
+
+### Why `slat_angle_without_geometry` fires once per site, not once per blind
+
+The plan for this feature said "one warning per offending blind". The
+implementation emits one per *action site* per blind, and
+`test_a_slat_angle_in_a_force_guards_action_is_checked_too` asserts exactly
+that: a rule and a `force` guard both naming `cover.a` produce two warnings,
+not one.
+
+That is deliberate, and the plan's wording was superseded while writing it.
+The dedupe that matters is across *axes* -- the same computed value on both
+`position` and `tilt` is one missing-geometry fault, not two -- and that one
+is in place. Across sites it is not a duplicate: each site is a separate
+place that reads as if it tracks the sun and does not, and a reader fixing
+the guard should not have to infer it from a warning that names the rule.
+
+Recorded because an automated reviewer read the plan, found the mismatch and
+proposed collapsing the warnings -- which would delete a tested behaviour to
+satisfy a superseded sentence.

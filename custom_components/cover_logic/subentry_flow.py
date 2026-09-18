@@ -59,7 +59,7 @@ from homeassistant import config_entries
 from homeassistant.helpers import selector
 import voluptuous as vol
 
-from .config_schema import ConfigError
+from .config_schema import VALUE_TYPE_ENTITY, VALUE_TYPE_SLAT_ANGLE, ConfigError
 from .config_store import (
     _ID_KEY,
     BLIND,
@@ -91,6 +91,7 @@ from .const import (
     GUARD_TIMEOUTS,
     RULE_DEFAULT_ZONE,
 )
+from .geometry import SCALES
 from .validation import ERROR, Problem, validate
 
 _LOGGER = logging.getLogger(__name__)
@@ -571,6 +572,20 @@ _BLIND_SCHEMA = vol.Schema(
         ),
         vol.Optional("has_tilt", default=True): selector.BooleanSelector(),
         vol.Optional("tilt_after_arrival", default=True): selector.BooleanSelector(),
+        # Measured on the blind itself, in millimetres. Both optional and
+        # left with no default (like `facade_azimuth` above): a value's own
+        # `slat_angle` type falls back to "unknown" geometry, not a
+        # fabricated zero, when either is left unset -- see `model.Blind`.
+        vol.Optional("slat_distance"): selector.NumberSelector(
+            selector.NumberSelectorConfig(
+                min=0, max=500, step=1, unit_of_measurement="mm", mode=_BOX
+            ),
+        ),
+        vol.Optional("slat_depth"): selector.NumberSelector(
+            selector.NumberSelectorConfig(
+                min=0, max=500, step=1, unit_of_measurement="mm", mode=_BOX
+            ),
+        ),
     }
 )
 
@@ -590,25 +605,78 @@ class BlindSubentryFlowHandler(_SubentryFlowBase):
         """Return the static blind schema; it needs nothing from `entry`."""
         return _BLIND_SCHEMA
 
+    def _to_data(self, entry: Any, user_input: dict[str, Any]) -> dict[str, Any]:
+        """Drop `slat_distance`/`slat_depth` when submitted as `None`.
 
+        Both are `vol.Optional` with no default, like `facade_azimuth`
+        above -- omitted when never touched, but a form that clears a
+        previously-set value on edit can submit the key back as `None`
+        rather than dropping it. Writing that through would show up as
+        drift against a fixture that simply omits the key (see
+        `tests/parity/test_subentry_conformance.py`). `entry` is unused;
+        see `_SubentryFlowBase._to_data`'s own docstring for why the
+        signature stays uniform regardless.
+        """
+        data = dict(user_input)
+        for key in ("slat_distance", "slat_depth"):
+            if data.get(key) is None:
+                data.pop(key, None)
+        return data
+
+
+_VALUE_TYPE_FIELD = "type"
+
+# One schema for both `value` kinds, not a picker step routing to two forms:
+# `options_flow._render_type_form` renders and submits a type's whole form in
+# one round trip, with no step of its own to ask "which kind first" the way
+# `RuleSubentryFlowHandler`/`GuardSubentryFlowHandler` do -- see those two
+# classes' own docstrings for why that split exists for *them* (a later
+# field's very existence depends on an earlier answer HA cannot yet know when
+# it builds the schema) and why it cannot be reused here without a second
+# copy of that machinery in `options_flow.py`, a file this task does not
+# touch. `entity` is `Optional`, not `Required`, so a `slat_angle` submission
+# -- which has no entity at all -- is not refused at the schema layer; `_to_
+# data` below is what actually enforces "this field belongs to that type",
+# by simply not carrying it into `data` for the type that does not read it.
 _VALUE_SCHEMA = vol.Schema(
     {
         vol.Required(_ID_KEY): selector.TextSelector(),
-        vol.Required("entity"): selector.EntitySelector(),
+        vol.Optional(_VALUE_TYPE_FIELD, default=VALUE_TYPE_ENTITY): selector.SelectSelector(
+            selector.SelectSelectorConfig(
+                options=[VALUE_TYPE_ENTITY, VALUE_TYPE_SLAT_ANGLE],
+                sort=False,
+                translation_key="value_type",
+            )
+        ),
+        vol.Optional("entity"): selector.EntitySelector(),
         vol.Optional("default", default=0): selector.NumberSelector(
             selector.NumberSelectorConfig(min=0, max=100, step=1, mode=_BOX)
+        ),
+        vol.Optional("scale"): selector.SelectSelector(
+            selector.SelectSelectorConfig(options=list(SCALES), sort=False, translation_key="scale")
         ),
     }
 )
 
 
 class ValueSubentryFlowHandler(_SubentryFlowBase):
-    """Add, edit or remove one `value` subentry.
+    """Add, edit or remove one `value` subentry: an `entity` reference or a computed `slat_angle`.
 
     `entity` has no domain filter: a `values:` entry reads a helper's numeric
     state (`engine._resolve_value`), and which domain that helper lives in
     (`input_number`, `number`, a plain `sensor`, ...) is a choice this
     project leaves to the house, not something this form should narrow.
+
+    `slat_angle` needs none of that -- it is computed from solar geometry at
+    evaluation time (`geometry.slat_angle_percent`), not read from a helper --
+    so its only fields are `default` (the fallback when the geometry has no
+    answer) and `scale` (which half of the slat's travel counts as "flat";
+    see `geometry.py`'s own module docstring). `sun_entity`/`azimuth_entity`/
+    `elevation_entity`/the two `_attribute` fields exist in `config_schema.
+    _parse_slat_angle` and in YAML, but not here: every house Cover Logic
+    manages uses `sun.sun` and its own `solar_azimuth` sensor, and exposing
+    six more fields on this form for an override no house has ever needed
+    would cost more in clutter than it would ever save in flexibility.
     """
 
     subentry_type = VALUE
@@ -617,6 +685,55 @@ class ValueSubentryFlowHandler(_SubentryFlowBase):
     def _build_schema(self, entry: Any) -> vol.Schema:
         """Return the static value schema; it needs nothing from `entry`."""
         return _VALUE_SCHEMA
+
+    def _to_data(self, entry: Any, user_input: dict[str, Any]) -> dict[str, Any]:
+        """Split the one shared form into the keys `_parse_entity_value`/`_parse_slat_angle` read.
+
+        `entry` is unused (this type needs nothing from it) -- see
+        `_SubentryFlowBase._to_data`'s own docstring for why the signature is
+        uniform across every subclass regardless.
+
+        Per-type keys are written *only* for the type that reads them, the
+        same discipline `GuardSubentryFlowHandler._to_data` follows for its
+        own per-policy fields: `config_schema._VALUE_KEYS_ENTITY`/
+        `_VALUE_KEYS_SLAT` share only `default` and `type` -- `entity` is
+        exclusive to the former, `scale`/`sun_entity`/etc. to the latter --
+        so a stray `entity` surviving into a `slat_angle` body (or vice
+        versa) would trip `_check_keys`'s "unknown key(s)" rather than the
+        type mismatch it actually is. `scale` is omitted entirely when left
+        unset, never written as `None` -- `_parse_slat_angle` already defaults it to
+        `SCALE_HALF`, the same fallback a YAML file that omits it gets.
+        """
+        value_type = user_input.get(_VALUE_TYPE_FIELD, VALUE_TYPE_ENTITY)
+        data: dict[str, Any] = {
+            _ID_KEY: user_input[_ID_KEY],
+            "default": user_input.get("default", 0),
+        }
+        if value_type == VALUE_TYPE_SLAT_ANGLE:
+            data[_VALUE_TYPE_FIELD] = VALUE_TYPE_SLAT_ANGLE
+            scale = user_input.get("scale")
+            if scale is not None:
+                data["scale"] = scale
+            return data
+        entity = user_input.get("entity")
+        if entity is not None:
+            data["entity"] = entity
+        return data
+
+    def _to_form_values(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Invert `_to_data`, prefilling every field the shared form offers.
+
+        `entity`/`scale` prefill to `None` when the saved value is the other
+        type -- a `None` suggested value leaves that field blank rather than
+        showing a stale entity or scale left over from a different value.
+        """
+        return {
+            _ID_KEY: data[_ID_KEY],
+            _VALUE_TYPE_FIELD: data.get(_VALUE_TYPE_FIELD, VALUE_TYPE_ENTITY),
+            "entity": data.get("entity"),
+            "default": data.get("default", 0),
+            "scale": data.get("scale"),
+        }
 
 
 class ZoneSubentryFlowHandler(_SubentryFlowBase):

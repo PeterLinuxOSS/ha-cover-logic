@@ -38,10 +38,10 @@ rules:
 """)
 
 
-def world(states, event=None, sun=None) -> World:
+def world(states, event=None, sun=None, attributes=None) -> World:
     return World(
         states=states,
-        attributes={},
+        attributes=attributes or {},
         now=NOW,
         event=event or Event(),
         sun=sun or SunTimes(),
@@ -514,3 +514,97 @@ rules:
     # Same subentry, same trace label, regardless of which zone used it --
     # matching `config_store.rule_owner_ids`, which names it once.
     assert d.trace["cover.a"] == d.trace["cover.b"] == "noc.*#0"
+
+
+def test_a_slat_angle_axis_resolves_from_the_target_blinds_facade():
+    """Two blinds, two facades, one value: each gets its own angle."""
+    cfg = load_config("""
+blinds:
+  - {entity: cover.south, facade_azimuth: 180, slat_distance: 60, slat_depth: 80}
+  - {entity: cover.west, facade_azimuth: 270, slat_distance: 60, slat_depth: 80}
+zones:
+  z: {members: [cover.south, cover.west]}
+values:
+  angle: {type: slat_angle, default: 7}
+modes: [{id: day}]
+conditions: {}
+rules:
+  day.z: [{then: {tilt: !ref angle}}]
+""")
+    w = world(
+        {"sun.sun": "above_horizon", "sensor.sun_solar_azimuth": "180"},
+        attributes={("sun.sun", "elevation"): "40"},
+    )
+    d = evaluate(cfg, w)
+
+    south = d.targets["cover.south"].tilt
+    west = d.targets["cover.west"].tilt
+    # The sun is on the south facade and edge-on-or-behind the west one.
+    assert isinstance(south, int)
+    assert south > 0
+    assert west == 7
+
+
+def test_a_slat_angle_axis_falls_back_to_its_default_at_night():
+    cfg = load_config("""
+blinds:
+  - {entity: cover.a, facade_azimuth: 180, slat_distance: 60, slat_depth: 80}
+zones:
+  z: {members: [cover.a]}
+values:
+  angle: {type: slat_angle, default: 42}
+modes: [{id: day}]
+conditions: {}
+rules:
+  day.z: [{then: {tilt: !ref angle}}]
+""")
+    w = world(
+        {"sun.sun": "below_horizon", "sensor.sun_solar_azimuth": "180"},
+        attributes={("sun.sun", "elevation"): "-20"},
+    )
+    assert evaluate(cfg, w).targets["cover.a"].tilt == 42
+
+
+def test_a_slat_angle_axis_falls_back_when_the_blind_has_no_geometry():
+    cfg = load_config("""
+blinds:
+  - {entity: cover.a, facade_azimuth: 180}
+zones:
+  z: {members: [cover.a]}
+values:
+  angle: {type: slat_angle, default: 11}
+modes: [{id: day}]
+conditions: {}
+rules:
+  day.z: [{then: {tilt: !ref angle}}]
+""")
+    w = world(
+        {"sun.sun": "above_horizon", "sensor.sun_solar_azimuth": "180"},
+        attributes={("sun.sun", "elevation"): "40"},
+    )
+    assert evaluate(cfg, w).targets["cover.a"].tilt == 11
+
+
+def test_a_slat_angle_axis_falls_back_when_the_azimuth_reading_is_missing():
+    """`sensor.sun_solar_azimuth` is disabled by default in HA's `sun` integration.
+
+    `facade_azimuth: 0` matches the -1.0 sentinel's own bearing, so a
+    loosened bound would compute a confident (wrong) tilt instead of 11.
+    """
+    cfg = load_config("""
+blinds:
+  - {entity: cover.a, facade_azimuth: 0, slat_distance: 60, slat_depth: 80}
+zones:
+  z: {members: [cover.a]}
+values:
+  angle: {type: slat_angle, default: 11}
+modes: [{id: day}]
+conditions: {}
+rules:
+  day.z: [{then: {tilt: !ref angle}}]
+""")
+    w = world(
+        {"sun.sun": "above_horizon"},
+        attributes={("sun.sun", "elevation"): "40"},
+    )
+    assert evaluate(cfg, w).targets["cover.a"].tilt == 11

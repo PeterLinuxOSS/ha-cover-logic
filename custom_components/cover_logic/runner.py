@@ -68,7 +68,9 @@ from .const import (
     COMMAND_CALLED,
     COMMAND_SUPPRESSED,
     COMMAND_WOULD_CALL,
+    DEFAULT_DEAD_BAND,
     DEFAULT_DRY_RUN,
+    OPT_DEAD_BAND,
     OPT_DRY_RUN,
 )
 from .model import KEEP, Action, Blind
@@ -254,10 +256,11 @@ def _arrived(state: "State | None", target: int, tolerance: int) -> bool:
     mid-travel and the motor throws it away. Ninety seconds is the price of not
     losing the slats.
 
-    `tolerance` is `planner.DEAD_BAND` and is passed in on the command rather
-    than recomputed: if the threshold that decides "do not send this" and the
-    one that decides "it has arrived" ever drifted apart, a blind could be
-    simultaneously close enough to skip and never close enough to finish.
+    `tolerance` is the same `dead_band` `plan()` was given, passed in on the
+    command rather than recomputed: if the threshold that decides "do not
+    send this" and the one that decides "it has arrived" ever drifted apart,
+    a blind could be simultaneously close enough to skip and never close
+    enough to finish.
     """
     current = _reported(state, ATTR_CURRENT_POSITION)
     return current is not None and abs(current - target) <= tolerance
@@ -797,6 +800,15 @@ class CoverRunner:
         """
         return bool(self._entry.options.get(OPT_DRY_RUN, DEFAULT_DRY_RUN))
 
+    def _dead_band(self) -> int:
+        """Read `entry.options["dead_band"]` live, the same reason as `_dry_run`.
+
+        Passed into `plan()` as a parameter every time, never read by
+        `planner.py` itself -- see that module's own `DEAD_BAND` comment for
+        why one number must govern both the skip and the arrival check.
+        """
+        return int(self._entry.options.get(OPT_DEAD_BAND, DEFAULT_DEAD_BAND))
+
     # -- Running one sequence --------------------------------------------
 
     async def _run(self, sequence: _Sequence) -> None:
@@ -809,7 +821,7 @@ class CoverRunner:
         # tilt needs an arrival wait in front of it.
         action = _carry_over_tilt(request.carried_tilt, request.action)
         try:
-            computed = plan(blind, position, tilt, action)
+            computed = plan(blind, position, tilt, action, dead_band=self._dead_band())
         except PlannerError:
             _LOGGER.exception("cover_logic: %s could not be planned", blind.entity)
             return

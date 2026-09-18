@@ -28,6 +28,10 @@ from .model import KEEP, Action, Blind, Ref, Value
 # 2026-08-27. Five points is the threshold the house's own scripts settled
 # on: the living-room terrace blind seats at 3%, so a tighter band made every
 # recompute consider it "not closed yet" and drive it again.
+#
+# Only `plan()`'s own default now -- an install configures the real value as
+# an option (`const.OPT_DEAD_BAND`) and every caller must pass it explicitly.
+# See docs/rationale.md -- "Why the dead band became an option".
 DEAD_BAND = 5
 
 # Pause between the blind reporting arrival and the tilt command. These
@@ -126,6 +130,8 @@ def plan(
     current_position: int | None,
     current_tilt: int | None,
     action: Action,
+    *,
+    dead_band: int = DEAD_BAND,
 ) -> Plan:
     """Describe the commands that would move `blind` from where it is to `action`.
 
@@ -137,6 +143,12 @@ def plan(
 
     `action` must already be resolved -- a `Ref` axis raises, because
     resolving one needs a `World` this layer does not have and never should.
+
+    `dead_band` governs both the skip decision and `WaitForPosition.tolerance`
+    below -- one number, never two that could drift apart. Defaults to the
+    module constant so an untouched caller keeps today's behaviour, but a
+    real caller reads the install's own option and passes it; see
+    `docs/rationale.md` -- "Why the dead band became an option".
 
     Returns an empty `Plan` when the blind is already where it should be.
     """
@@ -160,23 +172,23 @@ def plan(
         _axis_target(blind, AXIS_TILT, action.tilt, [])
         tilt = None
 
-    move_position = position is not None and _off_target(current_position, position)
-    move_tilt = tilt is not None and _off_target(current_tilt, tilt)
+    move_position = position is not None and _off_target(current_position, position, dead_band)
+    move_tilt = tilt is not None and _off_target(current_tilt, tilt, dead_band)
 
     commands: list[Command] = []
     if move_position:
         commands.append(SetPosition(blind.entity, position))
     if move_position and move_tilt and blind.tilt_after_arrival:
         # The whole reason this module returns a sequence instead of a pair of
-        # service calls. `tolerance` is DEAD_BAND on purpose: if the threshold
-        # that decides "do not send the command" and the one that decides "it
-        # has arrived" ever differ, a blind can be simultaneously close enough
-        # to skip and never close enough to finish.
+        # service calls. `tolerance` is `dead_band` on purpose: if the
+        # threshold that decides "do not send the command" and the one that
+        # decides "it has arrived" ever differ, a blind can be simultaneously
+        # close enough to skip and never close enough to finish.
         commands.append(
             WaitForPosition(
                 blind.entity,
                 position,
-                DEAD_BAND,
+                dead_band,
                 blind.travel_time * ARRIVAL_TIMEOUT_FACTOR,
             )
         )
@@ -216,6 +228,6 @@ def _axis_target(blind: Blind, axis: str, value: Value, clamps: list[Clamp]) -> 
     return applied
 
 
-def _off_target(current: int | None, target: int) -> bool:
+def _off_target(current: int | None, target: int, dead_band: int) -> bool:
     """Whether `current` is far enough from `target` to be worth a command."""
-    return current is None or abs(current - target) > DEAD_BAND
+    return current is None or abs(current - target) > dead_band
