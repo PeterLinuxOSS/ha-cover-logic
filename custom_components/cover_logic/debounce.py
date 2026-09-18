@@ -27,7 +27,7 @@ from .world import World
 
 LATCH_DAILY = "daily"
 
-_BOUND_KEYS = ("above", "below")
+_BOUND_KEYS = ("above", "below", "default")
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,11 +45,14 @@ def is_remembered(cond: Mapping) -> bool:
 
 
 def threshold_key(cond: Mapping) -> str:
-    """What the memory is keyed by: the reading and its bounds, not where it is written.
+    """What the memory is keyed by: the reading, its bounds and its fallback.
 
     Two identically written conditions share one entry deliberately -- they
     would give the same answer anyway, and keying by config location would
-    restart a dwell whenever a rule was reordered.
+    restart a dwell whenever a rule was reordered. `default` is part of it for
+    the same reason the bounds are: two conditions that disagree about what an
+    unreadable sensor means do not give the same answer, and sharing an entry
+    would let one of them answer with the other's reading.
     """
     parts = [str(cond["entity_id"]), str(cond.get("attribute") or "")]
     parts += [f"{key}={cond[key]}" for key in _BOUND_KEYS if key in cond]
