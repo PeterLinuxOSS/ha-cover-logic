@@ -83,11 +83,13 @@ class World:
     # `condition: state`'s `for:` reads it; see that condition's own note for
     # why a missing entry ignores `for:` rather than failing the condition.
     since: Mapping[str, dt.datetime] = field(default_factory=dict)
-    # When each debounced `numeric_state` last became true, resolved by
-    # `debounce.resolve` before anything decides so the rules, the guards and
-    # the readiness gate cannot read different answers. Empty means no memory,
-    # which is exactly the plain threshold.
-    numeric_since: Mapping[str, dt.datetime | None] = field(default_factory=dict)
+    # What each remembered `numeric_state` knows, resolved by `debounce.resolve`
+    # before anything decides so the rules, the guards and the readiness gate
+    # cannot read different answers. Empty means no memory at all, which is
+    # exactly the plain threshold.
+    # Typed `Any` rather than `debounce.Dwell`: that module reads `World`,
+    # and naming it here would close the import cycle the other way.
+    numeric_since: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         """Copy the mappings so the snapshot cannot be changed from outside.

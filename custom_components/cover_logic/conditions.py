@@ -21,7 +21,7 @@ from .const import (
     SUN_EVENT_SUNRISE,
     SUN_EVENT_SUNSET,
 )
-from .debounce import crosses, held_long_enough, is_debounced
+from .debounce import crosses, is_remembered, remembered_answer
 from .world import Target, World
 
 DEFAULT_AZIMUTH_ENTITY = "sensor.sun_solar_azimuth"
@@ -161,8 +161,8 @@ def _numeric_state(cond: dict, world: World) -> bool:
         default=float(cond["default"]),
         attribute=cond.get("attribute"),
     )
-    if is_debounced(cond):
-        return held_long_enough(cond, world, value)
+    if is_remembered(cond):
+        return remembered_answer(cond, world, value)
     return crosses(cond, value)
 
 

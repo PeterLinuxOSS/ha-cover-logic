@@ -24,6 +24,7 @@ from .const import (
     GUARD_TIMEOUTS,
     RULE_DEFAULT_ZONE,
 )
+from .debounce import LATCH_DAILY
 from .engine import EngineError, resolve_ownership
 from .guards import guard_blinds
 from .model import KEEP, UNSET, Config, Guard
@@ -987,6 +988,16 @@ def _check_condition_shape(node: dict, where: str, owner: tuple[str, str]) -> li
                 ERROR,
                 "bad_condition_shape",
                 f"{where}: condition {kind!r} needs at least one of 'after'/'before'",
+                owners=owners,
+            )
+        )
+    if "latch" in node and (kind != "numeric_state" or node["latch"] != LATCH_DAILY):
+        out.append(
+            Problem(
+                ERROR,
+                "bad_condition_shape",
+                f"{where}: only a 'numeric_state' takes 'latch:', and its one value is "
+                f"{LATCH_DAILY!r} -- anything else would be silently ignored",
                 owners=owners,
             )
         )

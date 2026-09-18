@@ -1192,6 +1192,30 @@ answer" -- is what the house did before phase 7, and undoing that was the
 whole point: a helper another automation maintains is exactly the dependency
 this integration exists to shed. The `for:` is stated where the threshold is.
 
+**`latch: daily` is the other half, and neither works alone.** A dwell only
+qualifies the *entry*: it refuses a dusk the sensor has not confirmed. It says
+nothing about the *exit*, so a wobble an hour later still reopens a house that
+was correctly closed -- and at dusk the value sits near the threshold for a
+long time, which is precisely when a wobble is likely. Dusk does not un-happen,
+so once the threshold has genuinely been crossed today it stays crossed until
+the local date rolls over. `Dwell.held_on` is a date for that reason: the reset
+is the calendar, not another timer that could itself be tuned wrong.
+
+The latch is deliberately useless on its own, and a test says so
+(`test_without_the_dwell_a_single_stray_reading_would_latch_the_whole_day`):
+without a dwell, one stray midday reading would hold the rest of the day.
+Entry qualified by `for:`, exit refused by `latch:` -- stating both is what
+makes either safe.
+
+A first attempt at the exit problem was a Schmitt trigger, `release_above`, and
+it had to be thrown away before it shipped. Measured over ten days, this lux
+sensor saturates around 3050 and never once exceeded 3200, so any release band
+wide enough to reject the dusk noise would never have been reached -- holding
+`vecer` true from 12:30 every day, which is the exact failure this fixture's
+own comment already warns about. Hysteresis needs headroom above the
+threshold; a saturating sensor has none. That is why the memory is a date and
+not a second number.
+
 ### Why an input guard over an earlier force is a warning
 
 Guards resolve first-match-wins by written order, and that is the whole
