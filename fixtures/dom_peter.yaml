@@ -141,7 +141,15 @@ conditions:
           - condition: and
             conditions:
               - {condition: not, conditions: [!ref lux_neverim]}
+              # This threshold drives a 55-second motor off a sensor that wobbles
+              # across it at dusk: 2788/2813/2742 on 2026-09-18 closed the
+              # terrace, reopened it and closed it again. `for:` refuses a dusk
+              # the sensor has not confirmed -- it samples every 120 s exactly,
+              # so 180 is answered on the third consecutive one, ~4 min after
+              # the crossing. `latch: daily` refuses to take a dusk back,
+              # because dusk does not un-happen.
               - {condition: numeric_state, default: 99999, below: 2800,
+                 for: 180, latch: daily,
                  entity_id: sensor.predsien_dvere_senzor_illuminance}
       - {condition: state, entity_id: input_boolean.cover_down, state: "off"}
       - {condition: time, after: "12:30"}

@@ -1126,7 +1126,7 @@ project does not own), and `_check_unknown_condition_refs` only checks ref
 deep inside `conditions.py` at evaluation time, far from the config that
 caused it.
 
-### Why `numeric_state` cannot take `for:`
+### Why `numeric_state` takes `for:`, and why it needs its own memory
 
 `conditions._state` honours `for:`; every other condition type accepts the key
 and ignores it, and `validation`'s `for_ignored` warns about that. The warning
@@ -1161,6 +1161,71 @@ open; the settle window (8 s) does not absorb it, since dropouts run 55-132 s.
 Over 14 days there were 33 dropouts and **none** fell in the 45 minutes before
 sunset -- they cluster in daylight hours. After sunset `vecer` is held by the
 sun window, so only the lux-led dusk of an overcast evening is exposed at all.
+
+**That bet lost on 2026-09-18, and this section is the reversal.** The
+exposure named above is exactly what happened: at dusk the lux sensor read
+2788, then 2813, then 2742, four minutes apart. `vecer` went true, false and
+true again, and each flip sent both terrace door blinds on a full 55-second
+run -- closed, reopened, closed. The reasoning was not wrong about the
+mechanism, only about the odds: it measured dropouts, which cluster in
+daylight, and did not measure a *bounce across the threshold itself*, which
+can only happen at dusk because that is the only time the value is near it.
+
+So the memory got built after all, and it is smaller than this section feared.
+`debounce.py` records one datetime per debounced threshold -- when its
+predicate last became true -- resolved once from the finished snapshot in
+`build_world` and folded into `World.numeric_since`. Resolving it there rather
+than inside the condition is what keeps the rules, the guards and the
+readiness gate reading one answer per evaluation instead of each recomputing
+against a half-built world.
+
+Two properties make it safe to add to a live decision core. A missing key
+means *no memory at all* and falls back to the plain threshold, so every
+existing test and all 92 160 migration-gate scenarios evaluate exactly as
+before -- the gate could not have caught a regression here, so the fallback
+had to make one impossible instead. And a true predicate keeps the moment it
+first became true rather than restamping it, so a dwell measures one unbroken
+stretch.
+
+The alternative the old text recommended -- "read a helper that latches the
+answer" -- is what the house did before phase 7, and undoing that was the
+whole point: a helper another automation maintains is exactly the dependency
+this integration exists to shed. The `for:` is stated where the threshold is.
+
+**`latch: daily` is the other half, and neither works alone.** A dwell only
+qualifies the *entry*: it refuses a dusk the sensor has not confirmed. It says
+nothing about the *exit*, so a wobble an hour later still reopens a house that
+was correctly closed -- and at dusk the value sits near the threshold for a
+long time, which is precisely when a wobble is likely. Dusk does not un-happen,
+so once the threshold has genuinely been crossed today it stays crossed until
+the local date rolls over. `Dwell.held_on` is a date for that reason: the reset
+is the calendar, not another timer that could itself be tuned wrong.
+
+The latch is deliberately useless on its own, and a test says so
+(`test_without_the_dwell_a_single_stray_reading_would_latch_the_whole_day`):
+without a dwell, one stray midday reading would hold the rest of the day.
+Entry qualified by `for:`, exit refused by `latch:` -- stating both is what
+makes either safe.
+
+**The latch does not survive a restart, and that is a stated limitation rather
+than an oversight.** The memory lives in the coordinator's `_numeric_since` and
+this integration keeps no `Store` at all, so an unload, a reload or a Home
+Assistant restart empties it. What happens next is the fallback: the key is
+missing, so the threshold answers plainly. In the ordinary case that is right --
+after dark the reading is below the threshold, so plain and latched agree. It is
+wrong in one narrow window: dusk already earned, the reading currently back
+above the threshold, and a restart in those minutes. The sun arm holds `vecer`
+from sunset-20min regardless, so the exposure is the lux-led part of an overcast
+dusk only. Persisting one date per key would close it and is not done yet.
+
+A first attempt at the exit problem was a Schmitt trigger, `release_above`, and
+it had to be thrown away before it shipped. Measured over ten days, this lux
+sensor saturates around 3050 and never once exceeded 3200, so any release band
+wide enough to reject the dusk noise would never have been reached -- holding
+`vecer` true from 12:30 every day, which is the exact failure this fixture's
+own comment already warns about. Hysteresis needs headroom above the
+threshold; a saturating sensor has none. That is why the memory is a date and
+not a second number.
 
 ### Why an input guard over an earlier force is a warning
 

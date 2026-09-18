@@ -21,6 +21,7 @@ from .const import (
     SUN_EVENT_SUNRISE,
     SUN_EVENT_SUNSET,
 )
+from .debounce import crosses, is_remembered, remembered_answer
 from .world import Target, World
 
 DEFAULT_AZIMUTH_ENTITY = "sensor.sun_solar_azimuth"
@@ -160,15 +161,9 @@ def _numeric_state(cond: dict, world: World) -> bool:
         default=float(cond["default"]),
         attribute=cond.get("attribute"),
     )
-    # Two independent bounds, either of which may be absent. Collapsing the
-    # second guard into `return not (...)` as SIM103 suggests would obscure
-    # that symmetry in code the migration gate depends on being obviously
-    # correct, so the rule is suppressed rather than followed here.
-    if "above" in cond and not value > float(cond["above"]):
-        return False
-    if "below" in cond and not value < float(cond["below"]):  # noqa: SIM103
-        return False
-    return True
+    if is_remembered(cond):
+        return remembered_answer(cond, world, value)
+    return crosses(cond, value)
 
 
 def parse_hhmm(text: str) -> dt.time:
