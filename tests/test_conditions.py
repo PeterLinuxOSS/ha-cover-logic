@@ -2,8 +2,10 @@ import datetime as dt
 
 import jinja2
 import pytest
+from test_fixture_lux_fallback import _world
 
 from cover_logic.conditions import evaluate_condition
+from cover_logic.config_schema import load_config_file
 from cover_logic.model import Blind, Zone
 from cover_logic.world import Event, SunTimes, Target, World
 
@@ -547,3 +549,28 @@ def test_missing_since_ignores_for_rather_than_failing():
     cond = {"condition": "state", "entity_id": "binary_sensor.bed", "state": "off", "for": 120}
     w = World(states={"binary_sensor.bed": "off"}, now=NOW, event=Event())
     assert evaluate_condition(cond, w) is True
+
+
+# `je_tma`: the fixture's replica of Lighting SUN's dusk thresholds, see
+# fixtures/dom_peter.yaml. `_world` is shared with test_fixture_lux_fallback.py.
+
+
+@pytest.fixture(scope="module")
+def conditions(fixtures_dir):
+    return load_config_file(fixtures_dir / "dom_peter.yaml").conditions
+
+
+def test_je_tma_true_below_dusk_threshold_after_noon(conditions):
+    w = _world(hodina=13, lux=1000, elevacia=3.0, brzda="off")
+    assert evaluate_condition(conditions["je_tma"], w, "cover.a", conditions) is True
+
+
+def test_je_tma_false_bright_midday(conditions):
+    w = _world(hodina=13, lux=3000, elevacia=45.0, brzda="off")
+    assert evaluate_condition(conditions["je_tma"], w, "cover.a", conditions) is False
+
+
+def test_je_tma_ignores_frozen_low_lux(conditions):
+    # zamrznutý senzor (last_seen dávno) nesmie zapnúť tmu za dňa
+    w = _world(hodina=13, lux=0, elevacia=45.0, brzda="off")
+    assert evaluate_condition(conditions["je_tma"], w, "cover.a", conditions) is False

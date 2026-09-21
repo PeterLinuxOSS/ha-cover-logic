@@ -58,6 +58,41 @@ conditions:
           - {condition: numeric_state, entity_id: sensor.predsien_dvere_senzor_illuminance,
              above: 2800, default: 0}
 
+  # Interior-dark derivation, taken over from Lighting SUN's light-on/off
+  # branches. Stateless like `vecer`: sun window OR a trusted lux threshold.
+  je_tma:
+    condition: and
+    conditions:
+      - condition: or
+        conditions:
+          - {condition: sun, after: sunset, after_offset: -1200,
+                             before: sunrise, before_offset: 600}
+          - condition: and
+            conditions:
+              - {condition: not, conditions: [!ref lux_neverim]}
+              - {condition: numeric_state, default: 99999, below: 2850, for: 300,
+                 entity_id: sensor.predsien_dvere_senzor_illuminance}
+      - {condition: time, after: "12:30"}
+
+  # Night derivation, taken over from Lighting SUN's cover-down/cover_up.
+  # `condition: sun` here, not `condition: state, entity_id: sun.sun, state:
+  # below_horizon` -- both read the same astral computation in a live house
+  # (`ha_world._sun_times` and `sun.sun`'s own state come from the same HA
+  # helper), but `state` reads `World.states["sun.sun"]`, which the migration
+  # gate's scenario space varies independently for shading (`sun_hits_target`)
+  # and would then make `je_noc` see a night unrelated to `cover_down`. `sun`
+  # reads `World.sun` instead, which the gate places inertly, same as the
+  # sky clause this replaces did. See docs/rationale.md.
+  je_noc_auto:
+    condition: or
+    conditions:
+      - {condition: sun, before: sunrise, after: sunset}
+      - condition: and
+        conditions:
+          - {condition: not, conditions: [!ref lux_neverim]}
+          - {condition: numeric_state, default: 99999, below: 500, for: 300,
+             entity_id: sensor.predsien_dvere_senzor_illuminance}
+
   # Obloha je PRIMÁRNA a zostáva ňou zámerne: dom bez `cover_down` a bez lux
   # senzora musí mať noc tiež, inak sa táto konfigurácia nedá preniesť --
   # `test_night_is_derived_from_the_sky_not_from_the_helper` to drží.
@@ -68,10 +103,7 @@ conditions:
   je_noc:
     condition: or
     conditions:
-      # Sunset to sunrise-21min. Re-measured 2026-09-02 against Home
-      # Assistant's own sun.sun, not astral-with-elevation: median 20.9 min,
-      # range 11.3-24.9 over 15 dawns. See docs/rationale.md.
-      - {condition: sun, before: sunrise, before_offset: -1260, after: sunset}
+      - !ref je_noc_auto
       # The user's own emergency brake, and it stays a helper on purpose --
       # a command, not a derived state. Voice "zapni nočný režim" writes it.
       - condition: and
@@ -122,21 +154,12 @@ conditions:
 
   # Lighting SUN vetva `light-on` už stiahla terasu a kvety, ale `cover_down`
   # (a s ním režim `noc`) príde až o 20–40 min. V tom okne matica nesmie
-  # vracať nič hore. Prah 12:30 je ten istý, aký má vetva `light-on`.
-  # Tracks `input_boolean.lighting_on` so the blinds shade exactly when the
-  # lights come on -- same as `configuration.yaml` and the old matrix already
-  # do. The sky/lux derivation was reverted 2026-09-21: its `latch: daily`
-  # armed at every dawn and the 12:30 gate then fired `vecer` at midday on a
-  # bright day, closing the terrace while the lights stayed off. See
-  # docs/rationale.md -- "Why `vecer` reads the helper again".
+  # vracať nič hore. `je_tma` nesie svoj vlastný 12:30 gate a lux/sun prahy.
   vecer:
     condition: and
     conditions:
-      - {condition: state, entity_id: input_boolean.lighting_on, state: "on"}
+      - !ref je_tma
       - {condition: state, entity_id: input_boolean.cover_down, state: "off"}
-      # Dawn also has lighting_on on with cover_down off (lights lag the sunrise
-      # open by ~30 min); this gate keeps `vecer` to the afternoon dusk window.
-      - {condition: time, after: "12:30"}
 
   # 2026-08-27: `terasa` (dverová _1_3) teraz pozná stav terasových dverí.
   # `off` = zatvorené. `unavailable`/`unknown` sa zámerne NEROVNÁ `"off"`,

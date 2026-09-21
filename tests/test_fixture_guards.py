@@ -498,15 +498,17 @@ def test_an_open_door_at_dusk_still_holds_the_blind_up(config):
     with phase 7.6's last step, so the invariant belongs here, where the owner
     now is.
 
-    `vecer` is expressed by `input_boolean.lighting_on` with `NOW` at 13:00
-    (past the 12:30 gate), so the dusk state is independent of the time of day
-    the suite runs at.
+    `vecer` is now `je_tma AND cover_down off`, and `je_tma` here is reached
+    via its lux branch (below the 2850 threshold) rather than the sun window,
+    since this file's `world()` never sets `World.sun`. `NOW` is 13:00 (past
+    the 12:30 gate both need), so the dusk state stays independent of the
+    time of day the suite runs at.
     """
     w = world(
         {("sun.sun", "elevation"): 3.0},
         **{
             "binary_sensor.obyvacka_dvere_senzor": "on",
-            "input_boolean.lighting_on": "on",
+            "sensor.predsien_dvere_senzor_illuminance": "1000",
         },
     )
     decision = evaluate(config, w)

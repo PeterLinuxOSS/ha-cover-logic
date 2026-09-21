@@ -51,6 +51,10 @@ def _je_noc(conditions, world):
     return evaluate_condition(conditions["je_noc"], world, "cover.a", conditions)
 
 
+def _vecer(conditions, world):
+    return evaluate_condition(conditions["vecer"], world, "cover.a", conditions)
+
+
 def _neverim(conditions, world):
     return evaluate_condition(conditions["lux_neverim"], world, "cover.a", conditions)
 
@@ -101,36 +105,30 @@ def test_rano_drzi_oblohu_ako_doteraz(conditions):
     assert _je_noc(conditions, pred_hranicou) is True
 
 
-def test_vecer_sleduje_svetla_nie_lux(conditions):
-    """`vecer` od 2026-09-21 číta `input_boolean.lighting_on`, lux ho neovplyvní.
+def test_vecer_odvodena_z_je_tma_nie_z_helpera(conditions):
+    """`vecer` od tejto úlohy (2026-09-21) číta `je_tma`, nie `input_boolean.lighting_on`.
 
-    Predtým jeho OR bral skorší z lux/oblohy a `latch: daily` zapnutý za
-    ranného šera ho o 12:30 spravil pravdivým aj za jasného dňa -- terasa sa
-    zavrela, kým svetlá boli zhasnuté (2026-09-21). Teraz je viazaný na tie
-    isté svetlá, takže `vecer` a `lighting_on` sa nemôžu rozísť.
+    Predchádzajúca oprava (ešte v ten istý deň) viazala `vecer` priamo na
+    `lighting_on`, aby latch z luxu nezapol súmrak za bieleho dňa. Táto úloha
+    ju nahrádza: `je_tma` replikuje Lighting SUN prahy bezstavovo (rovnaké
+    okno slnka aj lux-prah, ktoré `vecer` predtým vôbec nemal), takže `vecer`
+    je teraz `je_tma AND cover_down off` a s helperom sa rozísť nemôže, lebo
+    ho vôbec nečíta.
     """
-    den = dt.date(2026, 9, 3)
+    # Súmrak podľa slnka (za oknom sunset-20min) -- `vecer` sedí s `je_tma`.
+    sumrak = _world(hodina=20, lux=3000, elevacia=-5.0, brzda="off")
+    assert evaluate_condition(conditions["je_tma"], sumrak, "cover.a", conditions) is True
+    assert _vecer(conditions, sumrak) is True
 
-    def svet(*, lighting_on, lux):
-        return World(
-            states={
-                LUX: str(lux),
-                "input_boolean.lighting_on": lighting_on,
-                "input_boolean.cover_down": "off",
-            },
-            now=dt.datetime.combine(den, dt.time(13, 0)),  # po 12:30
-            sun=SunTimes(
-                sunrise=dt.datetime.combine(den, dt.time(5, 53, 18)),
-                sunset=dt.datetime.combine(den, dt.time(19, 22, 15)),
-            ),
-        )
+    # Jasný deň mimo okna -- nie je súmrak.
+    jasny_den = _world(hodina=13, lux=3000, elevacia=45.0, brzda="off")
+    assert _vecer(conditions, jasny_den) is False
 
-    def vecer(world):
-        return evaluate_condition(conditions["vecer"], world, "cover.a", conditions)
+    # Zamrznutý nízky lux za bieleho dňa `vecer` sám osebe nezapne.
+    zamrznuty = _world(hodina=13, lux=0, elevacia=45.0, brzda="off")
+    assert _vecer(conditions, zamrznuty) is False
 
-    # Jasný deň, svetlá zhasnuté -- nie je súmrak (presne dnešná chyba).
-    assert vecer(svet(lighting_on="off", lux=3000)) is False
-    # Svetlá svietia -- je súmrak, aj keď lux hlási jasno.
-    assert vecer(svet(lighting_on="on", lux=3000)) is True
-    # Zamrznutý nízky lux už `vecer` sám osebe nezapne.
-    assert vecer(svet(lighting_on="off", lux=0)) is False
+    # Núdzová brzda `cover_down` vynúti noc aj cez súmrak z inej strany --
+    # ale `vecer` je AND, takže `cover_down on` ju naopak vypne.
+    brzdene = _world(hodina=20, lux=3000, elevacia=-5.0, brzda="on")
+    assert _vecer(conditions, brzdene) is False
