@@ -318,7 +318,43 @@ without waiting for an evening to watch.
 
 ## The `vecer` condition
 
-### Why `vecer` reads the sky, and what the gate stops proving
+### Why `vecer` reads the helper again (2026-09-21)
+
+**Supersedes the section below.** The sky/lux derivation was reverted to
+`input_boolean.lighting_on AND NOT cover_down AND after 12:30` -- the same
+expression `matica.py` and `configuration.yaml` always used. The owner asked
+for it after a live failure, on the reasoning that `vecer` and the lights must
+never disagree: if the blinds shade, the lights should be on, and vice versa.
+
+**What the sky/lux version actually did in the house.** The stateless dark
+window (below) was not enough for a wobbling dusk sensor, so a
+`for: 180, latch: daily` lux threshold was added on 18 Sep. But the lux sensor
+reads below its 2800 threshold at *every* dawn (0 -> 2772 over ~80 min), which
+armed `latch: daily` for the whole day; the `after: 12:30` gate then released
+it, so `vecer` turned true at 12:30 sharp on any day the terrace door was shut
+-- closing the terrace door blind and the kitchen slats at midday in full
+daylight (3000 lx) while `lighting_on` correctly stayed off. It went unseen for
+days only because the terrace door was usually open and the door guard held the
+blind up. The bug was not the latch's tuning; it was deriving a dusk signal
+from a source that also fires at dawn, then gating it by clock.
+
+**Why coupling back to the helper is the right call here.** The
+portability cost is real -- a new home needs `Lighting SUN` (or an equivalent
+writer of `lighting_on`) -- but that automation has to exist anyway for the
+lights, and binding to it makes the two systems consistent *by construction*
+rather than by two independent derivations that drifted. The "overcast evening
+closes earlier" behaviour is preserved: `Lighting SUN` turns `lighting_on` on
+from the same interior lux, so the helper carries it. The 12:30 gate stays,
+because dawn also shows `lighting_on` on with `cover_down` off (the lights lag
+the sunrise open by ~30 min) and only the clock separates that from dusk.
+
+**The gate stays green trivially.** `tests/parity/mapping.py` already fed
+`input_boolean.lighting_on` into `World.states` from the scenario's axis, and
+`_sun_for` was built so the sun window equals `stav.lighting_on`; the engine
+reading the helper directly therefore lands on the same value the sky-based
+version did. See `test_fixture_lux_fallback.py::test_vecer_sleduje_svetla_nie_lux`.
+
+### Why `vecer` read the sky, and what the gate stopped proving (historical)
 
 `vecer` used to read `input_boolean.lighting_on`, a helper written by the
 house's `Lighting SUN` automation. That is the single largest reason this
