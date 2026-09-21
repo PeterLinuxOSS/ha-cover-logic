@@ -1016,18 +1016,23 @@ class CoverRunner:
         become the sequence's failure: something that merely watches must never
         be able to stop a blind mid-movement.
 
-        **`INFO` whether or not this is a dry run.** It used to be `DEBUG` when
-        live, on the reasoning that a dry run's output is its whole product
-        while the same volume in normal operation would be noise. That was
-        backwards, and measurably: on 2026-08-31 the live house wrote 1468
-        `cover_logic[dry_run]` lines and not one `cover_logic[live]` line, while
-        blinds moved and the runner logged an `ERROR` for a `SetPosition` that
-        failed -- a suppressed command was visible and a real one was not. The
-        volume is also the same either way (one line per command, and only when
-        a command exists), so nothing was being saved. See `docs/rationale.md`
-        -- "Why a live command logs at INFO".
+        **Issued commands log at `INFO`; a *live* suppression logs at `DEBUG`.**
+        A real dispatch (or any dry-run line, whose whole product is the log)
+        stays `INFO` -- 2026-08-31 proved a live `SetPosition` must never be
+        invisible while a suppressed one is. But a live suppression is a no-op
+        recompute (`cmd=none reason=dead_band`) that fires every ~2-4 min for
+        every blind: on 2026-09-21 that was ~4681 `cover_logic[live]` lines in
+        10 h, burying the one real command in thousands. It drops to `DEBUG` so
+        the log shows what moved, not what stood still; the observer still sees
+        it, and a dry run keeps it at `INFO` (that is a dry run's finding). See
+        `docs/rationale.md` -- "Why a live command logs at INFO".
         """
-        _LOGGER.info("%s", _format_line(sequence.dry_run, fields))
+        level = (
+            logging.DEBUG
+            if kind == COMMAND_SUPPRESSED and not sequence.dry_run
+            else logging.INFO
+        )
+        _LOGGER.log(level, "%s", _format_line(sequence.dry_run, fields))
         if self._observer is None:
             return
         try:

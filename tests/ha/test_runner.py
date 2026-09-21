@@ -585,6 +585,40 @@ def test_a_suppressed_command_is_logged_with_its_reason(hass_factory, caplog):
     assert any("axis=tilt reason=dead_band target=50 pos=50" in line for line in lines)
 
 
+def test_a_live_suppression_is_debug_and_the_real_command_is_info(hass_factory, caplog):
+    """Live no-ops must not bury the one line that says a blind moved.
+
+    On 2026-09-21 ~4681 `cover_logic[live]` no-op lines (`cmd=none
+    reason=dead_band`) in 10 h hid the single real command. A live suppression
+    drops to DEBUG; the issued command stays INFO. A dry run keeps both at INFO
+    -- see `test_a_suppressed_command_is_logged_with_its_reason`.
+    """
+    calls = []
+    caplog.set_level(logging.DEBUG, logger=_LOGGER_NAME)
+
+    async def _run():
+        hass = hass_factory()
+        try:
+            hass.states.async_set(
+                "cover.a", "open", {"current_position": 0, "current_tilt_position": 100}
+            )
+            runner = CoverRunner(hass, _Entry({OPT_DRY_RUN: False}), _motor(hass, calls))
+            await runner.async_apply(FAST, CLOSE, priority=Priority.SCHEDULED, source="t")
+            await runner.async_wait_idle()
+        finally:
+            await hass.async_stop(force=True)
+
+    asyncio.run(_run())
+
+    lines = [r for r in caplog.records if r.getMessage().startswith("cover_logic[live]")]
+    suppressed = [r for r in lines if "reason=dead_band" in r.getMessage()]
+    issued = [r for r in lines if "cmd=" in r.getMessage() and "cmd=none" not in r.getMessage()]
+    assert suppressed, "expected a suppressed no-op line"
+    assert issued, "expected at least one issued command line"
+    assert all(r.levelno == logging.DEBUG for r in suppressed), "live no-op must be DEBUG"
+    assert all(r.levelno == logging.INFO for r in issued), "issued command must be INFO"
+
+
 # ---------------------------------------------------------------------------
 # Failure containment and shutdown.
 # ---------------------------------------------------------------------------

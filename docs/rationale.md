@@ -1773,11 +1773,19 @@ refused. A suppressed command was visible; a real one was not. On the day this
 integration runs the house, that log is the only record of what the house was
 told to do, and it recorded everything except that.
 
-The volume argument was also simply wrong. A live sequence writes the same
-handful of lines a dry-run sequence writes -- one per command, and only when a
-command exists -- so nothing was being saved by hiding the live ones. Both are
-`INFO` now, and the `dry_run`/`live` prefix `_format_line` puts on every line is
-what tells them apart, which is what it was always for.
+The volume argument was half wrong. An *issued* command writes one line only
+when a command exists, so hiding the live ones saved nothing -- issued commands
+(and every dry-run line) are `INFO`, and the `dry_run`/`live` prefix
+`_format_line` puts on each line tells them apart, which is what it was for.
+
+But a *suppression* is not one-per-command: it fires on every no-op recompute
+(`cmd=none reason=dead_band`), which the coordinator does every ~2-4 min for
+every blind. Measured on 2026-09-21: **~4681 `cover_logic[live]` lines in 10 h,
+almost all suppressions**, burying the single real command the owner was looking
+for. So a *live* suppression now logs at `DEBUG` -- the log shows what moved, not
+what stood still. It stays `INFO` in a dry run (where standing still is the
+finding) and the observer sees it either way, so the dead-band diagnostic the
+suppression line exists for is not lost, only moved off the default view.
 
 `_log_timeout` keeps its own asymmetry (`DEBUG` in a dry run, `WARNING` live)
 and it is correct in the way this one was not: a dry run's arrival waits
