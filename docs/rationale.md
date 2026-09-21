@@ -2083,6 +2083,42 @@ It also bit the first version of the wiring test, which used a sun boundary and
 so passed in the morning and failed at 20:21 -- the test now uses a `for:`
 boundary, whose instant the test itself sets.
 
+### Why the integration writes the lighting flags
+
+`_write_outputs` runs after every recompute and turns `input_boolean.lighting_on`/
+`je_noc_auto` on or off from `derive_outputs` (Task 2's pure `je_tma`/
+`je_noc_auto` conditions), but only calls `input_boolean.turn_on`/`turn_off`
+when a helper's current state disagrees with the desired one.
+
+**These are outputs, not inputs, and that is the whole loop-guard.** Neither
+helper is read by any condition this configuration defines -- Task 1
+re-pointed `vecer`/`je_noc` at `je_tma`/`je_noc_auto` directly, precisely so
+the helpers they used to read would drop out of `config_schema.
+referenced_entities`. `_entity_ids` (this module) subscribes to exactly that
+set, so writing a helper nothing here reads cannot make `_handle_state_change`
+schedule another evaluation. The guard is structural, not a check this module
+performs at runtime -- there is no code path that could get it wrong, short of
+a future condition naming one of these two entities.
+
+**Why an `input_boolean`, and not an entity this integration owns.** A
+config-entry entity goes `unavailable` across a reload -- measured
+2026-09-03, and this module reloads on every configuration change (see "Why a
+configuration change reloads the entry", above). Three of the four automations
+that read `cover_down`-style flags today do so through a *trigger*, and a
+trigger sees the `unavailable` transition even if it never sees the eventual
+right answer; an integration-owned equivalent would make every one of them
+flap on every reload. A plain `input_boolean` survives a reload of this entry
+untouched, which is the one property that matters here.
+
+**Failure is logged, never raised.** `derive_outputs` runs inside its own
+`try`: a broken condition (the same class of failure `engine.evaluate`
+contains per zone) must not blank a decision that was otherwise computed
+correctly and is about to be dispatched. This is the same shape as
+`_publish_outcome`/`_next_boundary` above it in this file -- a failure in a
+side channel is recorded and swallowed, not allowed to escape the middle of
+`_async_evaluate` and cancel a house-wide command that had nothing to do with
+it.
+
 ## `readiness.py`
 
 ### Why readiness is a veto and not a wait
