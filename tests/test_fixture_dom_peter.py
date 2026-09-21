@@ -130,22 +130,19 @@ def _at(hour, minute=0, **overrides):
         (19, 25, "bezny_den"),  # a minute before sunset
         (19, 27, "noc"),  # a minute after it
         (2, 0, "noc"),  # middle of the night
-        (5, 28, "noc"),  # before sunrise either way: still night
-        (5, 49, "noc"),  # a minute before sunrise
-        (5, 50, "bezny_den"),  # sunrise itself: night is over
+        (5, 28, "noc"),  # sunrise-22min: still night
+        (5, 30, "bezny_den"),  # sunrise-20min: night is over
     ],
 )
 def test_night_is_derived_from_the_sky_not_from_the_helper(config, hour, minute, expected):
     """`cover_down` is `off` throughout `CALM`, so only the sky can say `noc`.
 
-    `je_noc` now delegates its sky clause to `je_noc_auto`, taken over from
-    Lighting SUN's own threshold (`sun.sun` below/above the horizon), which
-    has no dawn offset -- night ends exactly at sunrise, not the measured
-    `sunrise - 21min` the previous, now-retired derivation used. See
-    `docs/rationale.md`, "Why night is derived but the brake stays a helper",
-    for that retired measurement; this task supersedes it in favour of one
-    shared source with Lighting SUN rather than two independently-calibrated
-    ones.
+    The morning boundary is 21 minutes before sunrise, and that offset is
+    measured rather than chosen: the helper this replaces went off a median of
+    20.9 min ahead of sunrise (range 11.3-24.9, 15 dawns, measured against
+    Home Assistant's own `sun.sun`). The two rows either side of it are the
+    only reason a change to that offset cannot pass silently -- so if this
+    fails, re-read `docs/rationale.md` before editing the numbers.
     """
     assert evaluate(config, _at(hour, minute)).mode == expected
 

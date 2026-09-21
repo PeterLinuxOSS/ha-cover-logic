@@ -74,15 +74,13 @@ conditions:
                  entity_id: sensor.predsien_dvere_senzor_illuminance}
       - {condition: time, after: "12:30"}
 
-  # Night derivation, taken over from Lighting SUN's cover-down/cover_up.
-  # `condition: sun` here, not `condition: state, entity_id: sun.sun, state:
-  # below_horizon` -- both read the same astral computation in a live house
-  # (`ha_world._sun_times` and `sun.sun`'s own state come from the same HA
-  # helper), but `state` reads `World.states["sun.sun"]`, which the migration
-  # gate's scenario space varies independently for shading (`sun_hits_target`)
-  # and would then make `je_noc` see a night unrelated to `cover_down`. `sun`
-  # reads `World.sun` instead, which the gate places inertly, same as the
-  # sky clause this replaces did. See docs/rationale.md.
+  # Output-only signal replicating Lighting SUN's bare cover_up/cover-down
+  # thresholds for the 10 `cover_down` readers; NOT the night MODE (`je_noc`),
+  # which keeps its own measured sunrise-21min boundary. Consumed later by
+  # Task 2's `derive_outputs`, not by the decision path. `condition: sun` (not
+  # `condition: state` on sun.sun) reads `World.sun`, which the migration gate
+  # places inertly -- `state` reads `World.states["sun.sun"]`, an axis the gate
+  # varies independently for shading (`sun_hits_target`). See docs/rationale.md.
   je_noc_auto:
     condition: or
     conditions:
@@ -103,7 +101,10 @@ conditions:
   je_noc:
     condition: or
     conditions:
-      - !ref je_noc_auto
+      # Sunset to sunrise-21min. Re-measured 2026-09-02 against Home
+      # Assistant's own sun.sun, not astral-with-elevation: median 20.9 min,
+      # range 11.3-24.9 over 15 dawns. See docs/rationale.md.
+      - {condition: sun, before: sunrise, before_offset: -1260, after: sunset}
       # The user's own emergency brake, and it stays a helper on purpose --
       # a command, not a derived state. Voice "zapni nočný režim" writes it.
       - condition: and
