@@ -574,3 +574,36 @@ def test_je_tma_ignores_frozen_low_lux(conditions):
     # zamrznutý senzor (last_seen dávno) nesmie zapnúť tmu za dňa
     w = _world(hodina=13, lux=0, elevacia=45.0, brzda="off")
     assert evaluate_condition(conditions["je_tma"], w, "cover.a", conditions) is False
+
+
+# `je_noc_auto`: the output-only night signal replicating Lighting SUN's bare
+# cover_up/cover-down thresholds (sky OR trusted lux<500). Distinct from the
+# `je_noc` night MODE; nothing in the decision path reads it, so these are the
+# only tests that evaluate it.
+
+
+def test_je_noc_auto_true_on_trusted_low_lux_by_day_clock(conditions):
+    # Daytime by clock (sun clause false), so True must come from lux<500;
+    # elevation 3 keeps `lux_neverim` false, so the reading is trusted.
+    w = _world(hodina=13, lux=100, elevacia=3.0, brzda="off")
+    assert evaluate_condition(conditions["je_noc_auto"], w, "cover.a", conditions) is True
+
+
+def test_je_noc_auto_false_above_lux_threshold_by_day(conditions):
+    # 600 lux is above the 500 threshold and the sun is up: neither clause holds.
+    w = _world(hodina=13, lux=600, elevacia=45.0, brzda="off")
+    assert evaluate_condition(conditions["je_noc_auto"], w, "cover.a", conditions) is False
+
+
+def test_je_noc_auto_ignores_frozen_low_lux(conditions):
+    # Frozen sensor (lux 0 while the sun is high) trips `lux_neverim`; without
+    # that gate lux<500 would declare night in daylight. Sun clause is false.
+    w = _world(hodina=13, lux=0, elevacia=45.0, brzda="off")
+    assert evaluate_condition(conditions["je_noc_auto"], w, "cover.a", conditions) is False
+
+
+def test_je_noc_auto_true_via_sky_when_sun_is_down(conditions):
+    # 23:00 is past sunset, so the sky clause is true regardless of lux --
+    # lux 3000 would fail the lux branch, so this isolates the sky clause.
+    w = _world(hodina=23, lux=3000, elevacia=-30.0, brzda="off")
+    assert evaluate_condition(conditions["je_noc_auto"], w, "cover.a", conditions) is True

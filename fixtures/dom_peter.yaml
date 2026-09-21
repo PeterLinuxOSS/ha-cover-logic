@@ -74,13 +74,8 @@ conditions:
                  entity_id: sensor.predsien_dvere_senzor_illuminance}
       - {condition: time, after: "12:30"}
 
-  # Output-only signal replicating Lighting SUN's bare cover_up/cover-down
-  # thresholds for the 10 `cover_down` readers; NOT the night MODE (`je_noc`),
-  # which keeps its own measured sunrise-21min boundary. Consumed later by
-  # Task 2's `derive_outputs`, not by the decision path. `condition: sun` (not
-  # `condition: state` on sun.sun) reads `World.sun`, which the migration gate
-  # places inertly -- `state` reads `World.states["sun.sun"]`, an axis the gate
-  # varies independently for shading (`sun_hits_target`). See docs/rationale.md.
+  # Output-only signal for the `cover_down` readers, NOT the night mode; see
+  # docs/rationale.md -- "Why `je_noc_auto` is separate from `je_noc`".
   je_noc_auto:
     condition: or
     conditions:

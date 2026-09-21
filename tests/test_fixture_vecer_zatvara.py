@@ -47,15 +47,16 @@ PREVZATE = (
 )
 
 
-def _svet(*, hodina, lighting_on="on", lux=1500, elevacia=3.0, doma=(), odovzdane=("peter", "mimka", "spalna")):
-    """Brzda ešte off, po 12:30. `lighting_on` rozhoduje, či je to súmrak.
+def _svet(*, hodina, lux=1500, elevacia=3.0, doma=(), odovzdane=("peter", "mimka", "spalna")):
+    """Brzda ešte off, po 12:30. `lux` a hodina rozhodujú, či je to súmrak.
 
-    Od 2026-09-21 `vecer` číta `input_boolean.lighting_on` (nie lux/oblohu),
-    takže default je súmrak (svetlá on) a denný svet ho dá na off. `lux`
-    zostáva len na dokreslenie sveta -- do `vecer` už nevstupuje.
+    `vecer` je odteraz `!ref je_tma AND cover_down off` -- odvodí súmrak sám
+    zo slnka/luxu, nečíta `input_boolean.lighting_on`. Default (lux 1500 pod
+    prahom 2850, elevácia 3, po 12:30) je teda súmrak; denný svet ho vypne
+    vysokým luxom a vysokou eláviou. `not lux_neverim` bráni tomu, aby ho
+    zapol zamrznutý nízky senzor za dňa.
     """
     states = {
-        "input_boolean.lighting_on": lighting_on,
         "input_boolean.cover_down": "off",
         "input_boolean.teplotna_ochrana_dom": "off",
         "input_boolean.kvety_on": "on",
@@ -106,7 +107,7 @@ def test_cez_den_sa_vyska_nadalej_neriadi(config, blind):
     celý deň", čo je presne to, čo meranie 31 zmien výšky (19 od ľudí)
     zamietlo.
     """
-    akcia = evaluate(config, _svet(hodina=13, lighting_on="off", lux=3000, elevacia=45.0)).targets[blind]
+    akcia = evaluate(config, _svet(hodina=13, lux=3000, elevacia=45.0)).targets[blind]
 
     assert akcia.position is KEEP, f"{blind} dostal cez deň pozíciu"
 

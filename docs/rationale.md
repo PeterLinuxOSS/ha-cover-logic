@@ -247,6 +247,27 @@ sunrise−15min already reproduces. This is the opposite finding to `vecer`
 above, where dropping lux would have cost four overcast evenings — which is
 why each flag got its own replay rather than one conclusion applied to both.
 
+### Why `je_noc_auto` is separate from `je_noc`
+
+There are two night conditions and they are deliberately different boundaries.
+`je_noc` is the integration's internal night **mode** -- what makes the engine
+decide `noc` -- and it keeps the measured `sunrise − 21 min` dawn boundary
+above, because that is when the house is meant to wake. `je_noc_auto` is an
+**output signal** that replicates `Lighting SUN`'s bare `cover_up`/`cover-down`
+thresholds (`sun.sun` below the horizon OR trusted lux < 500) for the ten
+`cover_down` readers a later task feeds through `derive_outputs`; those readers
+want the automation's own threshold, not the mode's earlier dawn.
+
+`je_noc_auto`'s sky clause is written `condition: sun` (bare
+sunset..sunrise), not `condition: state, entity_id: sun.sun, state:
+below_horizon`. Both read the same astral computation in a live house, but
+`condition: sun` reads `World.sun`, which the migration gate places inertly,
+whereas `condition: state` reads `World.states["sun.sun"]`, an axis the gate
+varies independently for shading (`sun_hits_target`) -- so a state-based night
+would see a sky unrelated to the scenario. `je_noc_auto` is not in the decision
+path (only `je_noc` is), so this only matters if it were ever read there; the
+`condition: sun` form keeps it safe regardless.
+
 ### Why the brake is gated on trusting the lux sensor
 
 `Lighting SUN` writes `input_boolean.cover_down` **from the lux sensor**
@@ -318,9 +339,31 @@ without waiting for an evening to watch.
 
 ## The `vecer` condition
 
-### Why `vecer` reads the helper again (2026-09-21)
+### Why `vecer` derives dusk via `je_tma` (current)
 
-**Supersedes the section below.** The sky/lux derivation was reverted to
+**Supersedes both sections below.** `vecer` is now `!ref je_tma AND
+cover_down off`, and `je_tma` is `(condition: sun sunset−20min..sunrise+10min
+OR trusted lux < 2850 for 5 min) AND after 12:30`. So the integration derives
+dusk itself again, from the same sky-or-lux mechanisms `Lighting SUN` used --
+but without reading `input_boolean.lighting_on`, so no output helper appears in
+`referenced_entities` and the config is portable. This is what the later tasks
+in this phase need in order to delete `Lighting SUN`.
+
+Two things are different from the earlier sky version (the "historical" section
+below), and both are deliberate. The lux branch is now gated on
+`NOT lux_neverim`, so a sensor frozen low cannot declare dusk in daylight -- the
+same plausibility gate `je_noc`'s brake already carries. And there is **no
+latch**: the latch was exactly the 2026-09-21 bug (it armed at every dawn and
+the 12:30 gate then fired `vecer` at midday), so `je_tma` stays stateless, and
+the `after: 12:30` clause -- not a latch -- is what keeps the dawn lux rise from
+reading as dusk. See
+`test_fixture_lux_fallback.py::test_vecer_odvodena_z_je_tma_nie_z_helpera` and
+`test_conditions.py::test_je_tma_*`.
+
+### Why `vecer` briefly read the helper (2026-09-21, historical)
+
+**Superseded by the section above; kept for the incident it records.** For one
+day `vecer` was reverted to
 `input_boolean.lighting_on AND NOT cover_down AND after 12:30` -- the same
 expression `matica.py` and `configuration.yaml` always used. The owner asked
 for it after a live failure, on the reasoning that `vecer` and the lights must
@@ -352,7 +395,8 @@ the sunrise open by ~30 min) and only the clock separates that from dusk.
 `input_boolean.lighting_on` into `World.states` from the scenario's axis, and
 `_sun_for` was built so the sun window equals `stav.lighting_on`; the engine
 reading the helper directly therefore lands on the same value the sky-based
-version did. See `test_fixture_lux_fallback.py::test_vecer_sleduje_svetla_nie_lux`.
+version did. (That day's test, `test_vecer_sleduje_svetla_nie_lux`, was
+replaced when `vecer` moved to `je_tma`; see the current section above.)
 
 ### Why `vecer` read the sky, and what the gate stopped proving (historical)
 
