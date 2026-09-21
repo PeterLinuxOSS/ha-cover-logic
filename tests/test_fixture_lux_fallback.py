@@ -101,16 +101,36 @@ def test_rano_drzi_oblohu_ako_doteraz(conditions):
     assert _je_noc(conditions, pred_hranicou) is True
 
 
-def test_vecer_ignoruje_zamrznuty_lux(conditions):
-    """`vecer` má opačnú asymetriu než `je_noc` a rovnaké riešenie.
+def test_vecer_sleduje_svetla_nie_lux(conditions):
+    """`vecer` od 2026-09-21 číta `input_boolean.lighting_on`, lux ho neovplyvní.
 
-    Jeho OR berie ten **skorší**, takže lux zamrznutý nízko by robil `vecer`
-    pravdivým každý deň od 12:30 a slnko by to nezachránilo. Za `lux_neverim`
-    už tá vetva neplatí a rozhoduje samotné slnečné okno.
+    Predtým jeho OR bral skorší z lux/oblohy a `latch: daily` zapnutý za
+    ranného šera ho o 12:30 spravil pravdivým aj za jasného dňa -- terasa sa
+    zavrela, kým svetlá boli zhasnuté (2026-09-21). Teraz je viazaný na tie
+    isté svetlá, takže `vecer` a `lighting_on` sa nemôžu rozísť.
     """
-    zamrznuty = _world(hodina=13, lux=0, elevacia=45, brzda="off")
-    assert evaluate_condition(conditions["vecer"], zamrznuty, "cover.a", conditions) is False
+    den = dt.date(2026, 9, 3)
 
-    # Kontrola: zdravý zamračený večer tú vetvu má naďalej -- 4 z 13 večerov.
-    zamracene = _world(hodina=13, lux=1000, elevacia=8, brzda="off")
-    assert evaluate_condition(conditions["vecer"], zamracene, "cover.a", conditions) is True
+    def svet(*, lighting_on, lux):
+        return World(
+            states={
+                LUX: str(lux),
+                "input_boolean.lighting_on": lighting_on,
+                "input_boolean.cover_down": "off",
+            },
+            now=dt.datetime.combine(den, dt.time(13, 0)),  # po 12:30
+            sun=SunTimes(
+                sunrise=dt.datetime.combine(den, dt.time(5, 53, 18)),
+                sunset=dt.datetime.combine(den, dt.time(19, 22, 15)),
+            ),
+        )
+
+    def vecer(world):
+        return evaluate_condition(conditions["vecer"], world, "cover.a", conditions)
+
+    # Jasný deň, svetlá zhasnuté -- nie je súmrak (presne dnešná chyba).
+    assert vecer(svet(lighting_on="off", lux=3000)) is False
+    # Svetlá svietia -- je súmrak, aj keď lux hlási jasno.
+    assert vecer(svet(lighting_on="on", lux=3000)) is True
+    # Zamrznutý nízky lux už `vecer` sám osebe nezapne.
+    assert vecer(svet(lighting_on="off", lux=0)) is False
