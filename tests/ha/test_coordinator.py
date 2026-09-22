@@ -909,3 +909,84 @@ def test_writing_an_output_does_not_retrigger_evaluation(hass_factory, runtime_e
             await hass.async_stop(force=True)
 
     asyncio.run(_run())
+
+
+# Same as `_MOVING_CONFIG` (a rule that actually moves a blind) but with the two
+# output conditions added, so one evaluation both writes the flags and commands
+# the blind -- the only shape that can prove the write and the move are
+# independent within a single cycle.
+_MOVING_WITH_OUTPUTS_CONFIG = """
+blinds:
+  - entity: cover.a
+    travel_time: 0.2
+zones:
+  za: {members: [cover.a]}
+modes: [{id: bezny_den}]
+conditions:
+  je_tma:
+    condition: numeric_state
+    entity_id: sensor.lux_test
+    below: 500
+    default: 99999
+  je_noc_auto:
+    condition: numeric_state
+    entity_id: sun.sun
+    attribute: elevation
+    below: 0
+    default: 99
+rules:
+  bezny_den.za:
+    - {then: {position: 100, tilt: keep}}
+"""
+
+
+def test_a_failing_output_write_does_not_block_the_blind(hass_factory, runtime_entry):
+    """A raising `input_boolean.turn_on` must not blank the blind decision.
+
+    `_write_outputs` runs inside `_async_evaluate`'s try, before `_execute`. If
+    a helper write escaped, the outer catch would log "evaluation failed" and
+    skip the executor -- so the blind would not move that cycle, which is
+    exactly the lighting-blocks-blinds coupling this split exists to remove.
+    The write is guarded per helper, so here the blind must still be commanded
+    even though every `input_boolean` service call raises.
+    """
+    moved = []
+
+    async def _run():
+        hass = hass_factory()
+        try:
+
+            async def _raise_input_boolean(call):
+                msg = "input_boolean service is down"
+                raise RuntimeError(msg)
+
+            async def _record_move(call):
+                moved.append(call)
+
+            hass.services.async_register("input_boolean", "turn_on", _raise_input_boolean)
+            hass.services.async_register("input_boolean", "turn_off", _raise_input_boolean)
+            for service in ("open_cover", "set_cover_position", "set_cover_tilt_position"):
+                hass.services.async_register("cover", service, _record_move)
+
+            _prime_lighting_world(hass, lux=3000, elevation=45)  # both flags want off
+            hass.states.async_set("input_boolean.lighting_on", "on")  # so a write is attempted
+            hass.states.async_set("input_boolean.je_noc_auto", "on")
+            hass.states.async_set(
+                "cover.a", "closed", {"current_position": 0, "current_tilt_position": 0}
+            )
+
+            coordinator = CoverLogicCoordinator(
+                hass, load_config(_MOVING_WITH_OUTPUTS_CONFIG), runtime_entry({"dry_run": False})
+            )
+            await coordinator.async_setup()
+            await asyncio.sleep(_WAIT)
+            await coordinator.runner.async_wait_idle()
+
+            assert coordinator.last_error is None, "a guarded write failure escaped into evaluate"
+            assert moved, "the failing flag write blocked the blind command"
+
+            await coordinator.async_unload()
+        finally:
+            await hass.async_stop(force=True)
+
+    asyncio.run(_run())

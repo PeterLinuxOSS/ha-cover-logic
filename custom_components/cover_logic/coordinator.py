@@ -630,13 +630,22 @@ class CoverLogicCoordinator:
             if is_on == want_on:
                 continue
             service = "turn_on" if want_on else "turn_off"
-            await self.hass.services.async_call(
-                "input_boolean",
-                service,
-                {"entity_id": entity},
-                blocking=False,
-                context=Context(),
-            )
+            try:
+                await self.hass.services.async_call(
+                    "input_boolean",
+                    service,
+                    {"entity_id": entity},
+                    blocking=False,
+                    context=Context(),
+                )
+            except Exception:
+                # Never let a failed flag write escape into `_async_evaluate`'s
+                # outer catch, which would skip `_execute` and blank the blind
+                # decision -- the exact lighting-blocks-blinds coupling this
+                # split exists to remove. See docs/rationale.md.
+                _LOGGER.exception(
+                    "cover_logic: could not write %s; leaving it and continuing", entity
+                )
 
     def _next_boundary(self, world: World) -> float | None:
         """`boundaries.next_boundary`, degraded to "nothing pending" when it cannot be computed.
