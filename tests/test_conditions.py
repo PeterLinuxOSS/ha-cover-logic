@@ -576,6 +576,20 @@ def test_je_tma_ignores_frozen_low_lux(conditions):
     assert evaluate_condition(conditions["je_tma"], w, "cover.a", conditions) is False
 
 
+def test_je_tma_stays_true_overnight_past_midnight(conditions):
+    # lighting_on must hold on dusk->dawn; the sun window spans midnight, so
+    # 02:00 (after the 12:30 gate has flipped false) is still "dark".
+    w = _world(hodina=2, lux=3000, elevacia=-20.0, brzda="off")
+    assert evaluate_condition(conditions["je_tma"], w, "cover.a", conditions) is True
+
+
+def test_je_tma_false_dark_morning_before_noon(conditions):
+    # An overcast morning must not arm lighting_on: past sunrise+10min the sun
+    # clause is false and the lux clause is gated to after 12:30.
+    w = _world(hodina=10, lux=1000, elevacia=20.0, brzda="off")
+    assert evaluate_condition(conditions["je_tma"], w, "cover.a", conditions) is False
+
+
 # `je_noc_auto`: the output-only night signal replicating Lighting SUN's bare
 # cover_up/cover-down thresholds (sky OR trusted lux<500). Distinct from the
 # `je_noc` night MODE; nothing in the decision path reads it, so these are the

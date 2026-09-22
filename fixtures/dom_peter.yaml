@@ -59,20 +59,20 @@ conditions:
              above: 2800, default: 0}
 
   # Interior-dark derivation, taken over from Lighting SUN's light-on/off
-  # branches. Stateless like `vecer`: sun window OR a trusted lux threshold.
+  # branches. The sun window spans midnight so `lighting_on` stays on dusk->dawn
+  # (Lighting SUN latched it on overnight); the 12:30 gate sits on the lux branch
+  # only, so a dark morning cannot arm it. `vecer` re-adds 12:30 for the blinds.
   je_tma:
-    condition: and
+    condition: or
     conditions:
-      - condition: or
+      - {condition: sun, after: sunset, after_offset: -1200,
+                         before: sunrise, before_offset: 600}
+      - condition: and
         conditions:
-          - {condition: sun, after: sunset, after_offset: -1200,
-                             before: sunrise, before_offset: 600}
-          - condition: and
-            conditions:
-              - {condition: not, conditions: [!ref lux_neverim]}
-              - {condition: numeric_state, default: 99999, below: 2850, for: 300,
-                 entity_id: sensor.predsien_dvere_senzor_illuminance}
-      - {condition: time, after: "12:30"}
+          - {condition: not, conditions: [!ref lux_neverim]}
+          - {condition: numeric_state, default: 99999, below: 2850, for: 300,
+             entity_id: sensor.predsien_dvere_senzor_illuminance}
+          - {condition: time, after: "12:30"}
 
   # Output-only signal for the `cover_down` readers, NOT the night mode; see
   # docs/rationale.md -- "Why `je_noc_auto` is separate from `je_noc`".
@@ -151,11 +151,14 @@ conditions:
   # Lighting SUN vetva `light-on` už stiahla terasu a kvety, ale `cover_down`
   # (a s ním režim `noc`) príde až o 20–40 min. V tom okne matica nesmie
   # vracať nič hore. `je_tma` nesie svoj vlastný 12:30 gate a lux/sun prahy.
+  # Blinds keep the 12:30 gate `je_tma` no longer carries at top level, so an
+  # overcast midday cannot close them and this stays identical to the oracle.
   vecer:
     condition: and
     conditions:
       - !ref je_tma
       - {condition: state, entity_id: input_boolean.cover_down, state: "off"}
+      - {condition: time, after: "12:30"}
 
   # 2026-08-27: `terasa` (dverová _1_3) teraz pozná stav terasových dverí.
   # `off` = zatvorené. `unavailable`/`unknown` sa zámerne NEROVNÁ `"off"`,
