@@ -665,3 +665,32 @@ def test_every_guard_in_the_fixture_can_actually_fire(config):
 def test_the_fixture_uses_every_policy_and_both_directions(config):
     assert {g.policy for g in config.guards} == {GUARD_SKIP, GUARD_DEFER, GUARD_FORCE}
     assert {g.applies_to for g in config.guards} == {GUARD_ANY, GUARD_CLOSING}
+
+
+# At night the hand only counts while the helper still holds it: the helper is
+# cleared on every mode change, so a raise from the evening ends at nightfall.
+NIGHT = {
+    "input_boolean.cover_down": "on",
+    "sun.sun": "below_horizon",
+    "sensor.predsien_dvere_senzor_illuminance": "5",
+}
+NIGHT_ATTRS = {
+    ("cover.kuchyna_zaluzia_1_4", "current_position"): 100,
+    ("sun.sun", "elevation"): -20,
+}
+
+
+def test_an_evening_raise_of_the_flowers_ends_at_nightfall(config):
+    w = world(attrs=NIGHT_ATTRS, **NIGHT)
+    result = run(config, w, closing(config), at(config))
+
+    assert fired_on(result, FLOWERS_BY_HAND) == set()
+    for entity in FLOWERS:
+        assert result.actions[entity] == Action(position=0, tilt=0)
+
+
+def test_a_raise_during_the_night_is_still_respected(config):
+    w = world(attrs=NIGHT_ATTRS, **(NIGHT | {"input_boolean.kvety_rucny_override": "on"}))
+    result = run(config, w, closing(config), at(config))
+
+    assert fired_on(result, FLOWERS_BY_HAND) == set(FLOWERS)

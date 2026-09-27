@@ -298,6 +298,17 @@ conditions:
       - {condition: numeric_state, above: 45, default: 0,
          entity_id: cover.kuchyna_zaluzia_2_5, attribute: current_position}
 
+  # V `noc` platí ručné vytiahnutie len do zmeny režimu (helper), inak by
+  # žalúzie vytiahnuté večer ostali hore celú noc (2026-09-27, viď dennik).
+  kvety_rucne_plati:
+    condition: and
+    conditions:
+      - !ref kvety_rucny_override
+      - condition: or
+        conditions:
+          - {condition: not, conditions: [!ref je_noc]}
+          - {condition: state, entity_id: input_boolean.kvety_rucny_override, state: "on"}
+
 modes:
   - {id: noc,       when: !ref je_noc}
   - {id: dovolenka, when: !ref alarmo_vacation}
@@ -379,10 +390,9 @@ rules:
   # horúčave dostane kuchyňa lamely 100 aj keď je `kvety_on` vypnuté. `nie_kvety_on`
   # preto smie skratovať len vetvu `vecer` (kde je akcia `KV0`, gated) a
   # koncový fallback (`KV`, tiež gated) — nie vetvu `pocasie_otvorene`.
+  # Kvety zatvárajú lamely až v `noc`, nie za súmraku (2026-09-27, viď dennik).
   horucava.kvety:
     - {events: [arrival], if: !ref rucne_kuchyna, then: {position: keep, tilt: keep}}
-    - {events: [arrival], if: [!ref vecer, !ref nie_kvety_on], then: {position: keep, tilt: keep}}
-    - {events: [arrival], if: !ref vecer,            then: {position: !ref kvety_poz, tilt: 0}}
     - {events: [arrival], if: !ref pocasie_otvorene, then: {position: keep, tilt: 100}}
     - {events: [arrival], if: !ref nie_kvety_on,     then: {position: keep, tilt: keep}}
     - {events: [arrival], if: {condition: sun_hits_target},
@@ -390,7 +400,6 @@ rules:
     - {events: [arrival], then: {position: !ref kvety_poz, tilt: 100}}
     - {if: !ref rucne_kuchyna,    then: {position: keep, tilt: keep}}
     - {if: !ref nie_kvety_on,     then: {position: keep, tilt: keep}}
-    - {if: !ref vecer,            then: {position: !ref kvety_poz, tilt: 0}}
     - {if: !ref pocasie_otvorene, then: {position: !ref kvety_poz, tilt: 100}}
     - {if: {condition: sun_hits_target}, then: {position: !ref kvety_poz, tilt: 0}}
     - {then: {position: !ref kvety_poz, tilt: 100}}
@@ -466,10 +475,10 @@ rules:
     - {if: !ref vecer, then: {position: 0, tilt: 100}}
     - {then: {position: keep, tilt: 100}}
 
+  # Kvety: lamely až v `noc`, nie vo `vecer` (2026-09-27).
   bezny_den.kvety:
     - {if: !ref rucne_kuchyna, then: {position: keep, tilt: keep}}
     - {if: !ref nie_kvety_on,  then: {position: keep, tilt: keep}}
-    - {if: !ref vecer,         then: {position: !ref kvety_poz, tilt: 0}}
     - {then: {position: !ref kvety_poz, tilt: 100}}
 
   # `terasa` a `terasa2` sú identické, rovnaký prípad ako `dovolenka` vyššie:
@@ -640,7 +649,7 @@ guards:
     stage: output
     applies_to: any
     targets: [kvety]
-    when: !ref kvety_rucny_override
+    when: !ref kvety_rucne_plati
 
   # #1 + #5 + #6 + #7 + #8 + #14 (terasová polovica) — „nespúšťaj dverovú
   # žalúziu na otvorené dvere ani na bežiacu saunu", sedem nezávislých kópií
