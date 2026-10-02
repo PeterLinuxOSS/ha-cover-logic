@@ -187,6 +187,7 @@ class CoverLogicModeSensor(SensorEntity):
             "last_success": last_success.isoformat() if last_success is not None else None,
             "dry_run": self._coordinator.dry_run,
             "pending": self._coordinator.pending,
+            "manual_holds": sorted(self._coordinator.manual_holds),
             "last_command": self._coordinator.last_command,
             "readiness": readiness.as_attributes() if readiness is not None else None,
             "matica_mode": matica_mode,

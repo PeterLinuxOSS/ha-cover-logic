@@ -195,6 +195,14 @@ def plan(
         commands.append(Settle(SETTLE_SECONDS))
     if move_tilt:
         commands.append(SetTilt(blind.entity, tilt))
+    elif move_position:
+        # Stay in flight for the travel, so a recompute mid-travel is DROPped by the
+        # runner instead of re-sent; 2026-10-01 re-sent close_cover every ~8 s.
+        commands.append(
+            WaitForPosition(
+                blind.entity, position, dead_band, blind.travel_time * ARRIVAL_TIMEOUT_FACTOR
+            )
+        )
 
     return Plan(commands=tuple(commands), clamps=tuple(clamps))
 

@@ -76,6 +76,7 @@ from .config_schema import (
     ConfigError,
     RefTag,
     _blind_to_dict,
+    _manual_detection_to_dict,
     _mode_to_dict,
     _parse_blind,
     _parse_condition,
@@ -722,13 +723,8 @@ def subentries_from_config(config: Config) -> list[tuple[str, dict[str, Any]]]:
             data["order"] = index * _ORDER_STEP
             items.append((RULE, data))
 
-    if config.manual_detection.ignore_while_on:
-        items.append(
-            (
-                MANUAL_DETECTION,
-                {"ignore_while_on": list(config.manual_detection.ignore_while_on)},
-            )
-        )
+    if config.manual_detection != ManualDetection():
+        items.append((MANUAL_DETECTION, _manual_detection_to_dict(config.manual_detection)))
 
     items.extend(guard_subentry_items(guards_to_data(config)))
 

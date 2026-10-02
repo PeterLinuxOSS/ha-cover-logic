@@ -19,7 +19,7 @@ from typing import Any
 
 import pytest
 
-from cover_logic.config_schema import ConfigError, load_config, load_config_file
+from cover_logic.config_schema import ConfigError, dump_config, load_config, load_config_file
 from cover_logic.config_store import (
     config_from_subentries,
     duplicate_rule_order_problems,
@@ -1039,6 +1039,35 @@ manual_detection:
     without = [pair for pair in items if pair[0] != "manual_detection"]
     assert any(kind == "manual_detection" for kind, _data in items)
     assert config_from_subentries(entry_from_subentry_items(without)) != original
+
+
+_HOLD_ONLY = """
+blinds:
+  - {entity: cover.a}
+zones:
+  z: {members: [cover.a]}
+modes:
+  - {id: m}
+rules:
+  m.z:
+    - {then: {position: keep}}
+manual_detection:
+  hold: true
+"""
+
+
+def test_hold_alone_survives_a_round_trip():
+    """`hold` with nothing to ignore must still produce a subentry, or the setting is lost."""
+    original = load_config(_HOLD_ONLY)
+    assert original.manual_detection.hold is True
+    items = subentries_from_config(original)
+    assert config_from_subentries(entry_from_subentry_items(items)) == original
+    assert load_config(dump_config(original)) == original
+
+
+def test_hold_must_be_a_boolean():
+    with pytest.raises(ConfigError, match="hold must be true or false"):
+        load_config(_HOLD_ONLY.replace("hold: true", "hold: yes please"))
 
 
 # ---------------------------------------------------------------------------

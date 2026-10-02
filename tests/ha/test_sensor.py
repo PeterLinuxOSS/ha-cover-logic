@@ -69,6 +69,7 @@ class FakeCoordinator:
         self.last_success = last_success
         self.dry_run = dry_run
         self.pending = pending if pending is not None else {"deferred": {}, "queued": {}}
+        self.manual_holds = {}
         self.last_command = last_command
         # `None` is the real coordinator's own value before the first
         # evaluation, so it is the honest default here too.

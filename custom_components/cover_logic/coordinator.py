@@ -70,7 +70,7 @@ from .const import (
 )
 from .deferrals import DeferralRegistry, Elapsed
 from .engine import Decision, evaluate
-from .guards import Guarded, guard_blinds, review, screen
+from .guards import Guarded, Outcome, guard_blinds, review, screen
 from .ha_world import build_world
 from .model import KEEP, Action, Config
 from .outputs import derive_outputs
@@ -203,6 +203,9 @@ class CoverLogicCoordinator:
         # for the same reason nothing else evaluates inline: the burst may
         # still be arriving.
         self._pending_event: WorldEvent | None = None
+        # Blinds a person moved, with the (mode, action) we stood back from;
+        # `None` until the next unguarded evaluation captures it. See `_apply_holds`.
+        self.manual_holds: dict[str, tuple[str, Action] | None] = {}
         # When each debounced threshold became true, from the previous
         # evaluation -- empty on the first, which is the plain threshold.
         self._numeric_since: Mapping[str, Any] = {}
@@ -380,6 +383,8 @@ class CoverLogicCoordinator:
         manual = self._detect_manual_move(event)
         if manual is not None:
             self._pending_event = manual
+            if self.config.manual_detection.hold:
+                self.manual_holds[manual.blind] = None
         self._schedule_settle()
 
     def _detect_manual_move(self, event: Event[EventStateChangedData]) -> WorldEvent | None:
@@ -552,6 +557,7 @@ class CoverLogicCoordinator:
             screening = screen(self.config, world)
             decision = evaluate(self.config, world)
             guarded = review(self.config, world, decision, self._positions(), screening)
+            guarded = self._apply_holds(guarded, decision.mode)
 
             self.decision = decision
             self.guarded = guarded
@@ -582,6 +588,31 @@ class CoverLogicCoordinator:
         finally:
             if not armed:
                 self._reschedule(None)
+
+    def _apply_holds(self, guarded: Guarded, mode: str) -> Guarded:
+        """Withhold the plain decision for blinds a person moved, until that decision changes.
+
+        2026-10-01: an open from the app at night was undone 8 s later, twelve
+        times, because `noc` is a level target re-asserted on every recompute.
+        Only unguarded outcomes are held -- a guard's own verdict always wins.
+        """
+        if not self.manual_holds:
+            return guarded
+        outcomes = dict(guarded.outcomes)
+        for entity, captured in list(self.manual_holds.items()):
+            outcome = outcomes.get(entity)
+            if outcome is None:
+                del self.manual_holds[entity]
+                continue
+            if outcome.guard is not None or outcome.action is None:
+                continue
+            held = captured if captured is not None else (mode, outcome.action)
+            self.manual_holds[entity] = held
+            if held != (mode, outcome.action):
+                del self.manual_holds[entity]
+                continue
+            outcomes[entity] = Outcome(entity=entity, action=None, reason=REASON_MANUAL_HOLD)
+        return Guarded(outcomes=outcomes)
 
     def _publish_outcome(self, decision: Decision, completed: dt.datetime) -> None:
         """Record whether this evaluation decided the whole house, or only part of it.
@@ -898,6 +929,10 @@ def _entity_ids(config: Config) -> set[str]:
     return watched | _directional_guard_blinds(config) | _manual_move_blinds(config)
 
 
+# Why a blind's decision was not executed: a person moved it and nothing has changed since.
+REASON_MANUAL_HOLD = "manual hold: moved by a person, waiting for a new target"
+
+
 def _manual_move_blinds(config: Config) -> set[str]:
     """Every blind, but only if this configuration actually asks about manual moves.
 
@@ -915,7 +950,7 @@ def _manual_move_blinds(config: Config) -> set[str]:
     today. Once something does ask, every blind is watched, because the
     detector's job is precisely to notice a hand on any of them.
     """
-    if not _asks_about_manual_moves(config):
+    if not (config.manual_detection.hold or _asks_about_manual_moves(config)):
         return set()
     return set(config.blinds)
 

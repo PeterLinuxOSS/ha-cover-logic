@@ -174,10 +174,12 @@ def test_a_tilt_command_never_precedes_the_arrival_wait():
             waited += 1
             at = kinds.index(WaitForPosition)
             assert SetPosition in kinds, "a wait with nothing to wait for"
-            assert SetTilt in kinds, "a wait with nothing waiting on it"
             assert kinds.index(SetPosition) < at
-            assert kinds[at + 1] is Settle, "the settle pause must follow the wait"
-            assert kinds.index(SetTilt) > at
+            if SetTilt in kinds:
+                assert kinds[at + 1] is Settle, "the settle pause must follow the wait"
+                assert kinds.index(SetTilt) > at
+            else:
+                assert at == len(kinds) - 1, "a position-only wait is the last step"
         if SetPosition in kinds and SetTilt in kinds:
             paired += 1
             assert kinds.index(SetPosition) < kinds.index(SetTilt)
@@ -188,6 +190,17 @@ def test_a_tilt_command_never_precedes_the_arrival_wait():
                 )
     assert waited > 0
     assert paired > 0
+
+
+def test_a_position_only_move_waits_for_arrival():
+    """In flight for the whole travel, so a mid-travel recompute is dropped, not re-sent."""
+    trailing = 0
+    for blind, position, tilt, action in _every_case():
+        kinds = [type(c) for c in plan(blind, position, tilt, action).commands]
+        if SetPosition in kinds and SetTilt not in kinds:
+            trailing += 1
+            assert kinds == [SetPosition, WaitForPosition]
+    assert trailing > 0
 
 
 def test_no_emitted_value_lies_outside_0_100():
@@ -370,14 +383,14 @@ def test_the_kitchen_drift_does_not_produce_a_command():
 
 def test_a_blind_exactly_on_the_edge_of_the_dead_band_is_left_alone():
     assert plan(_blind(), 5, 0, Action(position=0, tilt=0)).commands == ()
-    assert plan(_blind(), 6, 0, Action(position=0, tilt=0)).commands == (SetPosition(ENTITY, 0),)
+    assert plan(_blind(), 6, 0, Action(position=0, tilt=0)).commands == _move_and_wait(0)
 
 
 def test_a_dead_band_of_five_still_moves_the_2026_09_16_incident():
     # peter_zal reported 7 against a target of 0: today's default (5) must
     # keep sending the command, or the house's own behaviour has changed.
-    assert plan(_blind(), 7, 0, Action(position=0, tilt=0), dead_band=5).commands == (
-        SetPosition(ENTITY, 0),
+    assert plan(_blind(), 7, 0, Action(position=0, tilt=0), dead_band=5).commands == _move_and_wait(
+        0
     )
 
 
@@ -400,10 +413,18 @@ def test_the_arrival_tolerance_is_the_dead_band_that_was_passed_in():
     assert wait.tolerance == 7
 
 
-def test_a_move_with_no_tilt_behind_it_carries_no_wait():
-    # The wait exists to gate the tilt command, nothing else. With the slats
-    # already where they belong there is nothing for it to gate.
-    assert plan(_blind(), 100, 0, Action(position=0, tilt=0)).commands == (SetPosition(ENTITY, 0),)
+def test_a_move_with_no_tilt_behind_it_still_waits_for_arrival():
+    # No tilt to gate, but the wait keeps the sequence in flight so a mid-travel
+    # recompute is dropped instead of re-sent (2026-10-01). No settle: nothing follows.
+    assert plan(_blind(), 100, 0, Action(position=0, tilt=0)).commands == _move_and_wait(0)
+
+
+def _move_and_wait(position, dead_band=DEAD_BAND):
+    blind = _blind()
+    return (
+        SetPosition(ENTITY, position),
+        WaitForPosition(ENTITY, position, dead_band, blind.travel_time * ARRIVAL_TIMEOUT_FACTOR),
+    )
 
 
 def test_a_blind_at_the_top_is_still_told_its_slat_angle():
