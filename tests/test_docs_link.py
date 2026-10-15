@@ -1,6 +1,7 @@
-"""Every flow screen and repair issue must supply `{docs_url}`; HA would render it literally."""
+"""Every flow screen, repair issue and service must supply `{docs_url}`; HA would render it literally."""
 
 import ast
+import json
 from pathlib import Path
 
 from cover_logic.const import DOCS_URL
@@ -50,8 +51,13 @@ def test_every_repair_issue_supplies_docs_url():
     assert not missing, missing
 
 
-def test_manifest_documentation_is_the_site():
-    import json
+def test_every_service_supplies_docs_url():
+    calls = list(_calls(_COMPONENT / "services.py", {"async_register"}))
+    assert len(calls) == 2
+    missing = [c.lineno for c in calls if not _passes_docs(c, "description_placeholders")]
+    assert not missing, missing
 
+
+def test_manifest_documentation_is_the_site():
     manifest = json.loads((_COMPONENT / "manifest.json").read_text())
     assert manifest["documentation"] == DOCS_URL

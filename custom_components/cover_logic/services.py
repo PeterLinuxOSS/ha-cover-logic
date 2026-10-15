@@ -88,6 +88,7 @@ from .config_store import (
     subentries_from_config,
 )
 from .const import DOMAIN
+from .docs_link import docs_placeholders
 from .validation import ERROR, Problem, validate
 
 SERVICE_IMPORT_CONFIG = "import_config"
@@ -454,6 +455,7 @@ def async_register_services(hass: HomeAssistant) -> None:
             _import_config,
             schema=IMPORT_CONFIG_SCHEMA,
             supports_response=SupportsResponse.OPTIONAL,
+            description_placeholders=docs_placeholders(),
         )
     if not hass.services.has_service(DOMAIN, SERVICE_EXPORT_CONFIG):
 
@@ -466,6 +468,7 @@ def async_register_services(hass: HomeAssistant) -> None:
             _export_config,
             schema=EXPORT_CONFIG_SCHEMA,
             supports_response=SupportsResponse.OPTIONAL,
+            description_placeholders=docs_placeholders(),
         )
 
 
