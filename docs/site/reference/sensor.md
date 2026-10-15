@@ -130,7 +130,7 @@ first evaluation has ever completed.
 | `ready` | `true` if every entity the whole configuration reads is currently readable. |
 | `missing` | Entity ids that are absent, `unknown` or `unavailable` and were read by some node with no stated `default:` — truncated to a bounded number, with `missing_count` giving the real total. |
 | `missing_count` | The real count behind `missing`, in case the list itself was truncated. |
-| `readiness.blocked` | Entity id (a blind) → the subset of `missing` that **that blind's own decision** reads — this is the per-blind veto; a blind absent from `blocked` was not stopped by this, however broken the rest of the house's inputs are. |
+| `blocked` | Entity id (a blind) → the subset of `missing` that **that blind's own decision** reads — this is the per-blind veto; a blind absent from `blocked` was not stopped by this, however broken the rest of the house's inputs are. |
 
 This is the answer to "it decided something sensible-looking and moved
 nothing" — without it, that looks like a bug in the executor rather than a

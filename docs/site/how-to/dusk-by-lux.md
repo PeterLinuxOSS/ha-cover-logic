@@ -92,8 +92,9 @@ ignored field.
 The textbook fix for a noisy threshold is hysteresis — a different "off"
 level than "on" level, so a value has to travel further before flipping
 back. It does not work here: measured over ten days, this class of lux
-sensor saturates around 3050 during the day and almost never crosses 3200,
-so a hysteresis band wide enough to actually absorb daytime noise would
+sensor saturates around 3050 during the day and never once exceeded 3200 in
+those ten days of measurements, so a hysteresis band wide enough to actually
+absorb daytime noise would
 never release again once triggered — the house would stay in "dusk" from
 roughly midday onward, every day. `for:` plus `latch: daily` solves the
 actual problem (a debounced entry, a remembered exit) without needing the
