@@ -1,84 +1,119 @@
-# Cover Logic
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/banner-dark.svg">
+    <img alt="Cover Logic — one decision for every blind in your house" src="docs/assets/banner-light.svg" width="100%">
+  </picture>
+</p>
 
-Most blind automations are a pile of "if this, then that" rules, and they work
-until the day two of them disagree about the same window. Cover Logic replaces
-that pile with a single decision: you describe your blinds, the modes your house
-can be in, and the rules for each — and one engine decides where every blind
-should be, every time, with a record of which rule decided it and why. Because
-the decision is data rather than scattered automations, you can read it, test
-it, and move it to a different house. If you have ever lost an afternoon to
-"why did that blind just close?", this is aimed squarely at you.
+<p align="center">
+  <a href="https://hacs.xyz"><img alt="HACS custom" src="https://img.shields.io/badge/HACS-custom-41BDF5?logo=homeassistantcommunitystore&logoColor=white"></a>
+  <a href="https://github.com/PeterLinuxOSS/ha-cover-logic/releases"><img alt="Release" src="https://img.shields.io/github/v/release/PeterLinuxOSS/ha-cover-logic?sort=semver"></a>
+  <a href="https://github.com/PeterLinuxOSS/ha-cover-logic/actions/workflows/test.yml"><img alt="Tests" src="https://img.shields.io/github/actions/workflow/status/PeterLinuxOSS/ha-cover-logic/test.yml?branch=main&label=tests"></a>
+  <img alt="Home Assistant 2026.8+" src="https://img.shields.io/badge/Home%20Assistant-2026.8%2B-18BCF2?logo=homeassistant&logoColor=white">
+  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/github/license/PeterLinuxOSS/ha-cover-logic"></a>
+  <a href="https://peterlinuxoss.github.io/ha-cover-logic"><img alt="Docs" src="https://img.shields.io/badge/docs-read-f5a623"></a>
+</p>
 
-It is a Home Assistant custom integration. Nothing is stored outside your
-Home Assistant instance and nothing leaves it.
+<p align="center">
+  <b>Stop chasing "why did that blind just close?"</b><br>
+  Describe your blinds, the modes your house can be in and the rules for each —<br>
+  one engine decides where every blind should be, and tells you which rule decided it.
+</p>
 
 ---
 
-## Status
+## How it decides
 
-**It decides, and it can now move blinds — but not until you say so.**
-
-The decision engine, the configuration UI, validation, the diagnostic sensor,
-the command planner, the safety interlocks and the execution queue are all
-built and tested, and the executor is now wired to real `cover.*` services.
-It starts in [shadow mode](https://peterlinuxoss.github.io/ha-cover-logic/getting-started/shadow-mode/):
-`dry_run` is on by default, so a fresh install decides, plans and logs
-everything, and moves nothing until you turn it off.
-
-## Install
-
-Not in the HACS default store yet, so add it as a custom repository:
-
-1. **HACS → ⋮ → Custom repositories**, URL `https://github.com/PeterLinuxOSS/ha-cover-logic`, category **Integration**.
-2. Find "Cover Logic" in HACS and download it.
-3. Restart Home Assistant.
-4. **Settings → Devices & Services → Add Integration → "Cover Logic"**.
-
-Or without HACS: copy `custom_components/cover_logic/` into your Home Assistant
-`custom_components/` directory, restart, then step 4.
-
-See [install](https://peterlinuxoss.github.io/ha-cover-logic/getting-started/install/)
-and [first setup](https://peterlinuxoss.github.io/ha-cover-logic/getting-started/first-setup/)
-for the four ways to start and a walkthrough of the recommended one.
-
-## Documentation
-
-**https://peterlinuxoss.github.io/ha-cover-logic**
-
-Concepts, how-to guides, the configuration reference and troubleshooting all
-live there. [`MODELS.md`](MODELS.md) and [`docs/rationale.md`](docs/rationale.md)
-are the technical brief and the design-decision ledger for anyone changing
-this code — the site links both under "For developers".
-
-`fixtures/dom_peter.yaml` is not an example — [`docs/example-config.yaml`](docs/example-config.yaml)
-is that. `fixtures/dom_peter.yaml` is the real configuration of the house this
-was built for, and it doubles as the fixture the migration check compares
-against. Do not copy from it.
-
-## Running the tests
-
-```bash
-# Decision core, no Home Assistant needed — any Python >= 3.12
-python3 -m pytest tests/ -q
-
-# The Home Assistant layer — needs homeassistant==2026.8.0, hence Python >= 3.14.2
-.venv/bin/python -m pytest tests/ -q
+```mermaid
+flowchart LR
+    A["🏠 House state<br/>sensors · helpers · sun"] --> B["🌗 Mode<br/>first match wins"]
+    B --> C["📋 Zone rules<br/>first match wins"]
+    C --> D["🛡️ Guards<br/>skip · defer · force"]
+    D --> E["⚙️ Planner<br/>position, then tilt"]
+    E --> F["🪟 cover.* services"]
 ```
 
-Both must stay green. `MODELS.md` §8 explains what each interpreter actually
-exercises.
+Every step is visible afterwards on `sensor.cover_logic_mode` — the active mode,
+the rule each blind got, what is waiting on a guard, and the last command sent.
 
-`tests/parity/` is different and worth knowing about: it renders the live Jinja
-template from a real house's `configuration.yaml` and compares it against the
-engine across 92,160 scenarios. Those files are not in this repository, so **it
-cannot run in CI** — a green CI run says nothing about whether a house still
-decides the same way. Run it locally before trusting any change to the decision
-logic.
+## Why Cover Logic
+
+<table>
+  <tr>
+    <td width="33%" valign="top">
+      <h3>🧭 One decision</h3>
+      Modes and first-match rules replace a pile of automations that disagree about the same window.
+    </td>
+    <td width="33%" valign="top">
+      <h3>🔍 A trace for every move</h3>
+      Each blind names the exact rule that set it, so "why?" has an answer.
+    </td>
+    <td width="33%" valign="top">
+      <h3>🧪 Shadow mode first</h3>
+      <code>dry_run</code> is on by default: it decides and logs, and moves nothing until you say so.
+    </td>
+  </tr>
+  <tr>
+    <td valign="top">
+      <h3>🛡️ Interlocks</h3>
+      Guards skip, defer or force a blind — never lower it onto an open terrace door.
+    </td>
+    <td valign="top">
+      <h3>☀️ Sun geometry</h3>
+      Facade azimuth and tolerance decide when the sun hits a window; slat angle can be computed.
+    </td>
+    <td valign="top">
+      <h3>✋ Respects people</h3>
+      A manual move from the app is held until the decided target changes.
+    </td>
+  </tr>
+</table>
+
+## Quick start
+
+1. **HACS → ⋮ → Custom repositories** → `https://github.com/PeterLinuxOSS/ha-cover-logic`, category **Integration**, then download **Cover Logic**.
+2. Restart Home Assistant.
+3. **Settings → Devices & Services → Add Integration → Cover Logic → Set up blinds now**: pick your covers, say which way each window faces, done.
+
+It starts in [shadow mode](https://peterlinuxoss.github.io/ha-cover-logic/getting-started/shadow-mode/) —
+watch what it would do, then turn `dry_run` off. Without HACS, copy
+`custom_components/cover_logic/` into your `custom_components/` and restart.
+
+<p align="center">
+  <a href="https://peterlinuxoss.github.io/ha-cover-logic"><img alt="Read the docs" src="https://img.shields.io/badge/%F0%9F%93%96%20Read%20the%20docs-peterlinuxoss.github.io%2Fha--cover--logic-f5a623?style=for-the-badge"></a>
+</p>
+
+## Compared with
+
+|  | Cover Logic | [adaptive-cover](https://github.com/basbruss/adaptive-cover) | Hand-written automations |
+|---|---|---|---|
+| Scope | A whole house, zones and modes in one entry | One instance per window or group | One automation per idea |
+| Decision | First-match rules, YAML or UI | Fixed sun-position algorithm | Whatever you wrote |
+| Interlocks (doors, wind, sauna) | Built in (`guards:`) | None built in | Up to you |
+| Dry run | Shadow mode by default | None documented | No |
+| "Why did it move?" | Trace names the rule | No decision trace | Read the traces of each automation |
+| Setting up one window | More to configure | Simplest | Simple |
+
+adaptive-cover is the better fit for shading one window out of the box; Cover
+Logic is built for deciding every cover in the house from one set of rules.
+
+## For developers
+
+[`MODELS.md`](MODELS.md) is the technical brief and [`docs/rationale.md`](docs/rationale.md)
+the design-decision ledger. [`docs/example-config.yaml`](docs/example-config.yaml)
+is a complete example; `fixtures/dom_peter.yaml` is the author's real house and
+the migration fixture — do not copy from it.
 
 ```bash
-ruff check .
-ruff format --check .
+python3 -m pytest tests/ -q              # decision core, any Python >= 3.12
+.venv/bin/python -m pytest tests/ -q     # + Home Assistant layer, Python >= 3.14.2
+ruff check . && ruff format --check .
 ```
+
+`tests/parity/` compares the engine with a real house's Jinja template across
+92,160 scenarios; those files are not in this repository, so it cannot run in
+CI — run it locally before trusting a change to the decision logic.
+`MODELS.md` §8 explains what each interpreter exercises.
 
 ## License
 
