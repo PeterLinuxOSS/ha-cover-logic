@@ -71,14 +71,17 @@ license, how to run tests.
 
 ## 3. Generated reference
 
-`scripts/gen_reference.py` reads the voluptuous schemas in `config_schema.py`
-and writes `docs/site/reference/configuration.md`: one table per section
-(field, type, default, allowed range or values, description).
+`config_schema.py` is a hand-written parser, not voluptuous: the allowed keys
+live in `_*_KEYS` sets and the defaults inline in the `_parse_*` functions. So
+the reference has one hand-maintained source, `docs/site/reference/fields.yaml`
+(section → field → type, default, range, one-line description), and
+`scripts/gen_reference.py` renders it to `docs/site/reference/configuration.md`.
 
-Descriptions come from a single place so they cannot drift: the
-`data_description` in `strings.json` where a field has one, otherwise a short
-docstring map in the generator. A test regenerates into memory and fails if the
-committed file differs — the same idea as the fixture drift check.
+Three tests keep it honest:
+- the documented keys of every section equal the matching `_*_KEYS` set;
+- every documented default equals what `load_config` produces for a minimal
+  entry that omits the field;
+- the committed `configuration.md` equals a fresh render.
 
 ## 4. In-UI help
 
@@ -98,9 +101,11 @@ Tests (in `tests/`, no HA needed):
 - every `data_description` ≤ 150 characters, every issue/step description ≤ 300;
 - every step or issue that has a description passes `docs_url` and links to a
   path that exists under `docs/site/`;
-- the placeholder is supplied at every call site (`description_placeholders`)
-  — checked by AST, because the
-  HA flow tests would not notice a missing placeholder rendering as `{docs_url}`.
+- every `async_show_form`/`async_show_menu` call in the flow modules passes
+  `description_placeholders=docs_placeholders(...)`, and every
+  `async_create_issue` passes `translation_placeholders=docs_placeholders(...)`
+  — checked by AST, because the HA flow tests would not notice a missing
+  placeholder rendering literally as `{docs_url}`.
 
 ## 5. CI and publishing
 
