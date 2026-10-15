@@ -40,6 +40,14 @@ data:
   overwrite: true
 ```
 
+**Or have a model write the file for you.** The YAML dialect is documented for
+exactly this: point an LLM at
+[`MODELS.md` §4](https://github.com/PeterLinuxOSS/ha-cover-logic/blob/main/MODELS.md)
+and a worked example,
+[`docs/example-config.yaml`](https://github.com/PeterLinuxOSS/ha-cover-logic/blob/main/docs/example-config.yaml),
+describe your house in plain language, and import the result with
+`dry_run: true` first, as above.
+
 ## `cover_logic.export_config`
 
 Writes the current configuration — whatever the subentries hold right now,

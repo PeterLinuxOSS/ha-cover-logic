@@ -41,8 +41,8 @@ own output as [`last_command`](reference/sensor.md#last_command).
 | Scope | Several zones and modes for a whole house in one config entry | One instance per window or cover group |
 | Decision | First-match rules you write, in plain YAML or the UI | A fixed sun-position algorithm per cover type |
 | Safety interlocks | `guards:` — skip, defer or force a blind for doors, wind, a running sauna | None built in |
-| Rollout | Shadow mode: decides and logs, moves nothing until you flip `dry_run` off | Starts acting immediately |
-| Why did it do that? | `sensor.cover_logic_mode`'s `trace` names the exact rule | Not exposed |
+| Rollout | Shadow mode: decides and logs, moves nothing until you flip `dry_run` off | No dry-run mode documented |
+| Why did it do that? | `sensor.cover_logic_mode`'s `trace` names the exact rule | No decision trace among its entities |
 | Noisy sensors | A `numeric_state` condition can debounce with `for:` and latch the result for the day | Fixed delta-position/delta-time throttling |
 | Setting up one window | More to configure | Simpler — built for exactly this |
 | What you can see | One diagnostic sensor | A target-position sensor, sun start/end times, a "sun in front of window" binary sensor, and more, per instance |
