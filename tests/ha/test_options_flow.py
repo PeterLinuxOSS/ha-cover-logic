@@ -30,7 +30,7 @@ from homeassistant.data_entry_flow import FlowResultType
 from cover_logic import conformance
 from cover_logic.config_flow import CoverLogicConfigFlow
 from cover_logic.config_store import BLIND, MODE, RULE, VALUE, ZONE
-from cover_logic.const import RULE_DEFAULT_ZONE
+from cover_logic.const import DOCS_URL, RULE_DEFAULT_ZONE
 from cover_logic.options_flow import CoverLogicOptionsFlow
 
 _ENTRY_ID = "entry1"
@@ -104,7 +104,7 @@ def test_empty_section_offers_only_add_and_back(subentry_entry, options_hass):
     result = _menu(asyncio.run(flow.async_step_blinds(None)))
 
     assert result["menu_options"] == ["add", "back"]
-    assert result["description_placeholders"] == {"count": "0"}
+    assert result["description_placeholders"] == {"docs_url": DOCS_URL, "count": "0"}
 
 
 def test_nonempty_section_offers_edit_and_remove_too(subentry_entry, options_hass):
@@ -115,7 +115,7 @@ def test_nonempty_section_offers_edit_and_remove_too(subentry_entry, options_has
     result = _menu(asyncio.run(flow.async_step_blinds(None)))
 
     assert result["menu_options"] == ["add", "edit", "remove", "back"]
-    assert result["description_placeholders"] == {"count": "1"}
+    assert result["description_placeholders"] == {"docs_url": DOCS_URL, "count": "1"}
 
 
 def test_config_flow_wires_up_this_options_flow():

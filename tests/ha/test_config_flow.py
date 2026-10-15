@@ -52,7 +52,7 @@ from cover_logic.config_store import (
     config_from_subentries,
     entry_from_subentry_items,
 )
-from cover_logic.const import CONF_CONFIG_PATH, DEFAULT_CONFIG_PATH, DOMAIN
+from cover_logic.const import CONF_CONFIG_PATH, DEFAULT_CONFIG_PATH, DOCS_URL, DOMAIN
 from cover_logic.model import Blind, Config
 from cover_logic.starter_config import _OPEN_POSITION, _SHADE_POSITION, _SHADE_TILT
 from cover_logic.validation import ERROR, validate
@@ -174,7 +174,7 @@ def test_blinds_now_moves_on_to_the_facing_question(flow_hass):
 
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "blinds_now_facing"
-    assert result["description_placeholders"] == {"blind": "cover.a"}
+    assert result["description_placeholders"] == {"docs_url": DOCS_URL, "blind": "cover.a"}
 
 
 def test_blinds_now_facing_asks_once_per_blind_in_order(flow_hass):
@@ -189,7 +189,7 @@ def test_blinds_now_facing_asks_once_per_blind_in_order(flow_hass):
 
     assert second["type"] is FlowResultType.FORM
     assert second["step_id"] == "blinds_now_facing"
-    assert second["description_placeholders"] == {"blind": "cover.b"}
+    assert second["description_placeholders"] == {"docs_url": DOCS_URL, "blind": "cover.b"}
 
 
 def test_blinds_now_facing_options_are_translatable(flow_hass):

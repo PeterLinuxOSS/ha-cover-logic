@@ -122,6 +122,7 @@ from .const import (
     OPT_FIXTURE_PATH,
     RULE_DEFAULT_ZONE,
 )
+from .docs_link import docs_placeholders
 from .model import Config
 from .services import (
     ATTR_DRY_RUN,
@@ -605,7 +606,9 @@ class CoverLogicOptionsFlow(OptionsFlow):
         placeholders["health_summary"] = _health_summary_text(entry)
         placeholders["execution_summary"] = _execution_summary_text(entry)
         return self.async_show_menu(
-            step_id="init", menu_options=_MAIN_MENU_OPTIONS, description_placeholders=placeholders
+            step_id="init",
+            menu_options=_MAIN_MENU_OPTIONS,
+            description_placeholders=docs_placeholders(placeholders),
         )
 
     # -- Per-section list menu ------------------------------------------
@@ -682,7 +685,7 @@ class CoverLogicOptionsFlow(OptionsFlow):
         return self.async_show_menu(
             step_id=self._section,
             menu_options=options,
-            description_placeholders={"count": str(len(items))},
+            description_placeholders=docs_placeholders({"count": str(len(items))}),
         )
 
     async def async_step_back(self, user_input: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -710,7 +713,9 @@ class CoverLogicOptionsFlow(OptionsFlow):
             return await self._show_section_menu()
         result = _rule_overview_text(self.config_entry)
         return self.async_show_form(
-            step_id="list", data_schema=vol.Schema({}), description_placeholders={"result": result}
+            step_id="list",
+            data_schema=vol.Schema({}),
+            description_placeholders=docs_placeholders({"result": result}),
         )
 
     # -- Rules: one zone's own screen, own rules and inherited defaults ----
@@ -735,7 +740,11 @@ class CoverLogicOptionsFlow(OptionsFlow):
         """Pick the `(mode, zone)` pair whose effective rule list to look at."""
         entry = self.config_entry
         if user_input is None:
-            return self.async_show_form(step_id="zone", data_schema=_rule_pick_schema(entry))
+            return self.async_show_form(
+                step_id="zone",
+                data_schema=_rule_pick_schema(entry),
+                description_placeholders=docs_placeholders(),
+            )
         self._zone_pick = dict(user_input)
         return await self.async_step_zone_rules(None)
 
@@ -777,7 +786,7 @@ class CoverLogicOptionsFlow(OptionsFlow):
             return self.async_show_form(
                 step_id="zone_rules",
                 data_schema=vol.Schema({}),
-                description_placeholders=placeholders,
+                description_placeholders=docs_placeholders(placeholders),
             )
 
         errors: dict[str, str] = {}
@@ -816,7 +825,7 @@ class CoverLogicOptionsFlow(OptionsFlow):
             step_id="zone_rules",
             data_schema=schema,
             errors=errors,
-            description_placeholders=placeholders,
+            description_placeholders=docs_placeholders(placeholders),
         )
 
     # -- Add ------------------------------------------------------------
@@ -836,7 +845,9 @@ class CoverLogicOptionsFlow(OptionsFlow):
 
         if user_input is None:
             schema = _rule_pick_schema(self.config_entry)
-            return self.async_show_form(step_id="add", data_schema=schema)
+            return self.async_show_form(
+                step_id="add", data_schema=schema, description_placeholders=docs_placeholders()
+            )
 
         self._rule_pick = dict(user_input)
         return await self.async_step_add_rule_fields(None)
@@ -857,7 +868,9 @@ class CoverLogicOptionsFlow(OptionsFlow):
             self._pending_id = user_input[_PICK_FIELD]
             return await self.async_step_edit_form(None)
         return self.async_show_form(
-            step_id="edit", data_schema=_pick_schema(_items(entry, subentry_type))
+            step_id="edit",
+            data_schema=_pick_schema(_items(entry, subentry_type)),
+            description_placeholders=docs_placeholders(),
         )
 
     async def async_step_edit_form(
@@ -903,7 +916,12 @@ class CoverLogicOptionsFlow(OptionsFlow):
             {vol.Required(_CONFIRM_FIELD, default=False): selector.BooleanSelector()}
         )
         schema = self.add_suggested_values_to_schema(schema, user_input)
-        return self.async_show_form(step_id="remove", data_schema=schema, errors=errors)
+        return self.async_show_form(
+            step_id="remove",
+            data_schema=schema,
+            errors=errors,
+            description_placeholders=docs_placeholders(),
+        )
 
     # -- Shared add/edit form rendering ------------------------------------
 
@@ -955,7 +973,10 @@ class CoverLogicOptionsFlow(OptionsFlow):
                 self._pending_id = None
                 return await self._show_section_menu()
             return self.async_show_form(
-                step_id=step_id, data_schema=vol.Schema({}), errors={"base": "subentry_vanished"}
+                step_id=step_id,
+                data_schema=vol.Schema({}),
+                errors={"base": "subentry_vanished"},
+                description_placeholders=docs_placeholders(),
             )
 
         errors: dict[str, str] = {}
@@ -1002,7 +1023,7 @@ class CoverLogicOptionsFlow(OptionsFlow):
             step_id=step_id,
             data_schema=schema,
             errors=errors,
-            description_placeholders=placeholders,
+            description_placeholders=docs_placeholders(placeholders),
         )
 
     # -- Import / export ---------------------------------------------------
@@ -1069,7 +1090,7 @@ class CoverLogicOptionsFlow(OptionsFlow):
             step_id="import_export",
             data_schema=schema,
             errors=errors,
-            description_placeholders=placeholders,
+            description_placeholders=docs_placeholders(placeholders),
         )
 
     # -- Execution mode (the one screen that writes `entry.options`) --------
@@ -1128,6 +1149,7 @@ class CoverLogicOptionsFlow(OptionsFlow):
                     ),
                 }
             ),
+            description_placeholders=docs_placeholders(),
         )
 
     # -- Check against the old matrix --------------------------------------
@@ -1187,7 +1209,7 @@ class CoverLogicOptionsFlow(OptionsFlow):
         return self.async_show_form(
             step_id="check_matrix",
             data_schema=vol.Schema({}),
-            description_placeholders={"result": result},
+            description_placeholders=docs_placeholders({"result": result}),
         )
 
     async def _conformance_text(self, config: Config) -> str:
