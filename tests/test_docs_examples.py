@@ -1,4 +1,4 @@
-"""Every ```yaml block marked `title="config"` in the site must load."""
+"""Every ```yaml block marked `title="config"` in the site must load and validate without errors."""
 
 from pathlib import Path
 import re
@@ -6,6 +6,7 @@ import re
 import pytest
 
 from cover_logic.config_schema import load_config
+from cover_logic.validation import ERROR, validate
 
 _SITE = Path(__file__).parent.parent / "docs" / "site"
 _BLOCK = re.compile(r'```yaml title="config"\n(.*?)```', re.DOTALL)
@@ -15,8 +16,9 @@ _CASES = [
 
 
 @pytest.mark.parametrize(("page", "block"), _CASES, ids=[str(c[0]) for c in _CASES])
-def test_config_example_loads(page, block):
-    load_config(block)
+def test_config_example_loads_and_validates(page, block):
+    errors = [p for p in validate(load_config(block)) if p.severity == ERROR]
+    assert not errors, errors
 
 
 def test_there_are_examples():
