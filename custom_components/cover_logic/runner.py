@@ -1028,9 +1028,7 @@ class CoverRunner:
         `docs/rationale.md` -- "Why a live command logs at INFO".
         """
         level = (
-            logging.DEBUG
-            if kind == COMMAND_SUPPRESSED and not sequence.dry_run
-            else logging.INFO
+            logging.DEBUG if kind == COMMAND_SUPPRESSED and not sequence.dry_run else logging.INFO
         )
         _LOGGER.log(level, "%s", _format_line(sequence.dry_run, fields))
         if self._observer is None:
