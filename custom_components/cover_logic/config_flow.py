@@ -102,6 +102,7 @@ from .config_schema import ConfigError, load_config_file
 from .config_store import subentries_from_config
 from .conformance import repo_example_config_path
 from .const import CONF_CONFIG_PATH, CONFIG_ENTRY_VERSION, DEFAULT_CONFIG_PATH, DOMAIN
+from .docs_link import docs_placeholders
 from .options_flow import CoverLogicOptionsFlow
 from .services import _title_for
 from .starter_config import (
@@ -253,6 +254,7 @@ class CoverLogicConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_menu(
             step_id="user",
             menu_options=[_STEP_BLINDS_NOW, _STEP_FROM_FILE, _STEP_FROM_EXAMPLE, _STEP_EMPTY],
+            description_placeholders=docs_placeholders(),
         )
 
     # Set by `async_step_blinds_now`, consumed and updated by
@@ -297,7 +299,12 @@ class CoverLogicConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return await self.async_step_blinds_now_facing(None)
 
         schema = self.add_suggested_values_to_schema(_BLINDS_NOW_SCHEMA, user_input)
-        return self.async_show_form(step_id=_STEP_BLINDS_NOW, data_schema=schema, errors=errors)
+        return self.async_show_form(
+            step_id=_STEP_BLINDS_NOW,
+            data_schema=schema,
+            errors=errors,
+            description_placeholders=docs_placeholders(),
+        )
 
     async def async_step_blinds_now_facing(
         self, user_input: dict[str, Any] | None = None
@@ -342,7 +349,7 @@ class CoverLogicConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id=_STEP_BLINDS_NOW_FACING,
             data_schema=_FACING_SCHEMA,
-            description_placeholders={"blind": entity},
+            description_placeholders=docs_placeholders({"blind": entity}),
         )
 
     async def async_step_blinds_now_summary(
@@ -433,12 +440,14 @@ class CoverLogicConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id=_STEP_BLINDS_NOW_SUMMARY,
             data_schema=vol.Schema({}),
-            description_placeholders={
-                "blinds": _describe_starter_config(entities),
-                "shade_position": str(_SHADE_POSITION),
-                "shade_tilt": str(_SHADE_TILT),
-                "open_position": str(_OPEN_POSITION),
-            },
+            description_placeholders=docs_placeholders(
+                {
+                    "blinds": _describe_starter_config(entities),
+                    "shade_position": str(_SHADE_POSITION),
+                    "shade_tilt": str(_SHADE_TILT),
+                    "open_position": str(_OPEN_POSITION),
+                }
+            ),
         )
 
     async def async_step_from_file(
@@ -477,7 +486,7 @@ class CoverLogicConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id=_STEP_FROM_FILE,
             data_schema=schema,
             errors=errors,
-            description_placeholders=description_placeholders,
+            description_placeholders=docs_placeholders(description_placeholders),
         )
 
     async def async_step_from_example(
@@ -549,7 +558,7 @@ class CoverLogicConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id=_STEP_FROM_EXAMPLE,
             data_schema=vol.Schema({}),
             errors=errors,
-            description_placeholders=description_placeholders,
+            description_placeholders=docs_placeholders(description_placeholders),
         )
 
     async def async_step_example_not_available(
@@ -568,7 +577,11 @@ class CoverLogicConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """
         if user_input is not None:
             return await self.async_step_user(None)
-        return self.async_show_form(step_id="example_not_available", data_schema=vol.Schema({}))
+        return self.async_show_form(
+            step_id="example_not_available",
+            data_schema=vol.Schema({}),
+            description_placeholders=docs_placeholders(),
+        )
 
     async def async_step_empty(
         self, user_input: dict[str, Any] | None = None
@@ -589,7 +602,11 @@ class CoverLogicConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """
         if user_input is not None:
             return self.async_create_entry(title="Cover Logic", data={}, subentries=[])
-        return self.async_show_form(step_id=_STEP_EMPTY, data_schema=vol.Schema({}))
+        return self.async_show_form(
+            step_id=_STEP_EMPTY,
+            data_schema=vol.Schema({}),
+            description_placeholders=docs_placeholders(),
+        )
 
     @classmethod
     @callback

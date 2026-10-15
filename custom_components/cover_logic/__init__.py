@@ -39,6 +39,7 @@ from .const import (
     DOMAIN,
     OPT_FIXTURE_PATH,
 )
+from .docs_link import docs_placeholders
 from .model import Config
 from .readiness import name_list
 from .validation import ERROR, WARNING, validate
@@ -285,7 +286,7 @@ async def _check_fixture_conformance(
         is_fixable=False,
         severity=ir.IssueSeverity.WARNING,
         translation_key=_FIXTURE_DRIFT_ISSUE,
-        translation_placeholders={"fields": ", ".join(sorted(diff))},
+        translation_placeholders=docs_placeholders({"fields": ", ".join(sorted(diff))}),
     )
 
 
@@ -435,10 +436,12 @@ async def _check_config_warnings(hass: "HomeAssistant", config: Config, problems
         is_fixable=False,
         severity=ir.IssueSeverity.WARNING,
         translation_key=_CONFIG_WARNINGS_ISSUE,
-        translation_placeholders={
-            "count": str(len(warnings)),
-            "warnings": name_list(tuple(warnings)),
-        },
+        translation_placeholders=docs_placeholders(
+            {
+                "count": str(len(warnings)),
+                "warnings": name_list(tuple(warnings)),
+            }
+        ),
     )
 
 
@@ -488,7 +491,9 @@ async def _check_blind_capabilities(hass: "HomeAssistant", config: Config) -> No
         is_fixable=False,
         severity=ir.IssueSeverity.WARNING,
         translation_key=_MISSING_FEATURES_ISSUE,
-        translation_placeholders={"count": str(len(short)), "blinds": name_list(tuple(short))},
+        translation_placeholders=docs_placeholders(
+            {"count": str(len(short)), "blinds": name_list(tuple(short))}
+        ),
     )
 
 
@@ -555,7 +560,9 @@ async def _check_referenced_entities(hass: "HomeAssistant", config: Config) -> N
         is_fixable=False,
         severity=ir.IssueSeverity.WARNING,
         translation_key=_UNKNOWN_ENTITIES_ISSUE,
-        translation_placeholders={"count": str(len(unknown)), "entities": name_list(unknown)},
+        translation_placeholders=docs_placeholders(
+            {"count": str(len(unknown)), "entities": name_list(unknown)}
+        ),
     )
 
 

@@ -91,6 +91,7 @@ from .const import (
     GUARD_TIMEOUTS,
     RULE_DEFAULT_ZONE,
 )
+from .docs_link import docs_placeholders
 from .geometry import SCALES
 from .validation import ERROR, Problem, validate
 
@@ -535,7 +536,7 @@ class _SubentryFlowBase(config_entries.ConfigSubentryFlow):
             step_id=step_id,
             data_schema=schema,
             errors=errors,
-            description_placeholders=description_placeholders,
+            description_placeholders=docs_placeholders(description_placeholders),
         )
 
 
@@ -1328,7 +1329,11 @@ class RuleSubentryFlowHandler(_SubentryFlowBase):
             self._pick = dict(user_input)
             return await self._step(None, step_id="rule")
 
-        return self.async_show_form(step_id="user", data_schema=_rule_pick_schema(entry))
+        return self.async_show_form(
+            step_id="user",
+            data_schema=_rule_pick_schema(entry),
+            description_placeholders=docs_placeholders(),
+        )
 
     async def async_step_rule(
         self, user_input: dict[str, Any] | None = None
@@ -1666,7 +1671,11 @@ class GuardSubentryFlowHandler(_SubentryFlowBase):
             self._policy = str(user_input[_GUARD_POLICY_FIELD])
             return await self._step(None, step_id="guard")
 
-        return self.async_show_form(step_id="user", data_schema=_guard_pick_schema(entry))
+        return self.async_show_form(
+            step_id="user",
+            data_schema=_guard_pick_schema(entry),
+            description_placeholders=docs_placeholders(),
+        )
 
     async def async_step_guard(
         self, user_input: dict[str, Any] | None = None
@@ -1702,6 +1711,7 @@ class GuardSubentryFlowHandler(_SubentryFlowBase):
                         _GUARD_NAME_FIELD: data.get(_GUARD_NAME_FIELD, ""),
                     },
                 ),
+                description_placeholders=docs_placeholders(),
             )
 
         return await super().async_step_reconfigure(user_input)
