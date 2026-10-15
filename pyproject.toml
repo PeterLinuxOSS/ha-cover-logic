@@ -162,3 +162,9 @@ known-first-party = ["cover_logic"]
     "D205",
     "PLR2004",
 ]
+# Pins the docs reference against the parser's own key sets, which are
+# private on purpose (see config_schema.py's own module docstring) -- the
+# alternative is making them public just for this one test file.
+"tests/test_reference_fields.py" = ["SLF001"]
+# A standalone CLI script, not a package meant to be imported.
+"scripts/**" = ["INP001"]
