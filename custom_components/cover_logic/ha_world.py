@@ -7,6 +7,8 @@ conditions, config_schema) stays pure; this is the seam where the live house
 turns into the plain data those pure modules understand.
 """
 
+from collections.abc import Mapping
+from dataclasses import replace
 from typing import Any
 
 from homeassistant.const import SUN_EVENT_SUNRISE, SUN_EVENT_SUNSET
@@ -14,12 +16,18 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.sun import get_astral_event_date
 import homeassistant.util.dt as dt_util
 
-from .config_schema import referenced_entities
+from .config_schema import all_condition_nodes, referenced_entities
+from .debounce import resolve
 from .model import Config
 from .world import Event, SunTimes, World
 
 
-def build_world(hass: HomeAssistant, config: Config, event: Event | None = None) -> World:
+def build_world(
+    hass: HomeAssistant,
+    config: Config,
+    event: Event | None = None,
+    numeric_since: Mapping[str, Any] | None = None,
+) -> World:
     """Snapshot exactly what `config` reads out of `hass`'s state machine.
 
     Reads only the entities and attributes named by
@@ -79,13 +87,20 @@ def build_world(hass: HomeAssistant, config: Config, event: Event | None = None)
         # the *state* has held.
         since[entity_id] = now_naive - (now - state.last_changed)
 
-    return World(
+    world = World(
         states=states,
         attributes=attributes,
         now=now_naive,
         event=event if event is not None else Event(),
         sun=_sun_times(hass, now),
         since=since,
+    )
+    # Resolved from the finished snapshot and folded back in, so every reader
+    # of a latching threshold gets one answer per evaluation rather than each
+    # recomputing it against a world that is still being assembled.
+    return replace(
+        world,
+        numeric_since=resolve(all_condition_nodes(config), world, numeric_since or {}),
     )
 
 

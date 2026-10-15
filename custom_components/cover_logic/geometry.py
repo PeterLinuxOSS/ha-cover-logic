@@ -34,6 +34,9 @@ def slat_angle_percent(
     cannot block this beam at all -- and the caller turns it into the value's
     stated `default`.
     """
+    # A broken sensor is an undefined case, not a crash: inf raises in tan(), NaN in int().
+    if not all(map(math.isfinite, (elevation, gamma_deg, slat_distance, slat_depth))):
+        return None
     if elevation <= 0.0 or slat_depth <= 0.0 or slat_distance < 0.0:
         return None
     # At or past edge-on there is no beam to block, and cos(gamma) would flip sign.
