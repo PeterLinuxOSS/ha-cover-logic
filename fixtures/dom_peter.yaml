@@ -605,8 +605,9 @@ rules:
 # Ktoré pohyby nie sú od človeka. Presne tie štyri, ktoré vylučuje aj
 # `automation.Žalúzie - detekcia ručného zásahu` -- `script.<x>` je `on` len
 # počas vlastného behu, takže pohyb v tom čase je od skriptu.
-# Zatiaľ to nič nečíta: detektor sa zapojí až krokom 4.
+# `hold`: ručný pohyb nechá žalúziu na pokoji, kým sa jej cieľ nezmení (viď dennik 2026-10-02).
 manual_detection:
+  hold: true
   ignore_while_on:
     - script.zaluzie_uplatnit
     - script.spalna_odhnutie

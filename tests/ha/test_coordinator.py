@@ -990,3 +990,122 @@ def test_a_failing_output_write_does_not_block_the_blind(hass_factory, runtime_e
             await hass.async_stop(force=True)
 
     asyncio.run(_run())
+
+
+_HOLD_CONFIG = """
+blinds:
+  - {entity: cover.a, travel_time: 1}
+zones:
+  za:
+    members: [cover.a]
+conditions:
+  night: {condition: state, entity_id: input_boolean.night, state: "on"}
+modes:
+  - {id: noc, when: !ref night}
+  - {id: bezny_den}
+rules:
+  bezny_den.za:
+    - {then: {position: 50, tilt: 50}}
+  noc.za:
+    - {then: {position: 0, tilt: 0}}
+manual_detection:
+  hold: true
+"""
+
+
+# Same house without `hold`; the manual_move rule only makes it watch the blind,
+# as terasa's directional guard does in the house.
+_NO_HOLD_CONFIG = _HOLD_CONFIG.replace("hold: true", "hold: false").replace(
+    "  noc.za:\n",
+    "  noc.za:\n    - {if: {condition: manual_move}, then: {position: keep, tilt: keep}}\n",
+)
+
+
+def _hold_case(hass_factory, runtime_entry, config_text, body):
+    """A coordinator in `noc` with cover.a already closed, as on 2026-10-01 19:00."""
+
+    async def _run():
+        hass = hass_factory()
+        try:
+            hass.states.async_set("input_boolean.night", "on")
+            hass.states.async_set(
+                "cover.a", "closed", {"current_position": 0, "current_tilt_position": 0}
+            )
+            coordinator = CoverLogicCoordinator(hass, load_config(config_text), runtime_entry())
+            await coordinator.async_setup()
+            await asyncio.sleep(_WAIT)
+            await coordinator.runner.async_wait_idle()
+            await body(hass, coordinator)
+            await coordinator.async_unload()
+        finally:
+            await hass.async_stop(force=True)
+
+    asyncio.run(_run())
+
+
+def _commanded(coordinator, since):
+    """Commands for cover.a issued after `since` entries existed (`recent` is newest first)."""
+    new = list(coordinator.commands.recent)[: len(coordinator.commands.recent) - since]
+    return [e for e in new if e["kind"] == COMMAND_WOULD_CALL and e["blind"] == "cover.a"]
+
+
+def test_without_hold_a_person_opening_at_night_is_closed_again(hass_factory, runtime_entry):
+    """The 2026-10-01 incident: the open from the app was undone 8 s later, 12 times over."""
+
+    async def _body(hass, coordinator):
+        since = len(coordinator.commands.recent)
+        _moved(hass, context=Context(user_id="u1"), position=100, tilt=0)
+        await asyncio.sleep(_WAIT)
+        _moved(hass, context=Context(), position=60, tilt=0)
+        await asyncio.sleep(_WAIT)
+        await coordinator.runner.async_wait_idle()
+        assert _commanded(coordinator, since)
+
+    _hold_case(hass_factory, runtime_entry, _NO_HOLD_CONFIG, _body)
+
+
+def test_a_person_opening_at_night_is_left_alone(hass_factory, runtime_entry):
+    async def _body(hass, coordinator):
+        since = len(coordinator.commands.recent)
+        _moved(hass, context=Context(user_id="u1"), position=100, tilt=0)
+        await asyncio.sleep(_WAIT)
+        await coordinator.runner.async_wait_idle()
+        # The blind keeps reporting while it travels; none of that may wake the old target.
+        _moved(hass, context=Context(), position=60, tilt=0)
+        await asyncio.sleep(_WAIT)
+        await coordinator.runner.async_wait_idle()
+        assert _commanded(coordinator, since) == []
+        assert "cover.a" in coordinator.manual_holds
+
+    _hold_case(hass_factory, runtime_entry, _HOLD_CONFIG, _body)
+
+
+def test_the_hold_ends_when_the_target_changes(hass_factory, runtime_entry):
+    """Morning switches the mode, the target changes, and the blind is ours again."""
+
+    async def _body(hass, coordinator):
+        _moved(hass, context=Context(user_id="u1"), position=100, tilt=0)
+        await asyncio.sleep(_WAIT)
+        await coordinator.runner.async_wait_idle()
+        since = len(coordinator.commands.recent)
+        hass.states.async_set("input_boolean.night", "off")
+        await asyncio.sleep(_WAIT)
+        await coordinator.runner.async_wait_idle()
+        assert _commanded(coordinator, since), [dict(e) for e in coordinator.commands.recent]
+        assert "cover.a" not in coordinator.manual_holds
+
+    _hold_case(hass_factory, runtime_entry, _HOLD_CONFIG, _body)
+
+
+def test_our_own_move_never_starts_a_hold(hass_factory, runtime_entry):
+    async def _body(hass, coordinator):
+        _moved(hass, context=Context(), position=100, tilt=0)
+        await asyncio.sleep(_WAIT)
+        await coordinator.runner.async_wait_idle()
+        assert coordinator.manual_holds == {}
+
+    _hold_case(hass_factory, runtime_entry, _HOLD_CONFIG, _body)
+
+
+def test_hold_subscribes_every_blind():
+    assert _manual_move_blinds(load_config(_HOLD_CONFIG)) == {"cover.a"}

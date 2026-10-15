@@ -442,17 +442,20 @@
           "title": "Detekcia ručného zásahu",
           "description": "Ktoré pohyby nie sú od človeka. Toto nastavenie je pre celý dom jedno jediné.",
           "data": {
-            "ignore_while_on": "Ignoruj pohyby, kým je niektorá z nich zapnutá"
+            "ignore_while_on": "Ignoruj pohyby, kým je niektorá z nich zapnutá",
+            "hold": "Nechať žalúziu, ktorou pohol človek, kým sa nezmení cieľ"
           },
           "data_description": {
-            "ignore_while_on": "Entita skriptu je zapnutá presne po dobu svojho behu, takže menovať ju tu znamená „čokoľvek, čo sa pohne počas tohto skriptu, je od skriptu, nie od človeka\". Funguje akákoľvek entita, nielen skripty — input boolean, ktorý si dom zapína okolo vlastných hromadných pohybov, robí to isté."
+            "ignore_while_on": "Entita skriptu je zapnutá presne po dobu svojho behu, takže menovať ju tu znamená „čokoľvek, čo sa pohne počas tohto skriptu, je od skriptu, nie od človeka\". Funguje akákoľvek entita, nielen skripty — input boolean, ktorý si dom zapína okolo vlastných hromadných pohybov, robí to isté.",
+            "hold": "Pohyb človeka z appky alebo vypínača sa rešpektuje: integrácia prestane tej žalúzii znova posielať jej súčasný cieľ a prevezme ju až vtedy, keď sa cieľ zmení -- zvyčajne pri ďalšom režime. Poistky platia ďalej."
           }
         },
         "reconfigure": {
           "title": "Upraviť detekciu ručného zásahu",
           "description": "Ktoré pohyby nie sú od človeka.",
           "data": {
-            "ignore_while_on": "Ignoruj pohyby, kým je niektorá z nich zapnutá"
+            "ignore_while_on": "Ignoruj pohyby, kým je niektorá z nich zapnutá",
+            "hold": "Nechať žalúziu, ktorou pohol človek, kým sa nezmení cieľ"
           }
         }
       },

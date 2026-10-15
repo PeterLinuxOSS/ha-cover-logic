@@ -246,6 +246,9 @@ class ManualDetection:
     """
 
     ignore_while_on: tuple[str, ...] = ()
+    # A person's move leaves that blind alone until its target changes;
+    # see `coordinator._apply_holds`.
+    hold: bool = False
 
 
 @dataclass(frozen=True)

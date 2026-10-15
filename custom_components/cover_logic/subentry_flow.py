@@ -1953,6 +1953,7 @@ class GuardSubentryFlowHandler(_SubentryFlowBase):
 
 
 _MD_IGNORE_FIELD = "ignore_while_on"
+_MD_HOLD_FIELD = "hold"
 
 
 class ManualDetectionSubentryFlowHandler(_SubentryFlowBase):
@@ -1993,16 +1994,23 @@ class ManualDetectionSubentryFlowHandler(_SubentryFlowBase):
                 vol.Optional(_MD_IGNORE_FIELD, default=list): selector.EntitySelector(
                     selector.EntitySelectorConfig(multiple=True)
                 ),
+                vol.Optional(_MD_HOLD_FIELD, default=False): selector.BooleanSelector(),
             }
         )
 
     def _to_data(self, entry: Any, user_input: dict[str, Any]) -> dict[str, Any]:
         """Write the list, always -- an empty one is a meaningful "exclude nothing"."""
-        return {_MD_IGNORE_FIELD: list(user_input.get(_MD_IGNORE_FIELD) or [])}
+        data: dict[str, Any] = {_MD_IGNORE_FIELD: list(user_input.get(_MD_IGNORE_FIELD) or [])}
+        if user_input.get(_MD_HOLD_FIELD):
+            data[_MD_HOLD_FIELD] = True
+        return data
 
     def _to_form_values(self, data: dict[str, Any]) -> dict[str, Any]:
         """Invert `_to_data`, to prefill a reconfigure form."""
-        return {_MD_IGNORE_FIELD: list(data.get(_MD_IGNORE_FIELD) or [])}
+        return {
+            _MD_IGNORE_FIELD: list(data.get(_MD_IGNORE_FIELD) or []),
+            _MD_HOLD_FIELD: bool(data.get(_MD_HOLD_FIELD, False)),
+        }
 
     def _candidate_id(self, candidate: Any, subentry_id: str, data: dict[str, Any]) -> Any:
         """There is only one, so its identity is its type."""

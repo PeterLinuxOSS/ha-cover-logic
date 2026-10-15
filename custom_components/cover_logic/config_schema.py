@@ -85,7 +85,7 @@ _TOP_LEVEL_KEYS = {
     "values",
     "zones",
 }
-_MANUAL_DETECTION_KEYS = {"ignore_while_on"}
+_MANUAL_DETECTION_KEYS = {"ignore_while_on", "hold"}
 _ZONE_KEYS = {"members", "occupants"}
 
 # A cover's position and tilt are both percentages.
@@ -273,7 +273,19 @@ def parse_manual_detection(node: Any) -> ManualDetection:
                 f"of the form '<domain>.<object_id>'"
             )
             raise ConfigError(msg)
-    return ManualDetection(ignore_while_on=entities)
+    hold = mapping.get("hold", False)
+    if not isinstance(hold, bool):
+        msg = f"manual_detection hold must be true or false, got {hold!r}"
+        raise ConfigError(msg)
+    return ManualDetection(ignore_while_on=entities, hold=hold)
+
+
+def _manual_detection_to_dict(md: ManualDetection) -> dict[str, Any]:
+    """Serialise `manual_detection`; `hold` only when on, so older exports stay byte-identical."""
+    doc: dict[str, Any] = {"ignore_while_on": list(md.ignore_while_on)}
+    if md.hold:
+        doc["hold"] = True
+    return doc
 
 
 def load_config_file(path: str | Path) -> Config:
@@ -512,8 +524,8 @@ def dump_config(config: Config) -> str:
             name: unparse_condition(body, RefTag)
             for name, body in sorted(config.conditions.items())
         }
-    if config.manual_detection.ignore_while_on:
-        doc["manual_detection"] = {"ignore_while_on": list(config.manual_detection.ignore_while_on)}
+    if config.manual_detection != ManualDetection():
+        doc["manual_detection"] = _manual_detection_to_dict(config.manual_detection)
     if config.modes:
         doc["modes"] = [_mode_to_dict(mode) for mode in config.modes]
     if config.rules:

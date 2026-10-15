@@ -442,17 +442,20 @@
           "title": "Manual detection",
           "description": "Which movements are not a person's. There is only one of these settings for the whole house.",
           "data": {
-            "ignore_while_on": "Ignore movements while any of these is on"
+            "ignore_while_on": "Ignore movements while any of these is on",
+            "hold": "Leave a blind a person moved alone until its target changes"
           },
           "data_description": {
-            "ignore_while_on": "A script entity is on for exactly its own run, so naming one here means \"anything that moves while this script runs came from the script, not from a person\". Any entity works, not only scripts -- an input boolean a house sets around its own bulk movements does the same job."
+            "ignore_while_on": "A script entity is on for exactly its own run, so naming one here means \"anything that moves while this script runs came from the script, not from a person\". Any entity works, not only scripts -- an input boolean a house sets around its own bulk movements does the same job.",
+            "hold": "A person's move from the app or a wall switch is respected: this integration stops re-sending that blind's current target and takes the blind back only when the target itself changes -- usually at the next mode. Guards still act."
           }
         },
         "reconfigure": {
           "title": "Edit manual detection",
           "description": "Which movements are not a person's.",
           "data": {
-            "ignore_while_on": "Ignore movements while any of these is on"
+            "ignore_while_on": "Ignore movements while any of these is on",
+            "hold": "Leave a blind a person moved alone until its target changes"
           }
         }
       },
