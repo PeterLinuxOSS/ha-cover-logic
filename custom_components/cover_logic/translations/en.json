@@ -307,7 +307,7 @@
             "name": "Name (shown in the decision trace)"
           },
           "data_description": {
-            "order": "Lower is tried first; suggested ten past the last rule in this list, leaving room to insert one later.",
+            "order": "Lower is tried first, suggested ten past the last rule; no two rules in a list may share an order.",
             "position": "Pick 'keep' to leave this axis alone, pick a configured value to read the number from that helper at decision time, or type a number from 0 to 100.",
             "tilt": "Pick 'keep' to leave this axis alone, pick a configured value to read the number from that helper at decision time, or type a number from 0 to 100.",
             "events": "Leave empty to apply to every event."
@@ -328,7 +328,7 @@
             "name": "Name (shown in the decision trace)"
           },
           "data_description": {
-            "order": "Lower is tried first; suggested ten past the last rule in this list, leaving room to insert one later.",
+            "order": "Lower is tried first, suggested ten past the last rule; no two rules in a list may share an order.",
             "position": "Pick 'keep' to leave this axis alone, pick a configured value to read the number from that helper at decision time, or type a number from 0 to 100.",
             "tilt": "Pick 'keep' to leave this axis alone, pick a configured value to read the number from that helper at decision time, or type a number from 0 to 100.",
             "events": "Leave empty to apply to every event."
@@ -640,7 +640,7 @@
           "name": "Name (shown in the decision trace)"
         },
         "data_description": {
-          "order": "Lower is tried first; suggested ten past the last rule in this list, leaving room to insert one later.",
+          "order": "Lower is tried first, suggested ten past the last rule; no two rules in a list may share an order.",
           "position": "Pick 'keep' to leave this axis alone, pick a configured value to read the number from that helper at decision time, or type a number from 0 to 100.",
           "tilt": "Pick 'keep' to leave this axis alone, pick a configured value to read the number from that helper at decision time, or type a number from 0 to 100.",
           "events": "Leave empty to apply to every event."

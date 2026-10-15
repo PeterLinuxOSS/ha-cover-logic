@@ -307,7 +307,7 @@
             "name": "Názov (zobrazí sa v zázname rozhodnutia)"
           },
           "data_description": {
-            "order": "Nižšie sa skúša skôr; návrh je o desať vyššie než posledné pravidlo v zozname, aby sa dalo neskôr vložiť ďalšie.",
+            "order": "Nižšie sa skúša skôr, návrh je o desať vyššie než posledné pravidlo; dve pravidlá nemôžu mať rovnaké poradie.",
             "position": "Zvoľte „keep“, ak sa má os nechať tak, zvoľte nastavenú hodnotu, ak sa má číslo prečítať z pomocníka pri rozhodovaní, alebo napíšte číslo od 0 do 100.",
             "tilt": "Zvoľte „keep“, ak sa má os nechať tak, zvoľte nastavenú hodnotu, ak sa má číslo prečítať z pomocníka pri rozhodovaní, alebo napíšte číslo od 0 do 100.",
             "events": "Nechajte prázdne, ak má pravidlo platiť pre každú udalosť."
@@ -328,7 +328,7 @@
             "name": "Názov (zobrazí sa v zázname rozhodnutia)"
           },
           "data_description": {
-            "order": "Nižšie sa skúša skôr; návrh je o desať vyššie než posledné pravidlo v zozname, aby sa dalo neskôr vložiť ďalšie.",
+            "order": "Nižšie sa skúša skôr, návrh je o desať vyššie než posledné pravidlo; dve pravidlá nemôžu mať rovnaké poradie.",
             "position": "Zvoľte „keep“, ak sa má os nechať tak, zvoľte nastavenú hodnotu, ak sa má číslo prečítať z pomocníka pri rozhodovaní, alebo napíšte číslo od 0 do 100.",
             "tilt": "Zvoľte „keep“, ak sa má os nechať tak, zvoľte nastavenú hodnotu, ak sa má číslo prečítať z pomocníka pri rozhodovaní, alebo napíšte číslo od 0 do 100.",
             "events": "Nechajte prázdne, ak má pravidlo platiť pre každú udalosť."
@@ -640,7 +640,7 @@
           "name": "Názov (zobrazí sa v zázname rozhodnutia)"
         },
         "data_description": {
-          "order": "Nižšie sa skúša skôr; návrh je o desať vyššie než posledné pravidlo v zozname, aby sa dalo neskôr vložiť ďalšie.",
+          "order": "Nižšie sa skúša skôr, návrh je o desať vyššie než posledné pravidlo; dve pravidlá nemôžu mať rovnaké poradie.",
           "position": "Zvoľte „keep“, ak sa má os nechať tak, zvoľte nastavenú hodnotu, ak sa má číslo prečítať z pomocníka pri rozhodovaní, alebo napíšte číslo od 0 do 100.",
           "tilt": "Zvoľte „keep“, ak sa má os nechať tak, zvoľte nastavenú hodnotu, ak sa má číslo prečítať z pomocníka pri rozhodovaní, alebo napíšte číslo od 0 do 100.",
           "events": "Nechajte prázdne, ak má pravidlo platiť pre každú udalosť."
@@ -733,19 +733,19 @@
   "issues": {
     "fixture_drift": {
       "title": "Konfigurácia sa už nezhoduje s fixtures/dom_peter.yaml",
-      "description": "Konfigurácia sa už nezhoduje s fixture, ktorú meria migračná brána. Rozdielne polia: {fields}. [Viac]({docs_url}/reference/repairs/#fixture_drift/)"
+      "description": "Konfigurácia sa už nezhoduje s fixture, ktorú meria migračná brána. Rozdielne polia: {fields}. [Viac]({docs_url}/reference/repairs/#fixture_drift)"
     },
     "unknown_entities": {
       "title": "Konfigurácia odkazuje na entity, ktoré tento Home Assistant nemá",
-      "description": "{count} entít nazvaných tu v tomto Home Assistant neexistuje: {entities}. [Viac]({docs_url}/reference/repairs/#unknown_entities/)"
+      "description": "{count} entít nazvaných tu v tomto Home Assistant neexistuje: {entities}. [Viac]({docs_url}/reference/repairs/#unknown_entities)"
     },
     "blinds_missing_features": {
       "title": "Žalúzia nezvládne to, čo od nej pravidlá žiadajú",
-      "description": "{count} žalúziám tu chýbajú schopnosti, ktoré pravidlá potrebujú: {blinds}. [Viac]({docs_url}/reference/repairs/#blinds_missing_features/)"
+      "description": "{count} žalúziám tu chýbajú schopnosti, ktoré pravidlá potrebujú: {blinds}. [Viac]({docs_url}/reference/repairs/#blinds_missing_features)"
     },
     "config_warnings": {
       "title": "Konfigurácia má varovania",
-      "description": "Počet varovaní o tejto konfigurácii: {count}. {warnings}. [Viac]({docs_url}/reference/repairs/#config_warnings/)"
+      "description": "Počet varovaní o tejto konfigurácii: {count}. {warnings}. [Viac]({docs_url}/reference/repairs/#config_warnings)"
     }
   },
   "services": {

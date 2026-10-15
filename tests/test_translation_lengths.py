@@ -51,6 +51,18 @@ def test_every_learn_more_link_points_at_a_page(path):
     assert not broken, broken
 
 
+@pytest.mark.parametrize("path", _FILES, ids=lambda p: p.name)
+def test_every_docs_url_placeholder_is_inside_a_matched_link(path):
+    """A malformed Learn-more link (e.g. a stray `/` before the anchor) does not match `_LINK`
+    at all, so the test above silently finds nothing to check -- count the raw placeholder
+    occurrences against the regex's own match count to catch that instead.
+    """
+    mismatched = [
+        (p, s) for p, s in _strings(path) if s.count("{docs_url}") != len(_LINK.findall(s))
+    ]
+    assert not mismatched, mismatched
+
+
 def test_every_issue_and_subentry_step_links_to_the_site():
     strings = json.loads((_COMPONENT / "strings.json").read_text(encoding="utf-8"))
     missing = [k for k, v in strings["issues"].items() if "{docs_url}" not in v["description"]]
