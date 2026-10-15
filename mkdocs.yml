@@ -26,6 +26,10 @@ markdown_extensions:
           format: !!python/name:pymdownx.superfences.fence_code_format
 nav:
   - Home: index.md
+  - Getting started:
+      - getting-started/install.md
+      - getting-started/first-setup.md
+      - getting-started/shadow-mode.md
   - Concepts:
       - concepts/blinds.md
       - concepts/zones.md
@@ -34,4 +38,19 @@ nav:
       - concepts/values.md
       - concepts/guards.md
       - concepts/manual-moves.md
-  - Reference: [reference/configuration.md]
+  - How-to:
+      - how-to/shade-by-sun.md
+      - how-to/dusk-by-lux.md
+      - how-to/door-interlock.md
+      - how-to/heatwave.md
+      - how-to/migrate.md
+  - Reference:
+      - reference/configuration.md
+      - reference/services.md
+      - reference/sensor.md
+      - reference/repairs.md
+  - Troubleshooting: troubleshooting.md
+  - For developers:
+      - Architecture (MODELS.md): https://github.com/PeterLinuxOSS/ha-cover-logic/blob/main/MODELS.md
+      - Rationale: https://github.com/PeterLinuxOSS/ha-cover-logic/blob/main/docs/rationale.md
+      - Contributing: https://github.com/PeterLinuxOSS/ha-cover-logic/blob/main/CONTRIBUTING.md
