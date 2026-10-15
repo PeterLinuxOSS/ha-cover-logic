@@ -23,9 +23,11 @@ rules: {}
 ## Fields
 
 - `members` — the blind entity ids decided together as this zone.
-- `occupants` — person names (as in `person.<name>`) whose arrival or
-  departure can target this zone, read by the `event_targets_zone`
-  condition. A zone with no `occupants` simply never matches that condition.
+- `occupants` — person names (as in `person.<name>`) read by the
+  [`event_targets_zone`](../reference/conditions.md#event_targets_zone)
+  condition. A zone with no `occupants` simply never matches that condition
+  (and the running integration raises no person events yet, so for now no
+  zone does).
 
 ## One zone per blind
 

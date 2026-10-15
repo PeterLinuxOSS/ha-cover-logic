@@ -34,8 +34,8 @@ rules:
 
 ## Why `default: 99999`, not a low number
 
-`numeric_state` requires an explicit `default` ([rules](../concepts/rules.md)
-mentions this in passing for every condition of this kind). For a "below"
+`numeric_state` requires an explicit `default` (see the
+[conditions reference](../reference/conditions.md#numeric_state)). For a "below"
 threshold, the default has to be a value that **fails** the comparison, so a
 missing or `unavailable` sensor reads as broad daylight rather than as dusk —
 the opposite mistake to [heatwave](heatwave.md)'s default, but the same

@@ -11,7 +11,7 @@
 blinds:
   entity: {type: entity id, default: required, range: "cover.*", help: "The cover this entry controls."}
   facade_azimuth: {type: degrees, default: none, range: "0–360", help: "Compass direction the window's outside faces."}
-  tolerance: {type: degrees, default: 45, range: "0–90", help: "How far either side of the facade the sun still counts as hitting it."}
+  tolerance: {type: degrees, default: 45, range: "0–180 (UI)", help: "How far either side of the facade the sun still counts as hitting it. YAML takes any number; 0 never matches, 180 or more always does."}
   travel_time: {type: seconds, default: 60, range: "> 0", help: "Time for a full run, used to wait for arrival before tilting."}
   has_tilt: {type: bool, default: true, help: "Whether the cover has a tilt channel."}
   tilt_after_arrival: {type: bool, default: true, help: "Send tilt only after the position move finishes."}
@@ -20,7 +20,7 @@ blinds:
 
 zones:
   members: {type: list of entity ids, default: none, help: "The blinds decided together as this zone."}
-  occupants: {type: list of person names, default: none, help: "Whose arrival or departure can target this zone."}
+  occupants: {type: list of person names, default: none, help: "Person names read by the event_targets_zone condition (see conditions)."}
 
 values_entity:
   type: {type: enum, default: entity, range: "entity or slat_angle", help: "Picks this shape -- a value read from a helper entity."}
@@ -44,7 +44,7 @@ modes:
 rules:
   if: {type: condition, default: none, help: "Condition that must match for this rule to apply; a rule with none always matches."}
   then: {type: action, default: required, help: "The position and tilt to apply when this rule matches."}
-  events: {type: list of event names, default: none, help: "Restricts this rule to specific triggering events; none means every event."}
+  events: {type: list of event names, default: none, help: "Restricts this rule to state_change, manual_move or arrival events; none means every event."}
   name: {type: string, default: "", help: "Label shown in the decision trace."}
 
 action:

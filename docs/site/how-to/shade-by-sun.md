@@ -4,7 +4,7 @@ The most common rule in this project: close a blind partway, angled, whenever
 the sun is actually on that side of the house — and leave it alone the rest
 of the time. This combines three concepts already covered on their own
 pages: a blind's [facade azimuth](../concepts/blinds.md), the
-[`sun_hits_target`](../concepts/rules.md) condition, and a
+[`sun_hits_target`](../reference/conditions.md#sun_hits_target) condition, and a
 [rule](../concepts/rules.md) that only partly acts (`position: keep`, only
 `tilt` set).
 

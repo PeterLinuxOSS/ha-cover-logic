@@ -84,7 +84,7 @@ way.
 When editing from the UI, a guard's own inline condition selector cannot
 carry the `default` a `numeric_state` needs — Home Assistant's selector
 rejects that key — so a guard gated on a numeric threshold must reference a
-named [condition](modes.md) instead.
+named [condition](../reference/conditions.md#named-conditions-and-ref) instead.
 
 ## `max_wait`, `on_timeout`, `recheck_every`
 

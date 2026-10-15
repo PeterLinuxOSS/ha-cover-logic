@@ -46,6 +46,7 @@ nav:
       - how-to/migrate.md
   - Reference:
       - reference/configuration.md
+      - reference/conditions.md
       - reference/services.md
       - reference/sensor.md
       - reference/repairs.md

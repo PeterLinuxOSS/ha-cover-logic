@@ -12,7 +12,7 @@
 | `slat_depth` | mm | none |  | Slat width front to back, needed only by slat_angle values. |
 | `slat_distance` | mm | none |  | Spacing between slats, needed only by slat_angle values. |
 | `tilt_after_arrival` | bool | true |  | Send tilt only after the position move finishes. |
-| `tolerance` | degrees | 45 | 0–90 | How far either side of the facade the sun still counts as hitting it. |
+| `tolerance` | degrees | 45 | 0–180 (UI) | How far either side of the facade the sun still counts as hitting it. YAML takes any number; 0 never matches, 180 or more always does. |
 | `travel_time` | seconds | 60 | > 0 | Time for a full run, used to wait for arrival before tilting. |
 
 ## zones
@@ -20,7 +20,7 @@
 | Field | Type | Default | Range | Meaning |
 |---|---|---|---|---|
 | `members` | list of entity ids | none |  | The blinds decided together as this zone. |
-| `occupants` | list of person names | none |  | Whose arrival or departure can target this zone. |
+| `occupants` | list of person names | none |  | Person names read by the event_targets_zone condition (see conditions). |
 
 ## values (entity)
 
@@ -54,7 +54,7 @@
 
 | Field | Type | Default | Range | Meaning |
 |---|---|---|---|---|
-| `events` | list of event names | none |  | Restricts this rule to specific triggering events; none means every event. |
+| `events` | list of event names | none |  | Restricts this rule to state_change, manual_move or arrival events; none means every event. |
 | `if` | condition | none |  | Condition that must match for this rule to apply; a rule with none always matches. |
 | `name` | string |  |  | Label shown in the decision trace. |
 | `then` | action | required |  | The position and tilt to apply when this rule matches. |

@@ -79,12 +79,12 @@ rules:
 
 ## `events`
 
-`events` restricts a rule to specific triggering events (for example
-`arrival`, fired when someone's `person.*` state changes and they occupy the
-zone — see [zones](zones.md#fields)). If the event that triggered this
-evaluation is not in the list, the rule is skipped regardless of its `if` —
-useful for a rule that should only fire the moment someone gets home, not on
-every later recompute while they stay home.
+`events` restricts a rule to specific triggering events: `state_change`
+(an ordinary recompute), `manual_move` (a person moved a blind, see
+[manual moves](manual-moves.md)) or `arrival`. If the event that triggered
+this evaluation is not in the list, the rule is skipped regardless of its
+`if`. The running integration currently produces only `state_change` and
+`manual_move`; `arrival` is accepted but nothing raises it yet.
 
 ## Common mistakes
 

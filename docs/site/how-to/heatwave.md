@@ -38,8 +38,8 @@ rules:
 
 ## `default` is the most important field here
 
-`numeric_state` requires an explicit `default` ([rules](../concepts/rules.md)
-reference it in passing; this is the condition it belongs to). For a
+`numeric_state` requires an explicit `default` (see the
+[conditions reference](../reference/conditions.md#numeric_state)). For a
 heatwave threshold, the default must read as **not a heatwave** — 20°C
 above, as here — so a dead or `unavailable` outdoor temperature sensor
 never fakes one and closes the whole house. Picking a default that *would*

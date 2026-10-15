@@ -8,10 +8,13 @@ import pytest
 import yaml
 
 from cover_logic import config_schema as cs
+from cover_logic.const import COND_REF
 from cover_logic.model import KEEP, UNSET
+from cover_logic.validation import _REQUIRED_CONDITION_KEYS
 
 _ROOT = Path(__file__).parent.parent
 _FIELDS = yaml.safe_load((_ROOT / "docs/site/reference/fields.yaml").read_text())
+_CONDITIONS_PAGE = (_ROOT / "docs/site/reference/conditions.md").read_text()
 _SECTIONS = {
     "blinds": cs._BLIND_KEYS,
     "zones": cs._ZONE_KEYS,
@@ -28,6 +31,19 @@ _SECTIONS = {
 @pytest.mark.parametrize("section", sorted(_SECTIONS))
 def test_documented_keys_equal_parser_keys(section):
     assert set(_FIELDS[section]) == set(_SECTIONS[section])
+
+
+@pytest.mark.parametrize("key", sorted(cs._TOP_LEVEL_KEYS))
+def test_every_top_level_key_is_documented(key):
+    """A top-level key is a fields.yaml section (or `<key>_*` sections) or the conditions page."""
+    in_fields = any(section == key or section.startswith(f"{key}_") for section in _FIELDS)
+    on_conditions_page = f"top-level `{key}:`" in _CONDITIONS_PAGE
+    assert in_fields or on_conditions_page
+
+
+@pytest.mark.parametrize("kind", sorted(set(_REQUIRED_CONDITION_KEYS) - {COND_REF}))
+def test_every_condition_type_is_documented(kind):
+    assert f"`{kind}`" in _CONDITIONS_PAGE
 
 
 _MINIMAL = """
