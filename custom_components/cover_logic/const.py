@@ -2,6 +2,9 @@
 
 DOMAIN = "cover_logic"
 
+# Published documentation site; every flow screen and repair issue links into it.
+DOCS_URL = "https://peterlinuxoss.github.io/ha-cover-logic"
+
 # The config entry's one data key: the path to the YAML rules file. Shared
 # between `__init__.py` (reads it) and `config_flow.py` (writes it), so the
 # two can never drift to different key spellings.
