@@ -35,12 +35,12 @@
 | Field | Type | Default | Range | Meaning |
 |---|---|---|---|---|
 | `azimuth_attribute` | attribute name | none |  | Attribute to read the azimuth from, if it is not the entity's state. |
-| `azimuth_entity` | entity id | sun.sun |  | Entity the sun's azimuth is read from. |
+| `azimuth_entity` | entity id | sensor.sun_solar_azimuth |  | Entity the sun's azimuth is read from. |
 | `default` | integer | required | 0–100 | Used when the sun is down, off this facade, or the slats cannot block it. |
 | `elevation_attribute` | attribute name | elevation |  | Attribute to read the elevation from. |
 | `elevation_entity` | entity id | sun.sun |  | Entity the sun's elevation is read from, if different from sun_entity. |
 | `scale` | enum | half | half or full | Which half of the slat's travel counts as fully closed to the sun. |
-| `sun_entity` | entity id | sun.sun |  | Entity the sun's elevation is read from. |
+| `sun_entity` | entity id | sun.sun |  | Entity checked for whether the sun is above the horizon. |
 | `type` | enum | required | slat_angle | Picks this shape -- a tilt computed from the sun's position. |
 
 ## modes
@@ -71,7 +71,7 @@
 | Field | Type | Default | Range | Meaning |
 |---|---|---|---|---|
 | `applies_to` | enum | any | any, closing, or opening | Which movement this guard watches; closing means a falling position, never the slats. |
-| `max_wait` | seconds | none | null means no limit | How long a defer may wait before on_timeout decides what happens; required for defer. |
+| `max_wait` | seconds or null | required for defer | null means no limit | How long a defer may wait before on_timeout decides what happens; omitting it is a configuration error for a defer, write null for an explicitly unlimited wait. |
 | `name` | string |  |  | Label shown in the decision trace. |
 | `on_timeout` | enum | none | proceed or abandon | What a defer does once max_wait runs out; required for defer. |
 | `policy` | enum | required | skip, defer, or force | What this guard does when it matches -- skip the movement, delay it, or force a different action. |

@@ -31,8 +31,8 @@ values_slat_angle:
   type: {type: enum, default: required, range: "slat_angle", help: "Picks this shape -- a tilt computed from the sun's position."}
   default: {type: integer, default: required, range: "0–100", help: "Used when the sun is down, off this facade, or the slats cannot block it."}
   scale: {type: enum, default: half, range: "half or full", help: "Which half of the slat's travel counts as fully closed to the sun."}
-  sun_entity: {type: entity id, default: "sun.sun", help: "Entity the sun's elevation is read from."}
-  azimuth_entity: {type: entity id, default: "sun.sun", help: "Entity the sun's azimuth is read from."}
+  sun_entity: {type: entity id, default: "sun.sun", help: "Entity checked for whether the sun is above the horizon."}
+  azimuth_entity: {type: entity id, default: "sensor.sun_solar_azimuth", help: "Entity the sun's azimuth is read from."}
   azimuth_attribute: {type: attribute name, default: none, help: "Attribute to read the azimuth from, if it is not the entity's state."}
   elevation_entity: {type: entity id, default: "sun.sun", help: "Entity the sun's elevation is read from, if different from sun_entity."}
   elevation_attribute: {type: attribute name, default: elevation, help: "Attribute to read the elevation from."}
@@ -57,7 +57,7 @@ guards:
   targets: {type: list of blind or zone ids, default: none, help: "What this guard covers; none means every blind."}
   applies_to: {type: enum, default: any, range: "any, closing, or opening", help: "Which movement this guard watches; closing means a falling position, never the slats."}
   stage: {type: enum, default: output, range: "input or output", help: "Whether this guard drops the target before the decision, or overrides the decided action after."}
-  max_wait: {type: seconds, default: none, range: "null means no limit", help: "How long a defer may wait before on_timeout decides what happens; required for defer."}
+  max_wait: {type: seconds or null, default: "required for defer", range: "null means no limit", help: "How long a defer may wait before on_timeout decides what happens; omitting it is a configuration error for a defer, write null for an explicitly unlimited wait."}
   on_timeout: {type: enum, default: none, range: "proceed or abandon", help: "What a defer does once max_wait runs out; required for defer."}
   recheck_every: {type: seconds, default: 900, help: "How often a deferred wait is re-checked, so it survives a restart; set automatically for a defer that omits it."}
   then: {type: action, default: none, help: "The action a force guard imposes; required for force."}

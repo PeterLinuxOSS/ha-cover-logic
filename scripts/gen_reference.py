@@ -24,8 +24,9 @@ _HEADER = (
 
 
 def _cell(value) -> str:
-    """Render one table cell: blank for unset, lowercase for a bool, else as-is."""
-    return "" if value is None else str(value).lower() if isinstance(value, bool) else str(value)
+    """Render one table cell: blank for unset, lowercase for a bool, `|` escaped, else as-is."""
+    text = "" if value is None else str(value).lower() if isinstance(value, bool) else str(value)
+    return text.replace("|", "\\|")
 
 
 def render(fields: dict) -> str:
