@@ -1,0 +1,68 @@
+# Source of truth for docs/site/reference/configuration.md.
+#
+# Keys per section must equal config_schema.py's own key sets exactly --
+# tests/test_reference_fields.py checks this, so a field added to the parser
+# and forgotten here fails the fast suite instead of going undocumented.
+# `default: required` means the parser raises ConfigError if the key is
+# missing; `default: none` means the parser accepts a missing key and the
+# feature it enables is simply off. Every value with a comma is quoted: this
+# is a YAML flow mapping, where an unquoted comma starts a new key.
+
+blinds:
+  entity: {type: entity id, default: required, range: "cover.*", help: "The cover this entry controls."}
+  facade_azimuth: {type: degrees, default: none, range: "0–360", help: "Compass direction the window's outside faces."}
+  tolerance: {type: degrees, default: 45, range: "0–90", help: "How far either side of the facade the sun still counts as hitting it."}
+  travel_time: {type: seconds, default: 60, range: "> 0", help: "Time for a full run, used to wait for arrival before tilting."}
+  has_tilt: {type: bool, default: true, help: "Whether the cover has a tilt channel."}
+  tilt_after_arrival: {type: bool, default: true, help: "Send tilt only after the position move finishes."}
+  slat_distance: {type: mm, default: none, help: "Spacing between slats, needed only by slat_angle values."}
+  slat_depth: {type: mm, default: none, help: "Slat width front to back, needed only by slat_angle values."}
+
+zones:
+  members: {type: list of entity ids, default: none, help: "The blinds decided together as this zone."}
+  occupants: {type: list of person names, default: none, help: "Whose arrival or departure can target this zone."}
+
+values_entity:
+  type: {type: enum, default: entity, range: "entity or slat_angle", help: "Picks this shape -- a value read from a helper entity."}
+  entity: {type: entity id, default: required, range: "input_number.*", help: "The helper entity read at decision time."}
+  default: {type: integer, default: required, range: "0–100", help: "Used when the entity is missing or not a number."}
+
+values_slat_angle:
+  type: {type: enum, default: required, range: "slat_angle", help: "Picks this shape -- a tilt computed from the sun's position."}
+  default: {type: integer, default: required, range: "0–100", help: "Used when the sun is down, off this facade, or the slats cannot block it."}
+  scale: {type: enum, default: half, range: "half or full", help: "Which half of the slat's travel counts as fully closed to the sun."}
+  sun_entity: {type: entity id, default: "sun.sun", help: "Entity the sun's elevation is read from."}
+  azimuth_entity: {type: entity id, default: "sun.sun", help: "Entity the sun's azimuth is read from."}
+  azimuth_attribute: {type: attribute name, default: none, help: "Attribute to read the azimuth from, if it is not the entity's state."}
+  elevation_entity: {type: entity id, default: "sun.sun", help: "Entity the sun's elevation is read from, if different from sun_entity."}
+  elevation_attribute: {type: attribute name, default: elevation, help: "Attribute to read the elevation from."}
+
+modes:
+  id: {type: string, default: required, help: "Unique mode name; must not contain a dot."}
+  when: {type: condition, default: none, help: "Condition that selects this mode; omit only for the fallback mode, which must be last."}
+
+rules:
+  if: {type: condition, default: none, help: "Condition that must match for this rule to apply; a rule with none always matches."}
+  then: {type: action, default: required, help: "The position and tilt to apply when this rule matches."}
+  events: {type: list of event names, default: none, help: "Restricts this rule to specific triggering events; none means every event."}
+  name: {type: string, default: "", help: "Label shown in the decision trace."}
+
+action:
+  position: {type: "position (0-100)", default: keep, range: "keep, 0–100, or !ref <value>", help: "Target position, or keep to leave it alone, or a named value."}
+  tilt: {type: "tilt (0-100)", default: keep, range: "keep, 0–100, or !ref <value>", help: "Target tilt, or keep to leave it alone, or a named value."}
+
+guards:
+  policy: {type: enum, default: required, range: "skip, defer, or force", help: "What this guard does when it matches -- skip the movement, delay it, or force a different action."}
+  when: {type: condition, default: none, help: "Condition that must match for this guard to apply; one with none always applies."}
+  targets: {type: list of blind or zone ids, default: none, help: "What this guard covers; none means every blind."}
+  applies_to: {type: enum, default: any, range: "any, closing, or opening", help: "Which movement this guard watches; closing means a falling position, never the slats."}
+  stage: {type: enum, default: output, range: "input or output", help: "Whether this guard drops the target before the decision, or overrides the decided action after."}
+  max_wait: {type: seconds, default: none, range: "null means no limit", help: "How long a defer may wait before on_timeout decides what happens; required for defer."}
+  on_timeout: {type: enum, default: none, range: "proceed or abandon", help: "What a defer does once max_wait runs out; required for defer."}
+  recheck_every: {type: seconds, default: 900, help: "How often a deferred wait is re-checked, so it survives a restart; set automatically for a defer that omits it."}
+  then: {type: action, default: none, help: "The action a force guard imposes; required for force."}
+  name: {type: string, default: "", help: "Label shown in the decision trace."}
+
+manual_detection:
+  ignore_while_on: {type: list of entity ids, default: none, help: "Entities that are on only while an automated mover is running, so their movements are not a person's."}
+  hold: {type: bool, default: false, help: "Leave a blind a person moved alone until its own target changes."}

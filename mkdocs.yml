@@ -4,6 +4,7 @@ repo_url: https://github.com/PeterLinuxOSS/ha-cover-logic
 edit_uri: edit/main/docs/site/
 docs_dir: docs/site
 strict: true
+exclude_docs: reference/fields.yaml
 theme:
   name: material
   features: [navigation.sections, navigation.top, content.code.copy, search.highlight]
@@ -25,3 +26,4 @@ markdown_extensions:
           format: !!python/name:pymdownx.superfences.fence_code_format
 nav:
   - Home: index.md
+  - Reference: [reference/configuration.md]
