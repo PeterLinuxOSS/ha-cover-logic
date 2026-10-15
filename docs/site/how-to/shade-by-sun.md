@@ -49,9 +49,11 @@ requires `tilt`-only.
 currently being decided**, not off the condition itself. The one rule above,
 written once under `home.office`, would work unchanged if copied to
 `home.bedroom`, `home.kitchen`, or any other zone — each blind supplies its
-own facing. This is also exactly what **Set up blinds now**
-(see [first setup](../getting-started/first-setup.md)) generates for every
-blind you give it a compass direction for.
+own facing. **Set up blinds now**
+(see [first setup](../getting-started/first-setup.md)) relies on the same
+property: its one shading rule covers every blind you give a compass
+direction, though it sets a fixed position 20 / tilt 45 rather than the
+tilt-only action above.
 
 ## Picking `tolerance`
 

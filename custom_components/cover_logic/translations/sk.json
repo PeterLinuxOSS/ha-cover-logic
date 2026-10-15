@@ -447,7 +447,7 @@
           },
           "data_description": {
             "ignore_while_on": "Akákoľvek entita zapnutá len počas automatizovaného behu, napríklad skript alebo input boolean okolo hromadných pohybov.",
-            "hold": "Prestane posielať držanej žalúzii jej cieľ, kým sa nezmení -- zvyčajne pri ďalšom režime; poistky platia ďalej."
+            "hold": "Prestane posielať pohnutej žalúzii jej cieľ, kým sa nezmení režim alebo cieľ; poistky platia ďalej. Reštart ho zabudne."
           }
         },
         "reconfigure": {
@@ -712,7 +712,7 @@
         },
         "data_description": {
           "dry_run": "Zapnuté: nič sa nehýbe, každý zamýšľaný príkaz ide do logu. Vypnuté: žalúzie sa naozaj hýbu. Prejaví sa okamžite, bez reloadu.",
-          "fixture_path": "Nepovinná cesta k YAML fixture, proti ktorej kontrola driftu porovnáva; prázdne = predvolený adresár fixtures/.",
+          "fixture_path": "Nepovinná YAML fixture pre kontrolu driftu; prázdne = fixtures/ vedľa custom_components/, a ak tam nie je, neporovnáva sa s ničím.",
           "dead_band": "O koľko bodov sa smie hlásená pozícia alebo náklon líšiť od cieľa, kým sa pošle príkaz; prejaví sa okamžite."
         }
       },

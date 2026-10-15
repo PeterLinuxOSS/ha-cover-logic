@@ -45,7 +45,7 @@ flowchart LR
     Zone -->|first match| Decided[Decided action]
     Zone -->|no match| Default[Mode's default rules: mode.*]
     Default --> Decided
-    Decided --> Guards[guards.py: screen / review]
+    Decided --> Guards[Guards: may skip, defer or force]
     Guards --> Command[cover.* service call]
 ```
 

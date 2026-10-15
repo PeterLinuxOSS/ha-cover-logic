@@ -16,14 +16,17 @@ actually happened, and only then hand it the covers for real.
 ## Where to toggle it
 
 **Settings → Devices & services → Cover Logic → Configure → Execution.**
-This one screen holds the two settings that change the engine's relationship
-to real hardware:
+This one screen holds the integration's three options — settings stored on
+the entry itself rather than as configuration subentries:
 
 - **Dry run** — on: nothing moves, every intended command is written to the
   log. Off: covers really move. Takes effect immediately, with **no
-  reload** — this is the one setting in the whole configuration that is
-  deliberately not a subentry, precisely so "turn the hands off right now"
-  never has to wait for one.
+  reload**, so "turn the hands off right now" never has to wait for one.
+- **Fixture to compare against** — an optional path to a YAML file the
+  drift check compares the live configuration against. Empty means a
+  `fixtures/` directory beside `custom_components/`, or no comparison at
+  all if there is none. Most installs leave it empty. Changing it reloads
+  the integration by itself.
 - **Dead band** — how many points a cover's reported position or tilt may
   differ from a rule's target before Cover Logic bothers to send a command.
   Also used as the tolerance for deciding a move has arrived. Default **5**.
@@ -36,8 +39,8 @@ to real hardware:
   [`last_command`](../reference/sensor.md) for a `suppressed` entry that
   looks wrong), raise this rather than chasing the individual blind.
 
-Both settings are read live from the running entry — no reload needed for
-either.
+Dry run and dead band are read live from the running entry — no reload
+needed for either.
 
 ## What the log looks like while dry
 

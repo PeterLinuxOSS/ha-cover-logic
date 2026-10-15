@@ -36,12 +36,11 @@ reading later.
 
 ### 3. Review the summary, then create it
 
-Before anything is saved, the flow shows exactly what it is about to build:
+Before anything is saved, the flow lists the blinds you picked and
+summarises what it is about to build:
 
-> At night, nothing moves.
-> During the day, each blind closes partway (to position 20, tilt 45)
-> whenever the sun is shining on its own side of the house, and stays fully
-> open (position 100) the rest of the time.
+> At night nothing moves; by day each blind shades (position 20, tilt 45)
+> when the sun is on its side, else stays open (100).
 
 Concretely, this is one zone holding every blind you picked, two modes
 (`day` when `sun.sun` is `above_horizon`, `night` as the fallback), and two

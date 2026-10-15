@@ -65,9 +65,11 @@ A few differences are worth knowing going in, not discovering midway:
 - **Cover Logic has no built-in slat-angle-from-sun-elevation output the
   same way `adaptive-cover`'s does by default** — the equivalent is the
   [`slat_angle` computed value](../concepts/values.md#type-slat_angle),
-  which uses the same underlying formula but is opt-in per `!ref` in a rule,
-  and ships with its slat-direction convention **unverified against real
-  hardware** — read that page's warning before relying on it.
+  which derives a slat angle from the sun's elevation, its angle to the
+  facade and the slat geometry. It has not been checked to give the same
+  numbers as `adaptive-cover`, it is opt-in per `!ref` in a rule, and its
+  slat-direction convention is **unverified against real hardware** — read
+  that page's warning before relying on it.
 - **A manual override in Cover Logic is detected from the cover's own state
   change**, not configured as a separate per-window toggle — see
   [manual moves](../concepts/manual-moves.md) for exactly what counts as

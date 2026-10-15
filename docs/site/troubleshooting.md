@@ -12,7 +12,7 @@ rather than `mode.zone#index`, the zone fell through to the mode's shared
 default list — see [rules: inherited defaults](concepts/rules.md#inherited-defaults).
 
 If `trace` looks right but the blind still did not physically move, work
-through the cases below in order — they are the four places a decided
+through the cases below in order — they are the three places a decided
 action can still fail to become a command.
 
 ### The blind never appears in the log at all
@@ -55,13 +55,12 @@ through it is.
 Check `manual_holds` for the blind's entity id. If it is there, someone (or
 something with a `user_id` on its context) moved this blind directly, and
 [`manual_detection.hold`](concepts/manual-moves.md#hold) is deliberately
-withholding the rule-decided target until that target actually changes —
-usually at the next mode switch. This is the feature working as intended,
+withholding the rule-decided target until the mode or that target changes —
+usually at the next mode switch, which releases the hold even if the new
+mode decides the same target. This is the feature working as intended,
 not a bug: re-sending the old target on every recompute is exactly what
-`hold` exists to prevent. If the blind should not be ignored forever, check
-whether your rules only change the target at mode boundaries — a move held
-during a long-running mode will not clear until that mode's own target
-changes.
+`hold` exists to prevent. Holds are kept in memory only, so a Home
+Assistant restart or an integration reload also clears them.
 
 If a blind moved by voice is not being held at all even though `hold` is
 on, see [manual moves: the voice limitation](concepts/manual-moves.md#the-voice-limitation)

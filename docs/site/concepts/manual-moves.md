@@ -36,12 +36,17 @@ identically.
 
 When `true`, a blind a person just moved by hand is left alone — the
 integration stops re-sending that blind's current target on every later
-recompute — until the decided target actually changes (typically at the
-next mode switch). Guards still act normally on a held blind; only the plain
-rule-decided outcome is withheld. Without `hold`, a level-held target (for
-example "night mode always wants position 0") would be silently re-asserted
-on the next recompute, undoing a move someone just made from the app or a
-wall switch seconds earlier.
+recompute. The hold remembers the mode and the target in force when the
+move was seen, and is released as soon as either changes: a mode switch
+releases it even when the new mode decides the same target. Guards still
+act normally on a held blind; only the plain rule-decided outcome is
+withheld. Without `hold`, a level-held target (for example "night mode
+always wants position 0") would be silently re-asserted on the next
+recompute, undoing a move someone just made from the app seconds earlier.
+
+Holds live in memory only: a Home Assistant restart or a reload of the
+integration forgets them, and the next recompute sends the decided target
+again.
 
 ## Why detection needs `user_id`
 
@@ -57,6 +62,11 @@ manual:
 2. it is not one of this integration's own commands (tracked by context,
    not by `user_id` alone), and
 3. no entity in `ignore_while_on` is currently `on`.
+
+A physical wall switch or a remote wired straight to the motor carries no
+`user_id`, so such a move is **not** detected and `hold` does not protect
+it: the next recompute that re-sends the target undoes it. Only moves made
+from the Home Assistant app or UI (by a logged-in user) are recognised.
 
 ## The voice limitation
 
@@ -77,8 +87,9 @@ Assistant attaches to a voice-originated service call, not something
 - Forgetting to add a new script that moves blinds in bulk to
   `ignore_while_on` — every run will otherwise look like somebody grabbed
   every blind in the house by hand at once.
-- Assuming a voice-controlled move is covered the same way an app or wall
-  switch move is (see above).
+- Assuming a voice-controlled or wall-switch move is covered the same way
+  an app move is — only moves carrying a `user_id` are detected (see
+  above).
 
 ## Where to edit this
 
