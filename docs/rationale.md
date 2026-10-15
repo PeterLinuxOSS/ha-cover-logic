@@ -247,6 +247,27 @@ sunrise−15min already reproduces. This is the opposite finding to `vecer`
 above, where dropping lux would have cost four overcast evenings — which is
 why each flag got its own replay rather than one conclusion applied to both.
 
+### Why `je_noc_auto` is separate from `je_noc`
+
+There are two night conditions and they are deliberately different boundaries.
+`je_noc` is the integration's internal night **mode** -- what makes the engine
+decide `noc` -- and it keeps the measured `sunrise − 21 min` dawn boundary
+above, because that is when the house is meant to wake. `je_noc_auto` is an
+**output signal** that replicates `Lighting SUN`'s bare `cover_up`/`cover-down`
+thresholds (`sun.sun` below the horizon OR trusted lux < 500) for the ten
+`cover_down` readers a later task feeds through `derive_outputs`; those readers
+want the automation's own threshold, not the mode's earlier dawn.
+
+`je_noc_auto`'s sky clause is written `condition: sun` (bare
+sunset..sunrise), not `condition: state, entity_id: sun.sun, state:
+below_horizon`. Both read the same astral computation in a live house, but
+`condition: sun` reads `World.sun`, which the migration gate places inertly,
+whereas `condition: state` reads `World.states["sun.sun"]`, an axis the gate
+varies independently for shading (`sun_hits_target`) -- so a state-based night
+would see a sky unrelated to the scenario. `je_noc_auto` is not in the decision
+path (only `je_noc` is), so this only matters if it were ever read there; the
+`condition: sun` form keeps it safe regardless.
+
 ### Why the brake is gated on trusting the lux sensor
 
 `Lighting SUN` writes `input_boolean.cover_down` **from the lux sensor**
@@ -318,7 +339,66 @@ without waiting for an evening to watch.
 
 ## The `vecer` condition
 
-### Why `vecer` reads the sky, and what the gate stops proving
+### Why `vecer` derives dusk via `je_tma` (current)
+
+**Supersedes both sections below.** `vecer` is now `!ref je_tma AND
+cover_down off`, and `je_tma` is `(condition: sun sunset−20min..sunrise+10min
+OR trusted lux < 2850 for 5 min) AND after 12:30`. So the integration derives
+dusk itself again, from the same sky-or-lux mechanisms `Lighting SUN` used --
+but without reading `input_boolean.lighting_on`, so no output helper appears in
+`referenced_entities` and the config is portable. This is what the later tasks
+in this phase need in order to delete `Lighting SUN`.
+
+Two things are different from the earlier sky version (the "historical" section
+below), and both are deliberate. The lux branch is now gated on
+`NOT lux_neverim`, so a sensor frozen low cannot declare dusk in daylight -- the
+same plausibility gate `je_noc`'s brake already carries. And there is **no
+latch**: the latch was exactly the 2026-09-21 bug (it armed at every dawn and
+the 12:30 gate then fired `vecer` at midday), so `je_tma` stays stateless, and
+the `after: 12:30` clause -- not a latch -- is what keeps the dawn lux rise from
+reading as dusk. See
+`test_fixture_lux_fallback.py::test_vecer_odvodena_z_je_tma_nie_z_helpera` and
+`test_conditions.py::test_je_tma_*`.
+
+### Why `vecer` briefly read the helper (2026-09-21, historical)
+
+**Superseded by the section above; kept for the incident it records.** For one
+day `vecer` was reverted to
+`input_boolean.lighting_on AND NOT cover_down AND after 12:30` -- the same
+expression `matica.py` and `configuration.yaml` always used. The owner asked
+for it after a live failure, on the reasoning that `vecer` and the lights must
+never disagree: if the blinds shade, the lights should be on, and vice versa.
+
+**What the sky/lux version actually did in the house.** The stateless dark
+window (below) was not enough for a wobbling dusk sensor, so a
+`for: 180, latch: daily` lux threshold was added on 18 Sep. But the lux sensor
+reads below its 2800 threshold at *every* dawn (0 -> 2772 over ~80 min), which
+armed `latch: daily` for the whole day; the `after: 12:30` gate then released
+it, so `vecer` turned true at 12:30 sharp on any day the terrace door was shut
+-- closing the terrace door blind and the kitchen slats at midday in full
+daylight (3000 lx) while `lighting_on` correctly stayed off. It went unseen for
+days only because the terrace door was usually open and the door guard held the
+blind up. The bug was not the latch's tuning; it was deriving a dusk signal
+from a source that also fires at dawn, then gating it by clock.
+
+**Why coupling back to the helper is the right call here.** The
+portability cost is real -- a new home needs `Lighting SUN` (or an equivalent
+writer of `lighting_on`) -- but that automation has to exist anyway for the
+lights, and binding to it makes the two systems consistent *by construction*
+rather than by two independent derivations that drifted. The "overcast evening
+closes earlier" behaviour is preserved: `Lighting SUN` turns `lighting_on` on
+from the same interior lux, so the helper carries it. The 12:30 gate stays,
+because dawn also shows `lighting_on` on with `cover_down` off (the lights lag
+the sunrise open by ~30 min) and only the clock separates that from dusk.
+
+**The gate stays green trivially.** `tests/parity/mapping.py` already fed
+`input_boolean.lighting_on` into `World.states` from the scenario's axis, and
+`_sun_for` was built so the sun window equals `stav.lighting_on`; the engine
+reading the helper directly therefore lands on the same value the sky-based
+version did. (That day's test, `test_vecer_sleduje_svetla_nie_lux`, was
+replaced when `vecer` moved to `je_tma`; see the current section above.)
+
+### Why `vecer` read the sky, and what the gate stopped proving (historical)
 
 `vecer` used to read `input_boolean.lighting_on`, a helper written by the
 house's `Lighting SUN` automation. That is the single largest reason this
@@ -1737,11 +1817,19 @@ refused. A suppressed command was visible; a real one was not. On the day this
 integration runs the house, that log is the only record of what the house was
 told to do, and it recorded everything except that.
 
-The volume argument was also simply wrong. A live sequence writes the same
-handful of lines a dry-run sequence writes -- one per command, and only when a
-command exists -- so nothing was being saved by hiding the live ones. Both are
-`INFO` now, and the `dry_run`/`live` prefix `_format_line` puts on every line is
-what tells them apart, which is what it was always for.
+The volume argument was half wrong. An *issued* command writes one line only
+when a command exists, so hiding the live ones saved nothing -- issued commands
+(and every dry-run line) are `INFO`, and the `dry_run`/`live` prefix
+`_format_line` puts on each line tells them apart, which is what it was for.
+
+But a *suppression* is not one-per-command: it fires on every no-op recompute
+(`cmd=none reason=dead_band`), which the coordinator does every ~2-4 min for
+every blind. Measured on 2026-09-21: **~4681 `cover_logic[live]` lines in 10 h,
+almost all suppressions**, burying the single real command the owner was looking
+for. So a *live* suppression now logs at `DEBUG` -- the log shows what moved, not
+what stood still. It stays `INFO` in a dry run (where standing still is the
+finding) and the observer sees it either way, so the dead-band diagnostic the
+suppression line exists for is not lost, only moved off the default view.
 
 `_log_timeout` keeps its own asymmetry (`DEBUG` in a dry run, `WARNING` live)
 and it is correct in the way this one was not: a dry run's arrival waits
@@ -1994,6 +2082,42 @@ it is still hours away. That is a real limit and the floor is what covers it.
 It also bit the first version of the wiring test, which used a sun boundary and
 so passed in the morning and failed at 20:21 -- the test now uses a `for:`
 boundary, whose instant the test itself sets.
+
+### Why the integration writes the lighting flags
+
+`_write_outputs` runs after every recompute and turns `input_boolean.lighting_on`/
+`je_noc_auto` on or off from `derive_outputs` (Task 2's pure `je_tma`/
+`je_noc_auto` conditions), but only calls `input_boolean.turn_on`/`turn_off`
+when a helper's current state disagrees with the desired one.
+
+**These are outputs, not inputs, and that is the whole loop-guard.** Neither
+helper is read by any condition this configuration defines -- Task 1
+re-pointed `vecer`/`je_noc` at `je_tma`/`je_noc_auto` directly, precisely so
+the helpers they used to read would drop out of `config_schema.
+referenced_entities`. `_entity_ids` (this module) subscribes to exactly that
+set, so writing a helper nothing here reads cannot make `_handle_state_change`
+schedule another evaluation. The guard is structural, not a check this module
+performs at runtime -- there is no code path that could get it wrong, short of
+a future condition naming one of these two entities.
+
+**Why an `input_boolean`, and not an entity this integration owns.** A
+config-entry entity goes `unavailable` across a reload -- measured
+2026-09-03, and this module reloads on every configuration change (see "Why a
+configuration change reloads the entry", above). Three of the four automations
+that read `cover_down`-style flags today do so through a *trigger*, and a
+trigger sees the `unavailable` transition even if it never sees the eventual
+right answer; an integration-owned equivalent would make every one of them
+flap on every reload. A plain `input_boolean` survives a reload of this entry
+untouched, which is the one property that matters here.
+
+**Failure is logged, never raised.** `derive_outputs` runs inside its own
+`try`: a broken condition (the same class of failure `engine.evaluate`
+contains per zone) must not blank a decision that was otherwise computed
+correctly and is about to be dispatched. This is the same shape as
+`_publish_outcome`/`_next_boundary` above it in this file -- a failure in a
+side channel is recorded and swallowed, not allowed to escape the middle of
+`_async_evaluate` and cancel a house-wide command that had nothing to do with
+it.
 
 ## `readiness.py`
 

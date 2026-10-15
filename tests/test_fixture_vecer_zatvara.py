@@ -48,13 +48,13 @@ PREVZATE = (
 
 
 def _svet(*, hodina, lux=1500, elevacia=3.0, doma=(), odovzdane=("peter", "mimka", "spalna")):
-    """Brzda ešte off, po 12:30. `lux`/`elevacia` rozhodujú, či je to súmrak.
+    """Brzda ešte off, po 12:30. `lux` a hodina rozhodujú, či je to súmrak.
 
-    Defaulty sú súmrak (1500 lx, slnko 3 stupne nad horizontom). Denný svet
-    musí dať skutočnú dennú hodnotu -- senzor je na streche a cez deň
-    saturuje na ~3000, takže 1500 lx o 13:00 čítá matica ako súmrak a robí to
-    správne: `light-on` má na to ten istý prah (zamračené popoludnie
-    prekročí 2800 skôr, 4 z 13 večerov).
+    `vecer` je odteraz `!ref je_tma AND cover_down off` -- odvodí súmrak sám
+    zo slnka/luxu, nečíta `input_boolean.lighting_on`. Default (lux 1500 pod
+    prahom 2850, elevácia 3, po 12:30) je teda súmrak; denný svet ho vypne
+    vysokým luxom a vysokou eláviou. `not lux_neverim` bráni tomu, aby ho
+    zapol zamrznutý nízky senzor za dňa.
     """
     states = {
         "input_boolean.cover_down": "off",

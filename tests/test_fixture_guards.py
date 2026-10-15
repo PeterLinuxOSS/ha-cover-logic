@@ -498,16 +498,17 @@ def test_an_open_door_at_dusk_still_holds_the_blind_up(config):
     with phase 7.6's last step, so the invariant belongs here, where the owner
     now is.
 
-    `vecer` is expressed by the lux reading rather than the sun window: `NOW`
-    is 13:00, so the sun clause is false and only the threshold can say dusk --
-    which also makes the assertion independent of the time of day the suite
-    runs at.
+    `vecer` is now `je_tma AND cover_down off`, and `je_tma` here is reached
+    via its lux branch (below the 2850 threshold) rather than the sun window,
+    since this file's `world()` never sets `World.sun`. `NOW` is 13:00 (past
+    the 12:30 gate both need), so the dusk state stays independent of the
+    time of day the suite runs at.
     """
     w = world(
         {("sun.sun", "elevation"): 3.0},
         **{
             "binary_sensor.obyvacka_dvere_senzor": "on",
-            "sensor.predsien_dvere_senzor_illuminance": "1500",
+            "sensor.predsien_dvere_senzor_illuminance": "1000",
         },
     )
     decision = evaluate(config, w)
@@ -664,3 +665,32 @@ def test_every_guard_in_the_fixture_can_actually_fire(config):
 def test_the_fixture_uses_every_policy_and_both_directions(config):
     assert {g.policy for g in config.guards} == {GUARD_SKIP, GUARD_DEFER, GUARD_FORCE}
     assert {g.applies_to for g in config.guards} == {GUARD_ANY, GUARD_CLOSING}
+
+
+# At night the hand only counts while the helper still holds it: the helper is
+# cleared on every mode change, so a raise from the evening ends at nightfall.
+NIGHT = {
+    "input_boolean.cover_down": "on",
+    "sun.sun": "below_horizon",
+    "sensor.predsien_dvere_senzor_illuminance": "5",
+}
+NIGHT_ATTRS = {
+    ("cover.kuchyna_zaluzia_1_4", "current_position"): 100,
+    ("sun.sun", "elevation"): -20,
+}
+
+
+def test_an_evening_raise_of_the_flowers_ends_at_nightfall(config):
+    w = world(attrs=NIGHT_ATTRS, **NIGHT)
+    result = run(config, w, closing(config), at(config))
+
+    assert fired_on(result, FLOWERS_BY_HAND) == set()
+    for entity in FLOWERS:
+        assert result.actions[entity] == Action(position=0, tilt=0)
+
+
+def test_a_raise_during_the_night_is_still_respected(config):
+    w = world(attrs=NIGHT_ATTRS, **(NIGHT | {"input_boolean.kvety_rucny_override": "on"}))
+    result = run(config, w, closing(config), at(config))
+
+    assert fired_on(result, FLOWERS_BY_HAND) == set(FLOWERS)

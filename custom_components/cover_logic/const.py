@@ -283,3 +283,11 @@ COMMAND_DISPATCHED = "dispatched"
 # the house's one *working* restart watchdog actually runs at
 # (`time_pattern: /15`), chosen over inventing a number.
 GUARD_DEFAULT_RECHECK = 900
+
+# Output helper entity_id -> named condition that drives it. See
+# `outputs.py` and docs/rationale.md -- "Why the integration writes the
+# lighting flags".
+OUTPUT_CONDITIONS = {
+    "input_boolean.lighting_on": "je_tma",
+    "input_boolean.je_noc_auto": "je_noc_auto",
+}

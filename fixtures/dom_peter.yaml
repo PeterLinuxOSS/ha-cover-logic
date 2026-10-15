@@ -58,6 +58,34 @@ conditions:
           - {condition: numeric_state, entity_id: sensor.predsien_dvere_senzor_illuminance,
              above: 2800, default: 0}
 
+  # Interior-dark derivation, taken over from Lighting SUN's light-on/off
+  # branches. The sun window spans midnight so `lighting_on` stays on dusk->dawn
+  # (Lighting SUN latched it on overnight); the 12:30 gate sits on the lux branch
+  # only, so a dark morning cannot arm it. `vecer` re-adds 12:30 for the blinds.
+  je_tma:
+    condition: or
+    conditions:
+      - {condition: sun, after: sunset, after_offset: -1200,
+                         before: sunrise, before_offset: 600}
+      - condition: and
+        conditions:
+          - {condition: not, conditions: [!ref lux_neverim]}
+          - {condition: numeric_state, default: 99999, below: 2850, for: 300,
+             entity_id: sensor.predsien_dvere_senzor_illuminance}
+          - {condition: time, after: "12:30"}
+
+  # Output-only signal for the `cover_down` readers, NOT the night mode; see
+  # docs/rationale.md -- "Why `je_noc_auto` is separate from `je_noc`".
+  je_noc_auto:
+    condition: or
+    conditions:
+      - {condition: sun, before: sunrise, after: sunset}
+      - condition: and
+        conditions:
+          - {condition: not, conditions: [!ref lux_neverim]}
+          - {condition: numeric_state, default: 99999, below: 500, for: 300,
+             entity_id: sensor.predsien_dvere_senzor_illuminance}
+
   # Obloha je PRIMÁRNA a zostáva ňou zámerne: dom bez `cover_down` a bez lux
   # senzora musí mať noc tiež, inak sa táto konfigurácia nedá preniesť --
   # `test_night_is_derived_from_the_sky_not_from_the_helper` to drží.
@@ -122,35 +150,13 @@ conditions:
 
   # Lighting SUN vetva `light-on` už stiahla terasu a kvety, ale `cover_down`
   # (a s ním režim `noc`) príde až o 20–40 min. V tom okne matica nesmie
-  # vracať nič hore. Prah 12:30 je ten istý, aký má vetva `light-on`.
-  # First clause derived from the sky, not from `input_boolean.lighting_on`
-  # that `Lighting SUN` used to write. Measured deviation: docs/rationale.md.
+  # vracať nič hore. `je_tma` nesie svoj vlastný 12:30 gate a lux/sun prahy.
+  # Blinds keep the 12:30 gate `je_tma` no longer carries at top level, so an
+  # overcast midday cannot close them and this stays identical to the oracle.
   vecer:
     condition: and
     conditions:
-      - condition: or
-        conditions:
-          # Dark window across midnight: on at sunset-20min, held after
-          # midnight by `before: sunrise`, off at sunrise+10min.
-          - {condition: sun, before: sunrise, before_offset: 600,
-                             after: sunset, after_offset: -1200}
-          # An overcast evening crosses the threshold first -- 4 of 13.
-          # Za `lux_neverim` zámerne: zamrznutý nízko by inak robil `vecer`
-          # pravdivým každý deň od 12:30 a slnko to nezachráni, lebo tento
-          # OR berie ten SKORŠÍ z dvoch.
-          - condition: and
-            conditions:
-              - {condition: not, conditions: [!ref lux_neverim]}
-              # This threshold drives a 55-second motor off a sensor that wobbles
-              # across it at dusk: 2788/2813/2742 on 2026-09-18 closed the
-              # terrace, reopened it and closed it again. `for:` refuses a dusk
-              # the sensor has not confirmed -- it samples every 120 s exactly,
-              # so 180 is answered on the third consecutive one, ~4 min after
-              # the crossing. `latch: daily` refuses to take a dusk back,
-              # because dusk does not un-happen.
-              - {condition: numeric_state, default: 99999, below: 2800,
-                 for: 180, latch: daily,
-                 entity_id: sensor.predsien_dvere_senzor_illuminance}
+      - !ref je_tma
       - {condition: state, entity_id: input_boolean.cover_down, state: "off"}
       - {condition: time, after: "12:30"}
 
@@ -263,8 +269,8 @@ conditions:
 
   # `binary_sensor.sauna_running` je UI template helper (`.storage`, nie YAML —
   # inventúra ho preto nenašla). Overené na živom dome 2026-08-30:
-  #   (mode aj temp mŕtve) OR (mode != 'off') OR (temp > 50)
-  # Je teda FAIL-CLOSED: keď zomrú oba zdroje, hlási `on` a poistka drží.
+  #   (mode != 'off') OR (temp > 50); od 2026-09-23 nedostupná sauna = `off`
+  # (fail-closed držal terasu hore celý výpadok iSauny, viď dennik sauna).
   # Prah 50 °C je zmeraný, nie odhadnutý: päť týždňov histórie oddeľuje
   # seansy (30→50 °C za ~6 min, 6 dní) od kabíny ohriatej slnkom
   # (30→45 °C za ~5 h, 11 dní) bezchybne. Preto sa tu smie testovať
@@ -291,6 +297,17 @@ conditions:
          entity_id: cover.kuchyna_zaluzia_1_4, attribute: current_position}
       - {condition: numeric_state, above: 45, default: 0,
          entity_id: cover.kuchyna_zaluzia_2_5, attribute: current_position}
+
+  # V `noc` platí ručné vytiahnutie len do zmeny režimu (helper), inak by
+  # žalúzie vytiahnuté večer ostali hore celú noc (2026-09-27, viď dennik).
+  kvety_rucne_plati:
+    condition: and
+    conditions:
+      - !ref kvety_rucny_override
+      - condition: or
+        conditions:
+          - {condition: not, conditions: [!ref je_noc]}
+          - {condition: state, entity_id: input_boolean.kvety_rucny_override, state: "on"}
 
 modes:
   - {id: noc,       when: !ref je_noc}
@@ -373,10 +390,9 @@ rules:
   # horúčave dostane kuchyňa lamely 100 aj keď je `kvety_on` vypnuté. `nie_kvety_on`
   # preto smie skratovať len vetvu `vecer` (kde je akcia `KV0`, gated) a
   # koncový fallback (`KV`, tiež gated) — nie vetvu `pocasie_otvorene`.
+  # Kvety zatvárajú lamely až v `noc`, nie za súmraku (2026-09-27, viď dennik).
   horucava.kvety:
     - {events: [arrival], if: !ref rucne_kuchyna, then: {position: keep, tilt: keep}}
-    - {events: [arrival], if: [!ref vecer, !ref nie_kvety_on], then: {position: keep, tilt: keep}}
-    - {events: [arrival], if: !ref vecer,            then: {position: !ref kvety_poz, tilt: 0}}
     - {events: [arrival], if: !ref pocasie_otvorene, then: {position: keep, tilt: 100}}
     - {events: [arrival], if: !ref nie_kvety_on,     then: {position: keep, tilt: keep}}
     - {events: [arrival], if: {condition: sun_hits_target},
@@ -384,7 +400,6 @@ rules:
     - {events: [arrival], then: {position: !ref kvety_poz, tilt: 100}}
     - {if: !ref rucne_kuchyna,    then: {position: keep, tilt: keep}}
     - {if: !ref nie_kvety_on,     then: {position: keep, tilt: keep}}
-    - {if: !ref vecer,            then: {position: !ref kvety_poz, tilt: 0}}
     - {if: !ref pocasie_otvorene, then: {position: !ref kvety_poz, tilt: 100}}
     - {if: {condition: sun_hits_target}, then: {position: !ref kvety_poz, tilt: 0}}
     - {then: {position: !ref kvety_poz, tilt: 100}}
@@ -460,10 +475,10 @@ rules:
     - {if: !ref vecer, then: {position: 0, tilt: 100}}
     - {then: {position: keep, tilt: 100}}
 
+  # Kvety: lamely až v `noc`, nie vo `vecer` (2026-09-27).
   bezny_den.kvety:
     - {if: !ref rucne_kuchyna, then: {position: keep, tilt: keep}}
     - {if: !ref nie_kvety_on,  then: {position: keep, tilt: keep}}
-    - {if: !ref vecer,         then: {position: !ref kvety_poz, tilt: 0}}
     - {then: {position: !ref kvety_poz, tilt: 100}}
 
   # `terasa` a `terasa2` sú identické, rovnaký prípad ako `dovolenka` vyššie:
@@ -634,7 +649,7 @@ guards:
     stage: output
     applies_to: any
     targets: [kvety]
-    when: !ref kvety_rucny_override
+    when: !ref kvety_rucne_plati
 
   # #1 + #5 + #6 + #7 + #8 + #14 (terasová polovica) — „nespúšťaj dverovú
   # žalúziu na otvorené dvere ani na bežiacu saunu", sedem nezávislých kópií

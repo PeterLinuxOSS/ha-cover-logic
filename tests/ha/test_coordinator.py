@@ -761,3 +761,232 @@ def test_blinds_are_only_watched_when_the_config_asks_about_manual_moves(config)
     """
     assert _manual_move_blinds(config) == set()
     assert _manual_move_blinds(load_config(_DETECT_CONFIG)) == {"cover.a"}
+
+
+# ---------------------------------------------------------------------------
+# Task 3: `_write_outputs` publishes the derived lighting flags after each
+# recompute, only where a helper's state must change -- and the write itself
+# must not retrigger evaluation, because the output helpers are not
+# referenced entities (see `coordinator._write_outputs` and Task 1's
+# `je_tma`/`je_noc_auto`).
+# ---------------------------------------------------------------------------
+
+# `je_tma`/`je_noc_auto` here are deliberately simpler than the house's own
+# (dusk window + lux + a 12:30 gate, see `fixtures/dom_peter.yaml`): this is
+# only about the coordinator calling `derive_outputs` and writing the two
+# `OUTPUT_CONDITIONS` helpers, not about re-proving the sun/lux logic
+# `tests/test_conditions.py` and `tests/test_outputs.py` already cover in the
+# pure suite. Bright midday (lux above threshold, sun elevation above zero)
+# derives both false, matching `tests/test_outputs.py`'s own bright-midday
+# case.
+_LIGHTING_OUTPUT_CONFIG = """
+blinds:
+  - {entity: cover.a}
+zones:
+  za: {members: [cover.a]}
+modes: [{id: bezny_den}]
+conditions:
+  je_tma:
+    condition: numeric_state
+    entity_id: sensor.lux_test
+    below: 500
+    default: 99999
+  je_noc_auto:
+    condition: numeric_state
+    entity_id: sun.sun
+    attribute: elevation
+    below: 0
+    default: 99
+rules:
+  bezny_den.za:
+    - {then: {position: keep, tilt: keep}}
+"""
+
+
+def _prime_lighting_world(hass, *, lux, elevation):
+    """Set the two entities `_LIGHTING_OUTPUT_CONFIG`'s `je_tma`/`je_noc_auto` read."""
+    hass.states.async_set("sensor.lux_test", str(lux))
+    hass.states.async_set("sun.sun", "above_horizon", {"elevation": elevation})
+
+
+def _output_entities(call):
+    """`call.data["entity_id"]`, tolerating either a bare string or a list."""
+    target = call.data.get("entity_id")
+    return [target] if isinstance(target, str) else list(target or [])
+
+
+def _register_input_boolean(hass):
+    """A minimal `input_boolean.turn_on`/`turn_off`, mutating state like the real one.
+
+    The bare `hass_factory` instance has no component set up at all, so
+    `_write_outputs`'s own service call would otherwise raise `ServiceNotFound`
+    -- the same reason `test_the_context_a_command_is_issued_under_is_recognised_
+    as_our_own` above registers its own `cover.*` handler. Two `async def`s, not
+    a lambda wrapping one: Home Assistant decides whether to await a registered
+    handler by asking whether *it* is a coroutine function, not by looking at
+    what it returns -- a lambda wrapping an `async def` fails that check and the
+    write is silently never awaited.
+    """
+
+    async def _turn_on(call):
+        for entity_id in _output_entities(call):
+            hass.states.async_set(entity_id, "on")
+
+    async def _turn_off(call):
+        for entity_id in _output_entities(call):
+            hass.states.async_set(entity_id, "off")
+
+    hass.services.async_register("input_boolean", "turn_on", _turn_on)
+    hass.services.async_register("input_boolean", "turn_off", _turn_off)
+
+
+def test_evaluation_writes_lighting_flags(hass_factory, runtime_entry):
+    """After a recompute the derived helpers reach their desired state.
+
+    Bright midday world -> both `je_tma` and `je_noc_auto` are false, so the
+    startup evaluation must turn both helpers off, starting from `on`.
+    """
+
+    async def _run():
+        hass = hass_factory()
+        try:
+            _register_input_boolean(hass)
+            _prime_lighting_world(hass, lux=3000, elevation=45)
+            hass.states.async_set("input_boolean.lighting_on", "on")
+            hass.states.async_set("input_boolean.je_noc_auto", "on")
+
+            coordinator = CoverLogicCoordinator(
+                hass, load_config(_LIGHTING_OUTPUT_CONFIG), runtime_entry()
+            )
+            await coordinator.async_setup()
+            await asyncio.sleep(_WAIT)  # the service call is fire-and-forget (blocking=False)
+
+            assert hass.states.get("input_boolean.lighting_on").state == "off"
+            assert hass.states.get("input_boolean.je_noc_auto").state == "off"
+
+            await coordinator.async_unload()
+        finally:
+            await hass.async_stop(force=True)
+
+    asyncio.run(_run())
+
+
+def test_writing_an_output_does_not_retrigger_evaluation(hass_factory, runtime_entry, monkeypatch):
+    """Outputs are not referenced entities, so writing them must not recompute.
+
+    The loop-guard is structural, not behavioural: `input_boolean.lighting_on`/
+    `je_noc_auto` are never read by any condition in `_LIGHTING_OUTPUT_CONFIG`,
+    so `_entity_ids` never subscribes to them and `_write_outputs`'s own
+    service calls cannot schedule a second evaluation.
+    """
+    calls = _counting_evaluate(monkeypatch)
+
+    async def _run():
+        hass = hass_factory()
+        try:
+            _register_input_boolean(hass)
+            _prime_lighting_world(hass, lux=3000, elevation=45)
+            hass.states.async_set("input_boolean.lighting_on", "on")
+            hass.states.async_set("input_boolean.je_noc_auto", "on")
+
+            coordinator = CoverLogicCoordinator(
+                hass, load_config(_LIGHTING_OUTPUT_CONFIG), runtime_entry()
+            )
+            await coordinator.async_setup()
+            await asyncio.sleep(_WAIT)
+            assert hass.states.get("input_boolean.lighting_on").state == "off"
+            first_count = len(calls)
+            assert first_count == 1
+
+            # A full extra settle window: long enough for a spurious
+            # re-subscription to have fired if the loop-guard were not
+            # structural.
+            await asyncio.sleep(_WAIT)
+            assert len(calls) == first_count, "writing the outputs recomputed the house"
+
+            await coordinator.async_unload()
+        finally:
+            await hass.async_stop(force=True)
+
+    asyncio.run(_run())
+
+
+# Same as `_MOVING_CONFIG` (a rule that actually moves a blind) but with the two
+# output conditions added, so one evaluation both writes the flags and commands
+# the blind -- the only shape that can prove the write and the move are
+# independent within a single cycle.
+_MOVING_WITH_OUTPUTS_CONFIG = """
+blinds:
+  - entity: cover.a
+    travel_time: 0.2
+zones:
+  za: {members: [cover.a]}
+modes: [{id: bezny_den}]
+conditions:
+  je_tma:
+    condition: numeric_state
+    entity_id: sensor.lux_test
+    below: 500
+    default: 99999
+  je_noc_auto:
+    condition: numeric_state
+    entity_id: sun.sun
+    attribute: elevation
+    below: 0
+    default: 99
+rules:
+  bezny_den.za:
+    - {then: {position: 100, tilt: keep}}
+"""
+
+
+def test_a_failing_output_write_does_not_block_the_blind(hass_factory, runtime_entry):
+    """A raising `input_boolean.turn_on` must not blank the blind decision.
+
+    `_write_outputs` runs inside `_async_evaluate`'s try, before `_execute`. If
+    a helper write escaped, the outer catch would log "evaluation failed" and
+    skip the executor -- so the blind would not move that cycle, which is
+    exactly the lighting-blocks-blinds coupling this split exists to remove.
+    The write is guarded per helper, so here the blind must still be commanded
+    even though every `input_boolean` service call raises.
+    """
+    moved = []
+
+    async def _run():
+        hass = hass_factory()
+        try:
+
+            async def _raise_input_boolean(call):
+                msg = "input_boolean service is down"
+                raise RuntimeError(msg)
+
+            async def _record_move(call):
+                moved.append(call)
+
+            hass.services.async_register("input_boolean", "turn_on", _raise_input_boolean)
+            hass.services.async_register("input_boolean", "turn_off", _raise_input_boolean)
+            for service in ("open_cover", "set_cover_position", "set_cover_tilt_position"):
+                hass.services.async_register("cover", service, _record_move)
+
+            _prime_lighting_world(hass, lux=3000, elevation=45)  # both flags want off
+            hass.states.async_set("input_boolean.lighting_on", "on")  # so a write is attempted
+            hass.states.async_set("input_boolean.je_noc_auto", "on")
+            hass.states.async_set(
+                "cover.a", "closed", {"current_position": 0, "current_tilt_position": 0}
+            )
+
+            coordinator = CoverLogicCoordinator(
+                hass, load_config(_MOVING_WITH_OUTPUTS_CONFIG), runtime_entry({"dry_run": False})
+            )
+            await coordinator.async_setup()
+            await asyncio.sleep(_WAIT)
+            await coordinator.runner.async_wait_idle()
+
+            assert coordinator.last_error is None, "a guarded write failure escaped into evaluate"
+            assert moved, "the failing flag write blocked the blind command"
+
+            await coordinator.async_unload()
+        finally:
+            await hass.async_stop(force=True)
+
+    asyncio.run(_run())

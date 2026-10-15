@@ -73,6 +73,7 @@ from .engine import Decision, evaluate
 from .guards import Guarded, guard_blinds, review, screen
 from .ha_world import build_world
 from .model import KEEP, Action, Config
+from .outputs import derive_outputs
 from .readiness import Readiness, assess
 from .runner import (
     ATTR_CURRENT_TILT_POSITION,
@@ -559,6 +560,7 @@ class CoverLogicCoordinator:
             # "how long has a deferral waited" cannot disagree by a call.
             completed = dt_util.utcnow()
             self._publish_outcome(decision, completed)
+            await self._write_outputs(world)
 
             now = completed.timestamp()
             elapsed = self.deferrals.sync(guarded, decision, now)
@@ -605,6 +607,45 @@ class CoverLogicCoordinator:
             f"zone {failure.key} could not be decided: {failure.error}"
             for failure in decision.failures
         )
+
+    async def _write_outputs(self, world: World) -> None:
+        """Publish the derived lighting flags, only where the helper must change.
+
+        Own `Context` so a later manual-move detector could tell these apart; but
+        the real loop-guard is structural -- these helpers are not referenced by
+        any condition, so we never subscribed to them. Failure is logged, not
+        raised: a flag we could not write must not blank a blind decision. See
+        docs/rationale.md -- "Why the integration writes the lighting flags".
+        """
+        try:
+            desired = derive_outputs(self.config, world)
+        except Exception:
+            _LOGGER.exception("cover_logic: output derivation failed, leaving flags as-is")
+            return
+        for entity, want_on in desired.items():
+            state = self.hass.states.get(entity)
+            if state is None:
+                continue  # helper not created yet; skip silently until it exists
+            is_on = state.state == "on"
+            if is_on == want_on:
+                continue
+            service = "turn_on" if want_on else "turn_off"
+            try:
+                await self.hass.services.async_call(
+                    "input_boolean",
+                    service,
+                    {"entity_id": entity},
+                    blocking=False,
+                    context=Context(),
+                )
+            except Exception:
+                # Never let a failed flag write escape into `_async_evaluate`'s
+                # outer catch, which would skip `_execute` and blank the blind
+                # decision -- the exact lighting-blocks-blinds coupling this
+                # split exists to remove. See docs/rationale.md.
+                _LOGGER.exception(
+                    "cover_logic: could not write %s; leaving it and continuing", entity
+                )
 
     def _next_boundary(self, world: World) -> float | None:
         """`boundaries.next_boundary`, degraded to "nothing pending" when it cannot be computed.

@@ -2,8 +2,10 @@ import datetime as dt
 
 import jinja2
 import pytest
+from test_fixture_lux_fallback import _world
 
 from cover_logic.conditions import evaluate_condition
+from cover_logic.config_schema import load_config_file
 from cover_logic.model import Blind, Zone
 from cover_logic.world import Event, SunTimes, Target, World
 
@@ -547,3 +549,75 @@ def test_missing_since_ignores_for_rather_than_failing():
     cond = {"condition": "state", "entity_id": "binary_sensor.bed", "state": "off", "for": 120}
     w = World(states={"binary_sensor.bed": "off"}, now=NOW, event=Event())
     assert evaluate_condition(cond, w) is True
+
+
+# `je_tma`: the fixture's replica of Lighting SUN's dusk thresholds, see
+# fixtures/dom_peter.yaml. `_world` is shared with test_fixture_lux_fallback.py.
+
+
+@pytest.fixture(scope="module")
+def conditions(fixtures_dir):
+    return load_config_file(fixtures_dir / "dom_peter.yaml").conditions
+
+
+def test_je_tma_true_below_dusk_threshold_after_noon(conditions):
+    w = _world(hodina=13, lux=1000, elevacia=3.0, brzda="off")
+    assert evaluate_condition(conditions["je_tma"], w, "cover.a", conditions) is True
+
+
+def test_je_tma_false_bright_midday(conditions):
+    w = _world(hodina=13, lux=3000, elevacia=45.0, brzda="off")
+    assert evaluate_condition(conditions["je_tma"], w, "cover.a", conditions) is False
+
+
+def test_je_tma_ignores_frozen_low_lux(conditions):
+    # zamrznutý senzor (last_seen dávno) nesmie zapnúť tmu za dňa
+    w = _world(hodina=13, lux=0, elevacia=45.0, brzda="off")
+    assert evaluate_condition(conditions["je_tma"], w, "cover.a", conditions) is False
+
+
+def test_je_tma_stays_true_overnight_past_midnight(conditions):
+    # lighting_on must hold on dusk->dawn; the sun window spans midnight, so
+    # 02:00 (after the 12:30 gate has flipped false) is still "dark".
+    w = _world(hodina=2, lux=3000, elevacia=-20.0, brzda="off")
+    assert evaluate_condition(conditions["je_tma"], w, "cover.a", conditions) is True
+
+
+def test_je_tma_false_dark_morning_before_noon(conditions):
+    # An overcast morning must not arm lighting_on: past sunrise+10min the sun
+    # clause is false and the lux clause is gated to after 12:30.
+    w = _world(hodina=10, lux=1000, elevacia=20.0, brzda="off")
+    assert evaluate_condition(conditions["je_tma"], w, "cover.a", conditions) is False
+
+
+# `je_noc_auto`: the output-only night signal replicating Lighting SUN's bare
+# cover_up/cover-down thresholds (sky OR trusted lux<500). Distinct from the
+# `je_noc` night MODE; nothing in the decision path reads it, so these are the
+# only tests that evaluate it.
+
+
+def test_je_noc_auto_true_on_trusted_low_lux_by_day_clock(conditions):
+    # Daytime by clock (sun clause false), so True must come from lux<500;
+    # elevation 3 keeps `lux_neverim` false, so the reading is trusted.
+    w = _world(hodina=13, lux=100, elevacia=3.0, brzda="off")
+    assert evaluate_condition(conditions["je_noc_auto"], w, "cover.a", conditions) is True
+
+
+def test_je_noc_auto_false_above_lux_threshold_by_day(conditions):
+    # 600 lux is above the 500 threshold and the sun is up: neither clause holds.
+    w = _world(hodina=13, lux=600, elevacia=45.0, brzda="off")
+    assert evaluate_condition(conditions["je_noc_auto"], w, "cover.a", conditions) is False
+
+
+def test_je_noc_auto_ignores_frozen_low_lux(conditions):
+    # Frozen sensor (lux 0 while the sun is high) trips `lux_neverim`; without
+    # that gate lux<500 would declare night in daylight. Sun clause is false.
+    w = _world(hodina=13, lux=0, elevacia=45.0, brzda="off")
+    assert evaluate_condition(conditions["je_noc_auto"], w, "cover.a", conditions) is False
+
+
+def test_je_noc_auto_true_via_sky_when_sun_is_down(conditions):
+    # 23:00 is past sunset, so the sky clause is true regardless of lux --
+    # lux 3000 would fail the lux branch, so this isolates the sky clause.
+    w = _world(hodina=23, lux=3000, elevacia=-30.0, brzda="off")
+    assert evaluate_condition(conditions["je_noc_auto"], w, "cover.a", conditions) is True
