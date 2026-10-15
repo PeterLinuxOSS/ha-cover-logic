@@ -1,4 +1,4 @@
-"""Every flow screen, repair issue and service must supply `{docs_url}`; HA would render it literally."""
+"""Flow screens, repair issues and services must supply `{docs_url}`; HA shows it literally."""
 
 import ast
 import json
