@@ -82,7 +82,7 @@ from .const import (
 )
 from .engine import resolve_ownership
 from .guards import guard_blinds
-from .model import Action, Config, Ref
+from .model import Action, Config, Ref, SlatAngle
 from .world import World
 
 
@@ -294,6 +294,15 @@ def _action_reads(action: Action) -> set[Read]:
     sent to ten blinds is still the house moving on a world nobody saw. That is
     why a `values:` default, unlike a condition's, does not answer this
     question: see `docs/rationale.md` -- "Why a `values:` default is not an
-    answer".
+    answer". A `SlatAngle` axis falls back the same way and is held to the
+    same rule for its three inputs.
     """
-    return {Read(axis.entity) for axis in (action.position, action.tilt) if isinstance(axis, Ref)}
+    reads: set[Read] = set()
+    for axis in (action.position, action.tilt):
+        if isinstance(axis, Ref):
+            reads.add(Read(axis.entity))
+        elif isinstance(axis, SlatAngle):
+            reads.add(Read(axis.sun_entity))
+            reads.add(Read(axis.azimuth_entity, axis.azimuth_attribute))
+            reads.add(Read(axis.elevation_entity, axis.elevation_attribute))
+    return reads

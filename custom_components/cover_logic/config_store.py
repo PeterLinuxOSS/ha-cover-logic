@@ -84,6 +84,7 @@ from .config_schema import (
     _reject_dot,
     _reject_zone_id,
     _rule_to_dict,
+    _value_to_dict,
     _zone_to_dict,
     guard_to_dict,
     parse_guards,
@@ -699,8 +700,9 @@ def subentries_from_config(config: Config) -> list[tuple[str, dict[str, Any]]]:
     for zone_id, zone in sorted(config.zones.items()):
         items.append((ZONE, {_ID_KEY: zone_id, **_zone_to_dict(zone)}))
 
-    for name, ref in sorted(config.values.items()):
-        items.append((VALUE, {_ID_KEY: name, "entity": ref.entity, "default": ref.default}))
+    for name, value in sorted(config.values.items()):
+        # Reuses `_value_to_dict` so an export and a YAML dump never disagree.
+        items.append((VALUE, {_ID_KEY: name, **_value_to_dict(value)}))
 
     for name, body in sorted(config.conditions.items()):
         items.append((CONDITION, _condition_body_to_data(name, body)))

@@ -31,6 +31,7 @@ PURE_MODULES = [
     "deferrals.py",
     "boundaries.py",
     "capabilities.py",
+    "geometry.py",
     # `readiness.py` reads its verdict off the same `World` the decision was
     # made from; being on this list is what stops that becoming a second,
     # later read of `hass.states` that could disagree with the decision.

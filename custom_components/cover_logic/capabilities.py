@@ -24,7 +24,8 @@ no position axis at all.
 
 A `Ref` value (a `values:` entry read at evaluation time) counts as "could be
 anything", so it requires the setter. That is the honest reading: the number is
-not knowable until the world is read.
+not knowable until the world is read. A `SlatAngle` (a computed `values:`
+entry) is charged the same way for the same reason.
 
 No `homeassistant` import -- this is in `tests/test_purity.py`'s
 `PURE_MODULES`. The feature bits below therefore *mirror*
@@ -32,7 +33,7 @@ No `homeassistant` import -- this is in `tests/test_purity.py`'s
 and `tests/ha/test_capabilities_mirror.py` fails if the two ever disagree.
 """
 
-from .model import Config, Ref
+from .model import Config, Ref, SlatAngle
 
 # Mirrors `homeassistant.components.cover.CoverEntityFeature`. Kept in sync by
 # a test rather than by hope; see the module docstring.
@@ -59,7 +60,7 @@ _OPEN = 100
 
 def _position_feature(value) -> int:
     """The bit `runner._service_for_position` will need for this value."""
-    if isinstance(value, Ref):
+    if isinstance(value, (Ref, SlatAngle)):
         return SET_POSITION
     if value <= _CLOSED:
         return CLOSE
@@ -70,7 +71,7 @@ def _position_feature(value) -> int:
 
 def _tilt_feature(value) -> int:
     """The bit `runner._service_for_tilt` will need for this value."""
-    if isinstance(value, Ref):
+    if isinstance(value, (Ref, SlatAngle)):
         return SET_TILT_POSITION
     if value <= _CLOSED:
         return CLOSE_TILT
@@ -85,7 +86,9 @@ def _is_number(value) -> bool:
     `bool` is excluded deliberately: it is an `int` subclass, and a `True`
     slipping in from a mis-parsed YAML would otherwise be read as position 1.
     """
-    return isinstance(value, Ref) or (isinstance(value, int) and not isinstance(value, bool))
+    return isinstance(value, (Ref, SlatAngle)) or (
+        isinstance(value, int) and not isinstance(value, bool)
+    )
 
 
 def required_features(config: Config) -> dict[str, int]:

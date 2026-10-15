@@ -50,7 +50,7 @@ from .const import (
     GUARD_TIMEOUTS,
 )
 from .engine import Decision, resolve_action, resolve_ownership
-from .model import KEEP, UNSET, Action, Config, Guard, Ref
+from .model import KEEP, UNSET, Action, Config, Guard, Ref, SlatAngle
 from .world import Target, World
 
 # The trace label for a blind no guard claimed. Deliberately the same `#none`
@@ -225,7 +225,7 @@ def screen(config: Config, world: World) -> Screening:
             # that every input-stage guard applies to `any`.
             if not evaluate_condition(guard.when, world, target, config.conditions):
                 continue
-            outcomes[entity] = _outcome(index, guard, entity, world, held=None)
+            outcomes[entity] = _outcome(index, guard, entity, world, held=None, target=target)
             break
 
     return Screening(
@@ -291,7 +291,9 @@ def review(
         if fired is None:
             outcomes[entity] = Outcome(entity=entity, action=decided, reason=NO_GUARD)
         else:
-            outcomes[entity] = _outcome(fired[0], fired[1], entity, world, held=decided)
+            outcomes[entity] = _outcome(
+                fired[0], fired[1], entity, world, held=decided, target=target
+            )
 
     return Guarded(outcomes=outcomes)
 
@@ -313,7 +315,14 @@ def _staged(config: Config, stage: str) -> list[tuple[int, Guard, set[str]]]:
     ]
 
 
-def _outcome(index: int, guard: Guard, entity: str, world: World, held: Action | None) -> Outcome:
+def _outcome(
+    index: int,
+    guard: Guard,
+    entity: str,
+    world: World,
+    held: Action | None,
+    target: Target | None,
+) -> Outcome:
     """The outcome of one guard firing on one blind.
 
     `held` is the action that was going to happen -- the engine's decision at
@@ -336,7 +345,7 @@ def _outcome(index: int, guard: Guard, entity: str, world: World, held: Action |
         # the engine: a `Ref` reaching `planner.plan` raises, and a `force`
         # guard holding a helper reference (the house's flower keeper does
         # exactly that) is otherwise unplannable.
-        return Outcome(action=resolve_action(guard.then, world), **common)
+        return Outcome(action=resolve_action(guard.then, world, target), **common)
 
     return Outcome(
         action=None,
@@ -385,9 +394,10 @@ def _direction_matches(index: int, guard: Guard, decided: Action, current: int |
     position = decided.position
     if position is KEEP:
         return False
-    if isinstance(position, Ref):
+    if isinstance(position, (Ref, SlatAngle)):
         msg = (
-            f"{guard.label(index)}: cannot judge direction against an unresolved {position!r}; "
+            f"{guard.label(index)}: cannot judge direction against an unresolved "
+            f"{'ref' if isinstance(position, Ref) else 'slat_angle'} {position!r}; "
             f"a decision reaching a guard must already have its refs resolved"
         )
         raise GuardError(msg)

@@ -89,7 +89,25 @@ class Ref:
     default: int
 
 
-Value = int | Keep | Ref
+@dataclass(frozen=True, slots=True)
+class SlatAngle:
+    """A tilt percentage computed from solar geometry at evaluation time.
+
+    Target-relative: the facade and slat geometry come from the blind being
+    decided, so one entry serves a house of any orientation. `default` is used
+    when the geometry has no answer -- see `geometry.slat_angle_percent`.
+    """
+
+    default: int
+    scale: str
+    sun_entity: str
+    azimuth_entity: str
+    azimuth_attribute: str | None
+    elevation_entity: str
+    elevation_attribute: str | None
+
+
+Value = int | Keep | Ref | SlatAngle
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,6 +128,8 @@ class Blind:
     travel_time: float = 60.0
     tilt_after_arrival: bool = True
     has_tilt: bool = True
+    slat_distance: float | None = None
+    slat_depth: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -237,6 +257,6 @@ class Config:
     modes: tuple[Mode, ...]
     rules: dict[str, tuple[Rule, ...]]
     conditions: dict[str, dict] = field(default_factory=dict)
-    values: dict[str, Ref] = field(default_factory=dict)
+    values: dict[str, Ref | SlatAngle] = field(default_factory=dict)
     guards: tuple[Guard, ...] = ()
     manual_detection: ManualDetection = ManualDetection()

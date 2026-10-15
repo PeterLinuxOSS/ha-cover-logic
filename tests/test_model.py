@@ -14,6 +14,7 @@ from cover_logic.model import (
     Mode,
     Ref,
     Rule,
+    SlatAngle,
     Unset,
     Zone,
 )
@@ -50,6 +51,35 @@ def test_blind_defaults_match_a_tilting_venetian_blind():
     assert b.tolerance == 45.0
     assert b.tilt_after_arrival is True
     assert b.has_tilt is True
+    assert b.slat_distance is None
+    assert b.slat_depth is None
+
+
+def _slat_angle(**overrides) -> SlatAngle:
+    fields = {
+        "default": 50,
+        "scale": "half",
+        "sun_entity": "sun.sun",
+        "azimuth_entity": "sensor.sun_solar_azimuth",
+        "azimuth_attribute": None,
+        "elevation_entity": "sun.sun",
+        "elevation_attribute": "elevation",
+    }
+    fields.update(overrides)
+    return SlatAngle(**fields)
+
+
+def test_slat_angle_is_frozen_and_hashable():
+    angle = _slat_angle()
+    assert hash(angle) == hash(_slat_angle())
+    with pytest.raises((AttributeError, TypeError)):
+        angle.default = 0
+
+
+def test_action_accepts_a_slat_angle_on_the_tilt_axis():
+    angle = _slat_angle()
+    a = Action(position=0, tilt=angle)
+    assert a.tilt == angle
 
 
 def test_zone_members_are_a_tuple_so_the_zone_stays_hashable():
