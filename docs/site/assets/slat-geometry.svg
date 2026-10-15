@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 300" fill="none" stroke="currentColor">
+  <title>Side section of a slat blind: slat distance, slat depth and the sun's elevation ray</title>
+
+  <!-- window frame, side view -->
+  <rect x="140" y="30" width="10" height="250" stroke-width="2" fill="currentColor" opacity="0.06"/>
+  <rect x="320" y="30" width="10" height="250" stroke-width="2" fill="currentColor" opacity="0.06"/>
+
+  <!-- three slats, tilted; this angle is illustrative only, not a claim about direction -->
+  <g stroke-width="7" stroke-linecap="round">
+    <line x1="150" y1="95" x2="300" y2="70" />
+    <line x1="150" y1="165" x2="300" y2="140" />
+    <line x1="150" y1="235" x2="300" y2="210" />
+  </g>
+
+  <!-- slat_distance: vertical spacing between two slat pivots -->
+  <line x1="110" y1="95" x2="110" y2="165" stroke-width="1.5"/>
+  <polygon points="110,95 106,104 114,104" fill="currentColor" stroke="none"/>
+  <polygon points="110,165 106,156 114,156" fill="currentColor" stroke="none"/>
+  <text x="20" y="134" font-size="11" fill="currentColor" stroke="none">slat_distance</text>
+
+  <!-- slat_depth: the slat's own front-to-back width, measured along one slat -->
+  <line x1="150" y1="260" x2="300" y2="260" stroke-width="1.5"/>
+  <polygon points="150,260 159,256 159,264" fill="currentColor" stroke="none"/>
+  <polygon points="300,260 291,256 291,264" fill="currentColor" stroke="none"/>
+  <text x="195" y="276" font-size="11" fill="currentColor" stroke="none">slat_depth</text>
+
+  <!-- sun elevation ray, shallow angle, blocked by the top slat -->
+  <circle cx="45" cy="45" r="12" fill="#f5a623" stroke="none"/>
+  <g stroke="#f5a623" stroke-width="1.5">
+    <line x1="45" y1="25" x2="45" y2="18"/>
+    <line x1="45" y1="65" x2="45" y2="72"/>
+    <line x1="25" y1="45" x2="18" y2="45"/>
+  </g>
+  <line x1="55" y1="55" x2="175" y2="88" stroke="#f5a623" stroke-width="2"/>
+  <line x1="45" y1="88" x2="175" y2="88" stroke-width="1" stroke-dasharray="3 3"/>
+  <path d="M 75 88 A 30 30 0 0 1 72 72" stroke-width="1"/>
+  <text x="80" y="100" font-size="11" fill="currentColor" stroke="none">elevation</text>
+  <text x="178" y="80" font-size="11" fill="currentColor" stroke="none">blocked by slat</text>
+</svg>

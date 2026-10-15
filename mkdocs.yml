@@ -26,4 +26,12 @@ markdown_extensions:
           format: !!python/name:pymdownx.superfences.fence_code_format
 nav:
   - Home: index.md
+  - Concepts:
+      - concepts/blinds.md
+      - concepts/zones.md
+      - concepts/modes.md
+      - concepts/rules.md
+      - concepts/values.md
+      - concepts/guards.md
+      - concepts/manual-moves.md
   - Reference: [reference/configuration.md]

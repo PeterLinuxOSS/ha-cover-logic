@@ -1,0 +1,105 @@
+# Guards
+
+A guard is a safety interlock: a condition, a policy, and what it covers —
+evaluated on top of whatever the rules decided. `guards` is an ordered list;
+like modes and rules, they resolve **first match wins**, in written order.
+There are no numeric priorities.
+
+```yaml title="config"
+blinds:
+  - entity: cover.living_room_balcony
+zones:
+  living_room:
+    members: [cover.living_room_balcony]
+modes:
+  - id: home
+conditions:
+  balcony_door_open:
+    condition: state
+    entity_id: binary_sensor.balcony_door
+    state: "on"
+rules:
+  home.living_room:
+    - then: {position: 0, tilt: 0}
+guards:
+  - name: never lower the balcony blind onto an open door
+    policy: skip
+    applies_to: closing # raising it is always safe; only closing is the hazard
+    targets: [cover.living_room_balcony]
+    when: !ref balcony_door_open
+  - name: close it once the door shuts, up to 90 minutes later
+    policy: defer
+    applies_to: closing
+    targets: [living_room]
+    when: !ref balcony_door_open
+    max_wait: 5400
+    on_timeout: abandon
+    recheck_every: 300
+```
+
+Both guards above watch the same door; the first (`skip`) always takes it
+immediately, so the second (`defer`) only ever gets to fire once the door
+closes and the engine still wants to lower the blind.
+
+## Policies
+
+- **`skip`** — do not move it. The matched axis' whole action is suppressed,
+  tilt included, not just the half the condition is about.
+- **`defer`** — move it later. Requires `max_wait` (`null` means wait
+  indefinitely — a stated value, not an omission) and `on_timeout`
+  (`proceed`: do it anyway once the wait runs out, or `abandon`: drop it —
+  no default, since the two are opposites and both are in real use).
+- **`force`** — move it now, regardless of what the rules decided. Requires
+  `then:`, the action to impose.
+
+```mermaid
+flowchart TD
+    G1[Guard #0] -->|matches| Done1[Outcome decided]
+    G1 -->|no match| G2[Guard #1]
+    G2 -->|matches| Done2[Outcome decided]
+    G2 -->|no match| G3[Guard #2 ...]
+    G3 -->|no match| None[No guard: the rule's own decision stands]
+```
+
+## Stage: before or after the decision
+
+`stage: output` (the default) judges the action the rules already decided —
+it can still see what the engine chose. `stage: input` drops the target
+*before* the engine is even asked, so no decision is made for it at all. An
+`input`-stage guard may not set `applies_to` to anything but `any`: at that
+point there is no candidate command yet for "closing" or "opening" to mean
+anything about.
+
+## `applies_to`
+
+`closing` means a **decreasing position**, and only that — a blind's slats
+moving are never by themselves the hazard a guard like this exists for.
+`opening` is the increasing case; `any` (the default) does not care which
+way.
+
+## `max_wait`, `on_timeout`, `recheck_every`
+
+These three only apply to `defer`. `recheck_every` (seconds, default 900)
+controls how often a pending wait is re-examined — this is what lets a
+deferred action survive a Home Assistant restart without a hand-written
+watchdog beside it: the wait is re-derived from the live condition every
+time, not tracked as an in-flight timer that a restart would simply erase.
+
+## Common mistakes
+
+- Writing a `defer` without deciding `on_timeout` up front — there is no
+  default, and the two choices behave oppositely.
+- Putting a narrower guard after a broader one that already matches
+  everything it would have covered — first match wins, so the narrower one
+  never gets a turn.
+- Giving an `input`-stage guard a direction other than `any` — this is a
+  configuration error, not a silent no-op.
+
+## Where to edit this
+
+**Settings → Devices & services → Cover Logic → Add guard**. The first
+screen asks for `policy` before anything else, because the policy decides
+which fields the next screen even shows.
+
+See the [reference: guards](../reference/configuration.md#guards) for the
+full field list.

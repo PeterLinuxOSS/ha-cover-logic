@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 300" fill="none" stroke="currentColor">
+  <title>Facade azimuth, measured clockwise from north, with a tolerance cone around it</title>
+
+  <!-- sky reference quarter, north to east, just to anchor the compass -->
+  <path d="M 150 40 A 190 190 0 0 1 340 230" stroke-width="1" stroke-dasharray="2 4" opacity="0.4"/>
+
+  <!-- house wall: the diagram's "indoors" is below this line -->
+  <line x1="60" y1="230" x2="240" y2="230" stroke-width="4" stroke-linecap="round"/>
+  <rect x="60" y="230" width="180" height="46" fill="currentColor" opacity="0.08" stroke="none"/>
+  <text x="80" y="260" font-size="11" fill="currentColor" stroke="none">house (indoors)</text>
+
+  <!-- north reference, dashed, with arrowhead -->
+  <line x1="150" y1="230" x2="150" y2="70" stroke-width="1.5" stroke-dasharray="4 3"/>
+  <polygon points="150,62 145,74 155,74" fill="currentColor" stroke="none"/>
+  <text x="156" y="68" font-size="12" fill="currentColor" stroke="none">N (azimuth 0)</text>
+
+  <!-- tolerance cone: facade_azimuth +/- tolerance, filled sector -->
+  <path d="M 150 230 L 220 109 A 140 140 0 0 1 290 230 Z" fill="#f5a623" opacity="0.12" stroke="none"/>
+  <line x1="150" y1="230" x2="220" y2="109" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="150" y1="230" x2="290" y2="230" stroke-width="1" stroke-dasharray="3 3"/>
+  <text x="248" y="150" font-size="11" fill="currentColor" stroke="none">+/- tolerance</text>
+
+  <!-- outward facade normal (facade_azimuth direction) -->
+  <line x1="150" y1="230" x2="271" y2="160" stroke-width="2"/>
+  <polygon points="271,160 258,163 264,173" fill="currentColor" stroke="none" transform="rotate(30 271 160)"/>
+  <text x="275" y="178" font-size="12" fill="currentColor" stroke="none">facade_azimuth</text>
+
+  <!-- small angle arc between north and the normal, at the wall -->
+  <path d="M 150 190 A 40 40 0 0 1 185 210" stroke-width="1"/>
+  <text x="168" y="198" font-size="10" fill="currentColor" stroke="none">angle</text>
+
+  <!-- the sun: inside the tolerance cone means sun_hits_target is true -->
+  <circle cx="315" cy="135" r="12" fill="#f5a623" stroke="none"/>
+  <g stroke="#f5a623" stroke-width="1.5">
+    <line x1="315" y1="115" x2="315" y2="108"/>
+    <line x1="315" y1="155" x2="315" y2="162"/>
+    <line x1="295" y1="135" x2="288" y2="135"/>
+    <line x1="335" y1="135" x2="342" y2="135"/>
+  </g>
+  <text x="330" y="112" font-size="11" fill="currentColor" stroke="none">sun (in sector)</text>
+</svg>
