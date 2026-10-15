@@ -22,24 +22,26 @@ rules:
   home.living_room:
     - then: {position: 0, tilt: 0}
 guards:
-  - name: never lower the balcony blind onto an open door
-    policy: skip
-    applies_to: closing # raising it is always safe; only closing is the hazard
-    targets: [cover.living_room_balcony]
-    when: !ref balcony_door_open
-  - name: close it once the door shuts, up to 90 minutes later
+  - name: do not lower the balcony blind while the door is open
     policy: defer
-    applies_to: closing
+    applies_to: closing # raising it is always safe; only closing is the hazard
     targets: [living_room]
     when: !ref balcony_door_open
-    max_wait: 5400
+    max_wait: 10800
     on_timeout: abandon
-    recheck_every: 300
+    recheck_every: 900
 ```
 
-Both guards above watch the same door; the first (`skip`) always takes it
-immediately, so the second (`defer`) only ever gets to fire once the door
-closes and the engine still wants to lower the blind.
+While the door is open, a close the rule decided is held back; once the door
+shuts the guard stops matching and the rule's close is sent on that same
+recompute. One `defer` guard is the whole interlock — see
+[door interlock](../how-to/door-interlock.md) for the recipe.
+
+First match wins **per blind**: for each blind, the first guard (in written
+order) whose targets cover it, whose `applies_to` matches and whose `when` is
+true decides that blind, and no later guard is asked. Two guards with the
+same `when` and overlapping targets therefore never both fire — the second
+is dead for those blinds.
 
 ## Policies
 
@@ -86,11 +88,20 @@ named [condition](modes.md) instead.
 
 ## `max_wait`, `on_timeout`, `recheck_every`
 
-These three only apply to `defer`. `recheck_every` (seconds, default 900)
-controls how often a pending wait is re-examined — this is what lets a
-deferred action survive a Home Assistant restart without a hand-written
-watchdog beside it: the wait is re-derived from the live condition every
-time, not tracked as an in-flight timer that a restart would simply erase.
+These three only apply to `defer`. `max_wait` is how long the wait may last
+(seconds, or `null` for no deadline); `on_timeout` is what happens when it
+runs out — `proceed` sends the held action, `abandon` logs a warning and
+sends nothing. Either way the guard keeps holding the blind for as long as
+its condition stays true, and releases it the moment the condition clears.
+
+A wait survives a Home Assistant restart without a hand-written watchdog
+because it is not an in-flight timer: it is re-derived from the
+configuration and the live condition on every evaluation, so the first
+evaluation after startup recreates it (with `waited` back at zero, which
+only ever makes a timeout later). `recheck_every` (seconds, default 900)
+is how often an unresolved wait is re-examined even when nothing else
+changes, and the re-examination is never scheduled past the `max_wait`
+deadline, so the timeout applies on time.
 
 ## Common mistakes
 
@@ -98,7 +109,8 @@ time, not tracked as an in-flight timer that a restart would simply erase.
   default, and the two choices behave oppositely.
 - Putting a narrower guard after a broader one that already matches
   everything it would have covered — first match wins, so the narrower one
-  never gets a turn.
+  never gets a turn. A `skip` and a `defer` with the same `when` on the same
+  blind are the common case: only the first one written ever fires.
 - Giving an `input`-stage guard a direction other than `any` — this is a
   configuration error, not a silent no-op.
 
