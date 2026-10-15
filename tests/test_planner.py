@@ -15,6 +15,7 @@ import itertools
 from hypothesis import given, settings, strategies as st
 import pytest
 
+from cover_logic import const
 from cover_logic.model import KEEP, Action, Blind, Ref
 from cover_logic.planner import (
     ARRIVAL_TIMEOUT_FACTOR,
@@ -370,6 +371,33 @@ def test_the_kitchen_drift_does_not_produce_a_command():
 def test_a_blind_exactly_on_the_edge_of_the_dead_band_is_left_alone():
     assert plan(_blind(), 5, 0, Action(position=0, tilt=0)).commands == ()
     assert plan(_blind(), 6, 0, Action(position=0, tilt=0)).commands == (SetPosition(ENTITY, 0),)
+
+
+def test_a_dead_band_of_five_still_moves_the_2026_09_16_incident():
+    # peter_zal reported 7 against a target of 0: today's default (5) must
+    # keep sending the command, or the house's own behaviour has changed.
+    assert plan(_blind(), 7, 0, Action(position=0, tilt=0), dead_band=5).commands == (
+        SetPosition(ENTITY, 0),
+    )
+
+
+def test_a_dead_band_of_seven_suppresses_the_2026_09_16_incident():
+    # Same inputs, the fix: 7 > 7 is false, so nothing is sent to an
+    # already-closed blind.
+    assert plan(_blind(), 7, 0, Action(position=0, tilt=0), dead_band=7).commands == ()
+
+
+def test_the_plan_default_and_the_house_default_are_the_same_number():
+    # planner.DEAD_BAND vs const.DEFAULT_DEAD_BAND: a comment kept them equal, not a guarantee.
+    assert DEAD_BAND == const.DEFAULT_DEAD_BAND
+
+
+def test_the_arrival_tolerance_is_the_dead_band_that_was_passed_in():
+    # The invariant the module's own comment states: the skip threshold and
+    # the arrival threshold must be one number, not two that could drift.
+    result = plan(_blind(), 100, 100, Action(position=0, tilt=0), dead_band=7)
+    wait = _only(result.commands, WaitForPosition)
+    assert wait.tolerance == 7
 
 
 def test_a_move_with_no_tilt_behind_it_carries_no_wait():

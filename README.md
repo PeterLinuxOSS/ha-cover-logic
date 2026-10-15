@@ -27,7 +27,15 @@ it is on, every command is decided, planned, queued and logged — and nothing i
 sent. So a fresh install still moves nothing. You install it alongside whatever
 already controls your blinds, watch what it *would* do, compare, and turn
 `dry_run` off (Configure → **Execution**) when the log stops surprising you.
-That is the intended way to start.
+That is the intended way to start. The same **Execution** screen also holds
+`dead_band` (default 5): how many points a position may be off target before
+a command is sent, and how close a `WaitForPosition` counts as arrived — one
+number, both meanings, deliberately.
+
+The engine can also compute a value instead of just reading one: `slat_angle`
+derives a venetian blind's tilt from solar geometry (see "How it decides"
+below). It ships **unused** — nothing references one until you write a rule
+that does, so upgrading changes nothing on its own.
 
 The author's own house has been running it in that shadow mode since August 2026,
 with 122 configuration entries, checked against the 367-line Jinja template it is
@@ -96,6 +104,17 @@ Four ideas, and that is the whole model:
 A rule can leave an axis alone rather than setting it, and a zone can inherit a
 mode's default rules instead of repeating them. Both exist because the author's
 own configuration had 86 rules with only 44 distinct bodies before they did.
+
+- **Value** — a named quantity a rule's `position`/`tilt` can reference with
+  `!ref name`: either a helper entity you read, or, with `type: slat_angle`,
+  a tilt computed live from solar geometry and the blind's own facade and
+  slat measurements — one entry works for every facade in the house.
+
+```yaml
+values:
+  slats: {type: slat_angle, default: 50}
+then: {tilt: !ref slats}
+```
 
 **Interlocks** (`guards:`) sit outside that: they can drop a blind from
 consideration before the engine is asked, or override the decision afterwards.

@@ -1255,3 +1255,119 @@ def test_a_broken_ownership_map_does_not_make_validate_raise():
 
     assert "blind_without_zone" in codes_found
     assert "tilt_on_tiltless_blind" not in codes_found
+
+
+SLAT_ANGLE = """
+blinds:
+  - {entity: cover.a, facade_azimuth: 180, slat_distance: 60, slat_depth: 80}
+zones:
+  z: {members: [cover.a]}
+values:
+  angle: {type: slat_angle, default: 50}
+modes:
+  - {id: den}
+rules:
+  den.z:
+    - {then: {tilt: !ref angle}}
+"""
+
+
+def test_a_slat_angle_on_a_blind_without_geometry_warns():
+    """A computed angle needs the facade and the slats; without them it is only its default.
+
+    `engine._resolve_slat_angle` falls back the moment any of the three is
+    missing, so the rule reads as if it tracks the sun and silently never
+    does -- the house this migrates from states `facade_azimuth` everywhere
+    and neither slat measurement anywhere.
+    """
+    text = SLAT_ANGLE.replace(", slat_distance: 60, slat_depth: 80", "")
+
+    problems = [p for p in validate(load_config(text)) if p.code == "slat_angle_without_geometry"]
+
+    assert len(problems) == 1
+    assert problems[0].severity == WARNING
+    assert "cover.a" in problems[0].message
+    assert "slat_distance" in problems[0].message
+    assert "slat_depth" in problems[0].message
+    assert problems[0].owners == frozenset({("rule", "den.z#0")})
+
+
+def test_a_slat_angle_on_a_tiltless_blind_warns_only_about_the_tilt():
+    """One fault, one warning: the geometry is complete, so only the tilt check fires.
+
+    Load-bearing, not decoration: a `SlatAngle` is a non-`KEEP` tilt, so
+    `_check_tilt_on_tiltless_blinds` already owns this fault. Folding
+    `has_tilt` into the geometry check would give one fault two warnings,
+    and this test is what fails if anyone does.
+    """
+    text = SLAT_ANGLE.replace("slat_depth: 80", "slat_depth: 80, has_tilt: false")
+
+    codes_found = [p.code for p in validate(load_config(text))]
+
+    assert "tilt_on_tiltless_blind" in codes_found
+    assert "slat_angle_without_geometry" not in codes_found
+
+
+def test_a_slat_angle_on_the_position_axis_warns():
+    """The computed number is a slat angle; the position axis moves the whole blind.
+
+    Nothing rejects it -- both axes take the same `Value` -- so the height
+    would be driven by the sun as though it were a percentage of travel.
+    """
+    text = SLAT_ANGLE.replace("tilt: !ref angle", "position: !ref angle")
+
+    problems = [p for p in validate(load_config(text)) if p.code == "slat_angle_on_position"]
+
+    assert len(problems) == 1
+    assert problems[0].severity == WARNING
+    assert "den.z#0" in problems[0].message
+    assert problems[0].owners == frozenset({("rule", "den.z#0")})
+
+
+def test_a_slat_angle_in_a_force_guards_action_is_checked_too():
+    """A guard states an action exactly as a rule does, and reaches blinds the same way.
+
+    Checked through `guard_blinds`, the one answer to "which blinds does this
+    guard name", rather than a second reading of `targets`.
+    """
+    text = SLAT_ANGLE.replace(", slat_distance: 60, slat_depth: 80", "") + (
+        "guards:\n  - {name: wind, policy: force, then: {tilt: !ref angle}}\n"
+    )
+
+    problems = [p for p in validate(load_config(text)) if p.code == "slat_angle_without_geometry"]
+
+    assert [p.owners for p in problems] == [
+        frozenset({("rule", "den.z#0")}),
+        frozenset({("guard", "guard#0")}),
+    ]
+    assert "guard #0 'wind'" in problems[1].message
+
+
+def test_a_mode_default_list_is_judged_against_every_blind_it_reaches():
+    """A `RULE_DEFAULT_ZONE` key reaches every owned blind, and one warning names one blind.
+
+    Also the dedupe: the same computed value sits on both axes here, and the
+    missing geometry is one fault per blind, not one per axis.
+    """
+    text = SLAT_ANGLE.replace(", slat_distance: 60, slat_depth: 80", "")
+    text = text.replace("  - {entity: cover.a", "  - {entity: cover.b}\n  - {entity: cover.a")
+    text = text.replace(
+        "z: {members: [cover.a]}", "z: {members: [cover.a]}\n  y: {members: [cover.b]}"
+    )
+    text = text.replace("  den.z:", '  "den.*":')
+    text = text.replace("{tilt: !ref angle}", "{position: !ref angle, tilt: !ref angle}")
+
+    problems = [p for p in validate(load_config(text)) if p.code == "slat_angle_without_geometry"]
+
+    assert len(problems) == 2
+    assert "cover.a" in problems[0].message
+    assert "cover.b" in problems[1].message
+    assert "facade_azimuth" in problems[1].message
+
+
+def test_a_fully_specified_slat_angle_warns_about_nothing():
+    """The counter-test: neither code may fire on a blind that states all three."""
+    codes_found = [p.code for p in validate(load_config(SLAT_ANGLE))]
+
+    assert "slat_angle_without_geometry" not in codes_found
+    assert "slat_angle_on_position" not in codes_found

@@ -583,3 +583,28 @@ rules:
         attributes={("sun.sun", "elevation"): "40"},
     )
     assert evaluate(cfg, w).targets["cover.a"].tilt == 11
+
+
+def test_a_slat_angle_axis_falls_back_when_the_azimuth_reading_is_missing():
+    """`sensor.sun_solar_azimuth` is disabled by default in HA's `sun` integration.
+
+    `facade_azimuth: 0` matches the -1.0 sentinel's own bearing, so a
+    loosened bound would compute a confident (wrong) tilt instead of 11.
+    """
+    cfg = load_config("""
+blinds:
+  - {entity: cover.a, facade_azimuth: 0, slat_distance: 60, slat_depth: 80}
+zones:
+  z: {members: [cover.a]}
+values:
+  angle: {type: slat_angle, default: 11}
+modes: [{id: day}]
+conditions: {}
+rules:
+  day.z: [{then: {tilt: !ref angle}}]
+""")
+    w = world(
+        {"sun.sun": "above_horizon"},
+        attributes={("sun.sun", "elevation"): "40"},
+    )
+    assert evaluate(cfg, w).targets["cover.a"].tilt == 11

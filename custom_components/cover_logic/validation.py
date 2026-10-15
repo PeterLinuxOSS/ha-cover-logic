@@ -26,7 +26,7 @@ from .const import (
 )
 from .engine import EngineError, resolve_ownership
 from .guards import guard_blinds
-from .model import KEEP, UNSET, Config, Guard
+from .model import KEEP, UNSET, Action, Blind, Config, Guard, SlatAngle
 
 ERROR = "error"
 WARNING = "warning"
@@ -115,6 +115,7 @@ def validate(config: Config) -> list[Problem]:
     problems += _check_unknown_condition_refs(config)
     problems += _check_condition_shapes(config)
     problems += _check_tilt_on_tiltless_blinds(config)
+    problems += _check_slat_angle_targets(config)
     return problems
 
 
@@ -211,6 +212,132 @@ def _check_tilt_on_tiltless_blinds(config: Config) -> list[Problem]:
                     owners=frozenset({_rule_owner(key, index)}),
                 )
             )
+    return out
+
+
+# The blind facts `engine._resolve_slat_angle` needs before it can compute anything.
+_SLAT_GEOMETRY_FIELDS = ("facade_azimuth", "slat_distance", "slat_depth")
+
+
+def _missing_slat_geometry(blind: Blind) -> list[str]:
+    """Which of the three facts a computed angle needs this blind does not state.
+
+    `has_tilt` is deliberately not among them: a `SlatAngle` is a non-`KEEP`
+    tilt, so `_check_tilt_on_tiltless_blinds` already reports a tiltless
+    blind receiving one, and naming it here too would give one fault two
+    warnings.
+    """
+    return [field for field in _SLAT_GEOMETRY_FIELDS if getattr(blind, field) is None]
+
+
+def _action_sites(
+    config: Config,
+) -> Iterator[tuple[Action, str, frozenset[tuple[str, str]], frozenset[str]]]:
+    """Yield every action this configuration states, with the blinds it can reach.
+
+    The action-shaped counterpart of `_condition_sites`: a rule's `then` and
+    the `then` of *any* guard that states one are the same shape and reach
+    blinds by the same two rules -- a rule through the zone its key names (a
+    `RULE_DEFAULT_ZONE` key through every owned blind), a guard through
+    `guards.guard_blinds`. One traversal so that "which blinds does this
+    action reach" has a single answer, the way `resolve_ownership` is the
+    single answer to "which zone owns this blind".
+
+    Guards are not filtered by policy, although only `force` reads `then` at
+    runtime. A `then` on any other policy is already an `ERROR`
+    (`guard_unused_field`), so yielding it over-reports only on a
+    configuration that is broken anyway -- and deciding here which guard
+    fields matter would be a second opinion about exactly that.
+
+    Yields nothing at all when ownership is broken. `resolve_ownership` raises
+    on a blind claimed by two zones, which `_check_ownership` has already
+    reported by the time this runs, and `validate` must never fail on the
+    malformed configurations it exists to report on -- the same reason
+    `_check_tilt_on_tiltless_blinds` catches it.
+    """
+    try:
+        owner_of = resolve_ownership(config)
+    except EngineError:
+        return
+
+    members: dict[str, set[str]] = {}
+    for entity, zone in owner_of.items():
+        members.setdefault(zone, set()).add(entity)
+    owned = frozenset(owner_of)
+
+    for key, rules in config.rules.items():
+        _, _, zone = key.partition(".")
+        reach = owned if zone == RULE_DEFAULT_ZONE else frozenset(members.get(zone, ()))
+        for index, rule in enumerate(rules):
+            if rule.then is not None:
+                yield rule.then, f"rule {key}#{index}", frozenset({_rule_owner(key, index)}), reach
+
+    for index, guard in enumerate(config.guards):
+        if guard.then is not None:
+            yield (
+                guard.then,
+                _guard_label(index, guard),
+                frozenset({_guard_owner(index)}),
+                frozenset(guard_blinds(config, guard)),
+            )
+
+
+def _check_slat_angle_targets(config: Config) -> list[Problem]:
+    """A computed slat angle that cannot apply to the blinds it would reach.
+
+    Two distinct faults, both silent at runtime. A blind that does not state
+    its facade and slat geometry makes `engine._resolve_slat_angle` fall
+    straight back to the value's own `default`, so a rule that reads as if it
+    tracks the sun never does -- and the house this migrates from states
+    `facade_azimuth` on all ten blinds and neither slat measurement on any of
+    them, which is exactly the shape that gets no warning today. A computed
+    angle on the `position` axis is accepted by the parser (both axes take the
+    same `Value`) and drives the blind's *height* from a number that means a
+    slat angle.
+
+    `WARNING`, not `ERROR`, for both: a `slat_angle` states a `default`, so
+    the house still gets a decision either way.
+
+    Neither code appears in `subentry_flow._CODE_OWNERS`, by decision rather
+    than by omission. That dict decides which form a problem *blocks*, and a
+    code in neither it nor `_ATTRIBUTED_CODES` blocks nothing -- which is
+    right here, exactly as it is for `tilt_on_tiltless_blind`, also absent:
+    both describe a configuration that still works and merely does less than
+    it reads as, so no save should be refused over one. The author is told
+    regardless, because `__init__._check_config_warnings` turns every
+    `validate()` WARNING into a repair issue independently of that dict.
+    """
+    out: list[Problem] = []
+    for action, where, owners, reach in _action_sites(config):
+        if isinstance(action.position, SlatAngle):
+            out.append(
+                Problem(
+                    WARNING,
+                    "slat_angle_on_position",
+                    f"{where} puts a computed slat angle on the position axis, so the blind "
+                    f"would be driven to that height; a slat angle belongs on 'tilt'",
+                    owners=owners,
+                )
+            )
+        if not any(isinstance(axis, SlatAngle) for axis in (action.position, action.tilt)):
+            continue
+        for entity in sorted(reach):
+            blind = config.blinds.get(entity)
+            # A zone naming a blind that does not exist is `zone_member_unknown`
+            # already, and there is no geometry to judge.
+            if blind is None:
+                continue
+            missing = _missing_slat_geometry(blind)
+            if missing:
+                out.append(
+                    Problem(
+                        WARNING,
+                        "slat_angle_without_geometry",
+                        f"{where} asks for a computed slat angle, but blind {entity!r} states no "
+                        f"{', '.join(missing)}, so it only ever gets the stated default",
+                        owners=owners,
+                    )
+                )
     return out
 
 

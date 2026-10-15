@@ -33,7 +33,8 @@ from cover_logic.config_flow import CoverLogicConfigFlow
 from cover_logic.config_schema import (
     _BLIND_KEYS,
     _RULE_KEYS,
-    _VALUE_KEYS,
+    _VALUE_KEYS_ENTITY,
+    _VALUE_KEYS_SLAT,
     _ZONE_KEYS,
     _parse_values,
     load_config,
@@ -131,6 +132,8 @@ def test_blind_add_shows_a_form_with_the_expected_fields(subentry_entry, subentr
         "travel_time",
         "has_tilt",
         "tilt_after_arrival",
+        "slat_distance",
+        "slat_depth",
     }
 
 
@@ -281,6 +284,77 @@ def test_blind_add_rejects_a_duplicate_entity(subentry_entry, subentry_hass):
     assert len(entry.subentries) == 1
 
 
+def test_blind_add_carries_slat_geometry_when_given_and_omits_it_when_not(
+    subentry_entry, subentry_hass
+):
+    """`slat_distance`/`slat_depth` ride straight through to `data` when
+    submitted, and are absent -- not written at all -- when the form never
+    touched them, matching how `facade_azimuth` already behaves. A blind
+    saved before this task added the two fields must look identical to one
+    saved after it without geometry, or `test_subentry_conformance.py`
+    would see drift that is not really there.
+    """
+    entry = subentry_entry()
+
+    with_geometry = asyncio.run(
+        _make_flow(BlindSubentryFlowHandler, subentry_hass(entry), BLIND).async_step_user(
+            {
+                "entity": "cover.a",
+                "tolerance": 45,
+                "travel_time": 60,
+                "has_tilt": True,
+                "tilt_after_arrival": True,
+                "slat_distance": 60.0,
+                "slat_depth": 80.0,
+            }
+        )
+    )
+    assert with_geometry["data"]["slat_distance"] == 60.0
+    assert with_geometry["data"]["slat_depth"] == 80.0
+
+    without_geometry = asyncio.run(
+        _make_flow(BlindSubentryFlowHandler, subentry_hass(entry), BLIND).async_step_user(
+            {
+                "entity": "cover.b",
+                "tolerance": 45,
+                "travel_time": 60,
+                "has_tilt": True,
+                "tilt_after_arrival": True,
+            }
+        )
+    )
+    assert "slat_distance" not in without_geometry["data"]
+    assert "slat_depth" not in without_geometry["data"]
+
+
+def test_blind_add_drops_slat_geometry_submitted_as_none_rather_than_writing_it(
+    subentry_entry, subentry_hass
+):
+    """The edit-and-clear case `BlindSubentryFlowHandler._to_data` exists for:
+    a field that was cleared comes back as `None`, and that must not be
+    written as `None` -- see the same drift risk the test above guards.
+    """
+    entry = subentry_entry()
+    flow = _make_flow(BlindSubentryFlowHandler, subentry_hass(entry), BLIND)
+
+    result = asyncio.run(
+        flow.async_step_user(
+            {
+                "entity": "cover.a",
+                "tolerance": 45,
+                "travel_time": 60,
+                "has_tilt": True,
+                "tilt_after_arrival": True,
+                "slat_distance": None,
+                "slat_depth": None,
+            }
+        )
+    )
+
+    assert "slat_distance" not in result["data"]
+    assert "slat_depth" not in result["data"]
+
+
 # ---------------------------------------------------------------------------
 # zone
 # ---------------------------------------------------------------------------
@@ -373,20 +447,41 @@ def test_value_add_shows_a_form_with_the_expected_fields(subentry_entry, subentr
 
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "user"
-    assert _schema_keys(result) == {"id", "entity", "default"}
+    assert _schema_keys(result) == {"id", "type", "entity", "default", "scale"}
 
 
 def test_value_schema_matches_config_schema_value_keys_plus_id(subentry_entry, subentry_hass):
-    """Same drift guard as the blind and zone versions, for `_build_values`'s
-    expectations: `config_schema._parse_values` rejects a body with keys
-    outside `_VALUE_KEYS` once `_ID_KEY` has been stripped off it.
+    """Same drift guard as the blind and zone versions, adapted for two value
+    kinds sharing one form (see `ValueSubentryFlowHandler`'s own docstring
+    for why there is one schema, not a picker step routing to two).
+
+    The raw schema's fields are the *union* both `_parse_entity_value`/
+    `_parse_slat_angle` need -- `entity` is `Optional`, not `Required`, so it
+    is never rejected on this "isn't in that type's key set" ground the way
+    `_BLIND_KEYS`/`_ZONE_KEYS` reject an unrecognised field for their own,
+    single-schema types. It is `ValueSubentryFlowHandler._to_data`, not the
+    schema, that narrows a submission down to one type's own closed key set
+    before `config_schema._parse_values` ever sees it -- so the drift this
+    guards against moved with it: an entity submission's data must stay
+    inside `_VALUE_KEYS_ENTITY`, a slat_angle submission's inside
+    `_VALUE_KEYS_SLAT`, or a save that looks fine here would raise
+    `ConfigError` the moment `config_from_subentries` reads it back.
     """
     entry = subentry_entry()
     flow = _make_flow(ValueSubentryFlowHandler, subentry_hass(entry), VALUE)
 
     result = asyncio.run(flow.async_step_user(None))
+    assert _schema_keys(result) - {_ID_KEY} <= _VALUE_KEYS_ENTITY | _VALUE_KEYS_SLAT
 
-    assert _schema_keys(result) == _VALUE_KEYS | {_ID_KEY}
+    entity_data = flow._to_data(  # noqa: SLF001
+        None, {_ID_KEY: "v", "default": 10, "entity": "sensor.x"}
+    )
+    assert set(entity_data) - {_ID_KEY} <= _VALUE_KEYS_ENTITY
+
+    slat_data = flow._to_data(  # noqa: SLF001
+        None, {_ID_KEY: "v", "default": 10, "type": "slat_angle", "scale": "full"}
+    )
+    assert set(slat_data) - {_ID_KEY} <= _VALUE_KEYS_SLAT
 
 
 def test_value_add_creates_a_subentry(subentry_entry, subentry_hass):
@@ -420,6 +515,64 @@ def test_value_add_rejects_a_duplicate_id(subentry_entry, subentry_hass):
     assert result["type"] is FlowResultType.FORM
     assert result["errors"] == {"base": "invalid_config"}
     assert "already configured" in result["description_placeholders"]["error_detail"]
+
+
+def test_value_add_slat_angle_creates_a_subentry_with_no_entity_key(subentry_entry, subentry_hass):
+    """The other value kind: `ValueSubentryFlowHandler._to_data`'s
+    `slat_angle` branch must never carry `entity` into `data`, even though
+    the one shared schema (see the class's own docstring) offers that field
+    too.
+    """
+    entry = subentry_entry()
+    flow = _make_flow(ValueSubentryFlowHandler, subentry_hass(entry), VALUE)
+
+    result = asyncio.run(
+        flow.async_step_user({"id": "uhol", "type": "slat_angle", "default": 50, "scale": "half"})
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"] == {"id": "uhol", "type": "slat_angle", "default": 50, "scale": "half"}
+    assert "entity" not in result["data"]
+
+
+def test_value_reconfigure_of_an_entity_value_round_trips_unchanged(subentry_entry, subentry_hass):
+    """Saving an `entity` value's edit form back with nothing changed must
+    reproduce the exact same shape -- no `type`/`scale` leaking in even
+    though the shared form offers both fields (see `_to_form_values`, which
+    prefills `type` to `entity` and `scale` to `None` for a value saved this
+    way).
+    """
+    entry = subentry_entry()
+    subentry_id = entry.add_subentry(
+        VALUE, {"id": "kvety_poz", "entity": "input_number.a", "default": 34}, title="kvety_poz"
+    )
+    flow = _make_flow(
+        ValueSubentryFlowHandler, subentry_hass(entry), VALUE, subentry_id=subentry_id
+    )
+
+    shown = asyncio.run(flow.async_step_reconfigure(None))
+    suggested = {
+        key.schema: key.description["suggested_value"]
+        for key in shown["data_schema"].schema
+        if isinstance(key, vol.Marker) and key.description
+    }
+    assert suggested["type"] == "entity"
+    assert suggested["entity"] == "input_number.a"
+    assert suggested["default"] == 34
+
+    result = asyncio.run(
+        flow.async_step_reconfigure(
+            {"id": "kvety_poz", "type": "entity", "entity": "input_number.a", "default": 34}
+        )
+    )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    assert entry.subentries[subentry_id].data == {
+        "id": "kvety_poz",
+        "entity": "input_number.a",
+        "default": 34,
+    }
 
 
 # ---------------------------------------------------------------------------

@@ -367,9 +367,32 @@ top of them.)
   since stock HA has `for:` on triggers only; it reads `last_changed`, so it
   is exact for a binary sensor and is deliberately not offered for
   `numeric_state`.
-- **`values`** — a mapping of `name -> {entity, default}`: a helper entity
-  read at decision time, for use as `!ref name` inside an action's
-  `position`/`tilt`.
+- **`values`** — a mapping of `name -> body`, for use as `!ref name` inside
+  an action's `position`/`tilt`. `type` (default `entity`) picks the shape:
+
+  ```yaml
+  values:
+    kvety_poz:                    # type: entity (the default) -- read a helper
+      entity: input_number.kvety_pozicia_zaluzie
+      default: 34
+    uhol_lamiel:                  # type: slat_angle -- computed from solar geometry
+      type: slat_angle
+      default: 50                 # used when the geometry has no answer
+      scale: half                 # half: 0..90 deg maps to 0..100; full: 0..180
+  ```
+
+  `entity` reads a helper at decision time. `slat_angle` computes the tilt
+  percentage that just blocks the direct beam
+  (`engine._resolve_slat_angle`, `geometry.slat_angle_percent`), and its
+  geometry — `facade_azimuth`, `slat_distance`, `slat_depth` — comes off the
+  **blind being decided**, not off the value itself, so one `slat_angle`
+  entry serves every facade in the house. Its `default` is what a rule gets
+  back whenever the geometry has no answer: the sun is down, off this
+  facade, the blind states no geometry, or the slats cannot block the beam
+  at all — never an error, always the stated fallback. The computed
+  percentage is clamped to 0..100 before it reaches the axis; an `entity`
+  `Ref` is not (see `docs/rationale.md` — "Why the engine does not clamp
+  resolved values to 0..100").
 - **`rules`** — a mapping of `"<mode id>.<zone id>" -> list[Rule]`, each
   rule `{if?, then, events?, name?}`. `if` is a condition body (or list of
   them, ANDed); a rule with no `if` matches unconditionally and should be

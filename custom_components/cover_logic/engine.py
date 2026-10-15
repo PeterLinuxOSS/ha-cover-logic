@@ -299,6 +299,7 @@ def _resolve_slat_angle(value: SlatAngle, world: World, target: Target | None) -
     elevation = world.number(
         value.elevation_entity, default=-999.0, attribute=value.elevation_attribute
     )
+    # -999.0 also fails slat_angle_percent's own elevation<=0 check, so this sentinel needs no test.
     if elevation < _ELEVATION_MIN:
         return value.default
 

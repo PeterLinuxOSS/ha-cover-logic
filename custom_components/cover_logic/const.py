@@ -41,6 +41,15 @@ DEFAULT_DRY_RUN = True
 # path is an option".
 OPT_FIXTURE_PATH = "fixture_path"
 
+# How many points a cover's reported position/tilt may sit from a rule's
+# target before `planner.plan` bothers to send a command -- an option, not a
+# fixed constant, because the right value is a property of one house's
+# motors. See `docs/rationale.md` -- "Why the dead band became an option".
+# Default matches `planner.DEAD_BAND`, so an install that never opens this
+# screen keeps today's behaviour.
+OPT_DEAD_BAND = "dead_band"
+DEFAULT_DEAD_BAND = 5
+
 # ---------------------------------------------------------------------------
 # The settle window: how long `coordinator.py` waits after the *last* watched
 # state change before it evaluates.

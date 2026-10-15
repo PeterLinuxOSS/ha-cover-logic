@@ -1019,6 +1019,26 @@ def test_an_entity_value_still_parses_as_a_ref():
     assert config.values["pos"] == Ref(entity="input_number.x", default=34)
 
 
+def test_an_entity_value_accepts_its_own_documented_explicit_type():
+    """MODELS.md documents `type: entity`; the parser must not reject it."""
+    config = load_config(
+        """
+        blinds:
+          - {entity: cover.a}
+        zones:
+          z: {members: [cover.a]}
+        values:
+          pos: {type: entity, entity: input_number.x, default: 34}
+        modes:
+          - {id: day}
+        rules:
+          day.z:
+            - {then: {position: !ref pos}}
+        """
+    )
+    assert config.values["pos"] == Ref(entity="input_number.x", default=34)
+
+
 def test_a_slat_angle_value_rejects_an_entity_key():
     bad = SLAT_ANGLE_CFG.replace(
         "angle: {type: slat_angle, default: 50}",

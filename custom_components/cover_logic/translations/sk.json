@@ -70,6 +70,18 @@
         "west": "Západ",
         "northwest": "Severozápad"
       }
+    },
+    "value_type": {
+      "options": {
+        "entity": "Čítať z entity",
+        "slat_angle": "Počítaný uhol lamiel"
+      }
+    },
+    "scale": {
+      "options": {
+        "half": "Polovičná otáčka (0-90°)",
+        "full": "Celá otáčka (0-180°)"
+      }
     }
   },
   "config_subentries": {
@@ -88,7 +100,13 @@
             "tolerance": "Tolerancia slnečného sektora",
             "travel_time": "Čas plného dojazdu",
             "has_tilt": "Má lamelovú os",
-            "tilt_after_arrival": "Lamely nastaviť až po dojazde polohy"
+            "tilt_after_arrival": "Lamely nastaviť až po dojazde polohy",
+            "slat_distance": "Rozostup lamiel",
+            "slat_depth": "Šírka lamely"
+          },
+          "data_description": {
+            "slat_distance": "Meria sa priamo na žalúzii, v milimetroch: medzera medzi susednými lamelami.",
+            "slat_depth": "Meria sa priamo na žalúzii, v milimetroch: šírka jednej lamely."
           }
         },
         "reconfigure": {
@@ -99,7 +117,13 @@
             "tolerance": "Tolerancia slnečného sektora",
             "travel_time": "Čas plného dojazdu",
             "has_tilt": "Má lamelovú os",
-            "tilt_after_arrival": "Lamely nastaviť až po dojazde polohy"
+            "tilt_after_arrival": "Lamely nastaviť až po dojazde polohy",
+            "slat_distance": "Rozostup lamiel",
+            "slat_depth": "Šírka lamely"
+          },
+          "data_description": {
+            "slat_distance": "Meria sa priamo na žalúzii, v milimetroch: medzera medzi susednými lamelami.",
+            "slat_depth": "Meria sa priamo na žalúzii, v milimetroch: šírka jednej lamely."
           }
         }
       },
@@ -149,19 +173,31 @@
       "step": {
         "user": {
           "title": "Pridať hodnotu",
-          "description": "Entita helpera čítaná v čase rozhodovania, použiteľná ako !ref v akcii.",
+          "description": "Entita helpera čítaná v čase rozhodovania, použiteľná ako !ref v akcii -- alebo uhol lamiel počítaný zo slnečnej geometrie.",
           "data": {
             "id": "Identifikátor hodnoty",
+            "type": "Typ",
             "entity": "Entita helpera",
-            "default": "Predvolená hodnota (ak entita chýba alebo sa nedá prečítať)"
+            "default": "Predvolená hodnota (ak entita chýba alebo sa nedá prečítať, alebo ak počítaný uhol lamiel nemá odpoveď)",
+            "scale": "Rozsah"
+          },
+          "data_description": {
+            "type": "Či sa táto hodnota číta z pomocnej entity, alebo sa počíta automaticky zo slnečnej geometrie.",
+            "scale": "Pre počítaný uhol lamiel: ktorá polovica rozsahu otočenia lamely znamená úplne otvorené. Pri hodnote čítanej z entity sa ignoruje."
           }
         },
         "reconfigure": {
           "title": "Upraviť hodnotu",
           "data": {
             "id": "Identifikátor hodnoty",
+            "type": "Typ",
             "entity": "Entita helpera",
-            "default": "Predvolená hodnota (ak entita chýba alebo sa nedá prečítať)"
+            "default": "Predvolená hodnota (ak entita chýba alebo sa nedá prečítať, alebo ak počítaný uhol lamiel nemá odpoveď)",
+            "scale": "Rozsah"
+          },
+          "data_description": {
+            "type": "Či sa táto hodnota číta z pomocnej entity, alebo sa počíta automaticky zo slnečnej geometrie.",
+            "scale": "Pre počítaný uhol lamiel: ktorá polovica rozsahu otočenia lamely znamená úplne otvorené. Pri hodnote čítanej z entity sa ignoruje."
           }
         }
       },
@@ -564,9 +600,13 @@
           "travel_time": "Čas plného dojazdu",
           "has_tilt": "Má lamelovú os",
           "tilt_after_arrival": "Lamely nastaviť až po dojazde polohy",
+          "slat_distance": "Rozostup lamiel",
+          "slat_depth": "Šírka lamely",
           "members": "Žalúzie v tejto zóne",
           "occupants": "Obyvatelia",
-          "default": "Predvolená hodnota (ak entita chýba alebo sa nedá prečítať)",
+          "type": "Typ",
+          "default": "Predvolená hodnota (ak entita chýba alebo sa nedá prečítať, alebo ak počítaný uhol lamiel nemá odpoveď)",
+          "scale": "Rozsah",
           "condition": "Podmienka",
           "numeric_state_default": "Záložná hodnota pre číselné porovnanie",
           "order": "Poradie (nižšie sa skúša skôr; záložný režim musí mať najvyššie poradie)",
@@ -574,6 +614,12 @@
           "when": "Vložená podmienka (nechajte prázdne pri použití pomenovanej podmienky, alebo aby bol tento režim záložný)",
           "mode": "Režim",
           "zone": "Zóna"
+        },
+        "data_description": {
+          "slat_distance": "Meria sa priamo na žalúzii, v milimetroch: medzera medzi susednými lamelami.",
+          "slat_depth": "Meria sa priamo na žalúzii, v milimetroch: šírka jednej lamely.",
+          "type": "Či sa táto hodnota číta z pomocnej entity, alebo sa počíta automaticky zo slnečnej geometrie.",
+          "scale": "Pre počítaný uhol lamiel: ktorá polovica rozsahu otočenia lamely znamená úplne otvorené. Pri hodnote čítanej z entity sa ignoruje."
         }
       },
       "add_rule_fields": {
@@ -614,9 +660,13 @@
           "travel_time": "Čas plného dojazdu",
           "has_tilt": "Má lamelovú os",
           "tilt_after_arrival": "Lamely nastaviť až po dojazde polohy",
+          "slat_distance": "Rozostup lamiel",
+          "slat_depth": "Šírka lamely",
           "members": "Žalúzie v tejto zóne",
           "occupants": "Obyvatelia",
-          "default": "Predvolená hodnota (ak entita chýba alebo sa nedá prečítať)",
+          "type": "Typ",
+          "default": "Predvolená hodnota (ak entita chýba alebo sa nedá prečítať, alebo ak počítaný uhol lamiel nemá odpoveď)",
+          "scale": "Rozsah",
           "condition": "Podmienka",
           "numeric_state_default": "Záložná hodnota pre číselné porovnanie",
           "order": "Poradie (nižšie sa skúša skôr; záložný režim musí mať najvyššie poradie)",
@@ -624,6 +674,12 @@
           "when": "Vložená podmienka (nechajte prázdne pri použití pomenovanej podmienky, alebo aby bol tento režim záložný)",
           "mode": "Režim",
           "zone": "Zóna"
+        },
+        "data_description": {
+          "slat_distance": "Meria sa priamo na žalúzii, v milimetroch: medzera medzi susednými lamelami.",
+          "slat_depth": "Meria sa priamo na žalúzii, v milimetroch: šírka jednej lamely.",
+          "type": "Či sa táto hodnota číta z pomocnej entity, alebo sa počíta automaticky zo slnečnej geometrie.",
+          "scale": "Pre počítaný uhol lamiel: ktorá polovica rozsahu otočenia lamely znamená úplne otvorené. Pri hodnote čítanej z entity sa ignoruje."
         }
       },
       "remove": {
@@ -648,11 +704,13 @@
         "description": "Či integrácia žalúziami naozaj hýbe, alebo len zapisuje do logu, čím by pohla. Suchý beh je bezpečné nastavenie: každý príkaz sa zaloguje aj so službou a dátami, ktoré by použil, takže sa dá deň porovnať s automatizáciami, ktoré nahrádza. Vypnutím dostane integrácia ruky.",
         "data": {
           "dry_run": "Suchý beh (príkazy len zapisovať, nehýbať ničím)",
-          "fixture_path": "Fixture na porovnanie"
+          "fixture_path": "Fixture na porovnanie",
+          "dead_band": "Mŕtve pásmo"
         },
         "data_description": {
           "dry_run": "Zapnuté: nič sa nehýbe, každý zamýšľaný príkaz ide do logu. Vypnuté: žalúzie sa naozaj hýbu. Prejaví sa okamžite, bez reloadu.",
-          "fixture_path": "Nepovinné. Cesta k YAML fixture, proti ktorej kontrola driftu porovnáva živú konfiguráciu — pre dom, ktorý má checkout inde. Prázdne znamená porovnávať proti adresáru fixtures/ vedľa custom_components/, alebo proti ničomu, ak taký nie je."
+          "fixture_path": "Nepovinné. Cesta k YAML fixture, proti ktorej kontrola driftu porovnáva živú konfiguráciu — pre dom, ktorý má checkout inde. Prázdne znamená porovnávať proti adresáru fixtures/ vedľa custom_components/, alebo proti ničomu, ak taký nie je.",
+          "dead_band": "O koľko bodov sa smie hlásená pozícia alebo náklon žalúzie líšiť od cieľa z pravidla, kým sa táto integrácia ešte neobťažuje poslať príkaz. Príliš malá hodnota spôsobí, že žalúzia, ktorej modul po pohybe hlási mierne nepresnú pozíciu, dostane príkaz na pohyb bez dôvodu. Príliš veľká hodnota spôsobí, že integrácia prestane čokoľvek opravovať. Prejaví sa okamžite, bez reloadu."
         }
       },
       "check_matrix": {
@@ -684,7 +742,7 @@
     },
     "config_warnings": {
       "title": "Konfigurácia má varovania",
-      "description": "Počet varovaní o tejto konfigurácii: {count}. {warnings}. Nič z toho integráciu nezastaví, a každé znamená, že sa niečo ticho neriadi — zóna bez pravidiel, pravidlo zatienené skorším, poistka, ktorá nikdy nevystrelí, žalúzia, ku ktorej sa nehlási žiadna zóna, alebo lamely žiadané od žalúzie, ktorá ich nemá. Oprav to v dotknutom subentry, alebo potvrď, že to chovanie je zámer."
+      "description": "Počet varovaní o tejto konfigurácii: {count}. {warnings}. Nič z toho integráciu nezastaví, a každé znamená, že sa niečo ticho neriadi — zóna bez pravidiel, pravidlo zatienené skorším, poistka, ktorá nikdy nevystrelí, žalúzia, ku ktorej sa nehlási žiadna zóna, lamely žiadané od žalúzie, ktorá ich nemá, počítaný uhol lamiel žiadaný od žalúzie, ktorá neuvádza azimut fasády ani rozmery lamiel, alebo počítaný uhol lamiel na osi pozície namiesto osi lamiel. Oprav to v dotknutom subentry, alebo potvrď, že to chovanie je zámer."
     }
   },
   "services": {

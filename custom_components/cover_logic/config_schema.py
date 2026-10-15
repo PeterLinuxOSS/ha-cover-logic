@@ -535,7 +535,7 @@ def dump_config_file(path: str | Path, config: Config) -> None:
     Path(path).write_text(dump_config(config), encoding="utf-8")
 
 
-_VALUE_KEYS_ENTITY = {"default", "entity"}
+_VALUE_KEYS_ENTITY = {"default", "entity", "type"}
 _VALUE_KEYS_SLAT = {
     "default",
     "type",

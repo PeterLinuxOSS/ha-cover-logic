@@ -193,7 +193,30 @@ def test_add_form_shows_the_real_blind_schema_fields(subentry_entry, options_has
         "travel_time",
         "has_tilt",
         "tilt_after_arrival",
+        "slat_distance",
+        "slat_depth",
     }
+
+
+def test_add_value_slat_angle_creates_a_subentry_through_the_shared_form(
+    subentry_entry, options_hass
+):
+    """`_render_type_form` reuses `ValueSubentryFlowHandler`'s own schema/
+    `_to_data` unchanged (see the module docstring's "one owner, two doors"),
+    so choosing `slat_angle` here must produce exactly the same shape the
+    subentry flow itself produces -- no `entity` key at all.
+    """
+    entry = subentry_entry()
+    flow = _make_flow(options_hass(entry))
+    asyncio.run(flow.async_step_values(None))
+
+    submitted = {"id": "uhol", "type": "slat_angle", "default": 50, "scale": "half"}
+    result = _menu(asyncio.run(flow.async_step_add(submitted)))
+
+    assert result["step_id"] == "values"
+    [subentry] = entry.subentries.values()
+    assert subentry.subentry_type == VALUE
+    assert subentry.data == {"id": "uhol", "type": "slat_angle", "default": 50, "scale": "half"}
 
 
 def test_edit_prefills_from_the_picked_subentry_and_saves_changes(subentry_entry, options_hass):
@@ -1001,11 +1024,41 @@ def test_execution_stores_a_new_fixture_path(subentry_entry, options_hass):
     assert entry.options == {"dry_run": True, "fixture_path": "/new/dom_peter.yaml"}
 
 
-def test_execution_form_declares_both_fields(subentry_entry, options_hass):
+def test_execution_form_declares_all_three_fields(subentry_entry, options_hass):
     entry = subentry_entry()
     flow = _make_flow(options_hass(entry))
 
-    assert _execution_field_names(flow) == {"dry_run", "fixture_path"}
+    assert _execution_field_names(flow) == {"dry_run", "fixture_path", "dead_band"}
+
+
+def test_execution_keeps_the_dead_band_when_the_field_is_not_submitted(
+    subentry_entry, options_hass
+):
+    """The dead band follows `fixture_path`'s own rule: an absent key is not a clear.
+
+    Driven the same way as the fixture-path counterpart above -- a caller
+    that only means to flip `dry_run` must not reset a value tuned for this
+    house's own motors back to the default.
+    """
+    entry = subentry_entry(options={"dry_run": True, "dead_band": 7})
+    flow = _make_flow(options_hass(entry))
+    asyncio.run(flow.async_step_execution(None))
+
+    _menu(asyncio.run(flow.async_step_execution({"dry_run": False})))
+
+    assert entry.options["dead_band"] == 7
+    assert entry.options["dry_run"] is False
+
+
+def test_execution_stores_a_new_dead_band(subentry_entry, options_hass):
+    """The incident this field exists for: 5 missed it, 7 catches it (`docs/rationale.md`)."""
+    entry = subentry_entry()
+    flow = _make_flow(options_hass(entry))
+    asyncio.run(flow.async_step_execution(None))
+
+    _menu(asyncio.run(flow.async_step_execution({"dry_run": True, "dead_band": 7})))
+
+    assert entry.options["dead_band"] == 7
 
 
 # ---------------------------------------------------------------------------

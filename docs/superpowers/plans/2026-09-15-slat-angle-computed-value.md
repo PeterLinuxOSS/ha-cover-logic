@@ -920,29 +920,27 @@ def test_a_slat_angle_on_a_blind_without_geometry_warns():
     assert "slat_angle_without_geometry" in codes
 
 
-def test_a_slat_angle_on_a_tilt_less_blind_warns():
+def test_a_slat_angle_on_a_tiltless_blind_warns_only_about_the_tilt():
+    """One fault, one warning: the geometry is complete, so only the tilt check fires."""
     from cover_logic.config_schema import load_config
     from cover_logic.validation import validate
 
-    config = load_config(
-        {
-            "blinds": [
-                {
-                    "entity": "cover.a",
-                    "facade_azimuth": 180,
-                    "slat_distance": 60,
-                    "slat_depth": 80,
-                    "has_tilt": False,
-                }
-            ],
-            "zones": {"z": {"members": ["cover.a"]}},
-            "values": {"angle": {"type": "slat_angle", "default": 50}},
-            "modes": [{"id": "day"}],
-            "rules": [{"mode": "day", "zone": "z", "then": {"tilt": {"ref": "angle"}}}],
-        }
-    )
+    config = load_config("""
+blinds:
+  - {entity: cover.a, facade_azimuth: 180, slat_distance: 60, slat_depth: 80, has_tilt: false}
+zones:
+  z: {members: [cover.a]}
+values:
+  angle: {type: slat_angle, default: 50}
+modes:
+  - {id: day}
+rules:
+  day.z:
+    - {then: {tilt: !ref angle}}
+""")
     codes = [problem.code for problem in validate(config)]
-    assert "slat_angle_without_geometry" in codes
+    assert "tilt_on_tiltless_blind" in codes
+    assert "slat_angle_without_geometry" not in codes
 
 
 def test_a_slat_angle_on_the_position_axis_warns():
@@ -993,7 +991,11 @@ Expected: FAIL — the codes are never emitted.
 
 Add to `validation.py` a check that walks every rule's and guard's `then` (reusing whatever walk the module already has for the existing action-shaped checks — read the file and follow its pattern, do not add a second walk):
 
-- For each action axis holding a `SlatAngle`, resolve which blinds can receive it (the rule's zone members, or `guard_blinds` for a guard). Emit **one** `slat_angle_without_geometry` WARNING per offending blind, naming the blind and which of `facade_azimuth` / `slat_distance` / `slat_depth` / `has_tilt` is the problem.
+- For each action axis holding a `SlatAngle`, resolve which blinds can receive it (the rule's zone members, or `guard_blinds` for a guard). Emit **one** `slat_angle_without_geometry` WARNING per offending blind, naming the blind and which of `facade_azimuth` / `slat_distance` / `slat_depth` is missing.
+
+  **Do NOT include `has_tilt` in that check.** `_check_tilt_on_tiltless_blinds` at `validation.py:153` already warns (`tilt_on_tiltless_blind`) on *any* non-`KEEP` tilt reaching a blind with no tilt, and a `SlatAngle` is a non-`KEEP` tilt — so covering it here too would emit two warnings for one fault. Follow that function's shape: it catches `EngineError` from `resolve_ownership` and returns `[]`, because `validate` must never raise on the malformed configurations it exists to report on.
+
+  **Deliberately do NOT register either new code in `subentry_flow._CODE_OWNERS`.** That dict decides which form a problem *blocks*, and per `tests/ha/test_subentry_flows.py`'s own docstring a code in neither it nor `_ATTRIBUTED_CODES` "silently blocks nothing at all". That is the correct outcome here and matches `tilt_on_tiltless_blind`, which is also absent from it: both codes describe a configuration that still works and merely does less than it reads as, so a save should not be blocked. The user is still told — `__init__.py::_check_config_warnings` turns every `validate()` WARNING into a repair issue regardless of `_CODE_OWNERS`. Say this in a one-line comment next to the codes so the absence reads as a decision rather than an oversight.
 - If the `SlatAngle` sits on the `position` axis, emit `slat_angle_on_position` naming the rule or guard.
 
 Follow the module's existing `Problem` construction and severity constants exactly; both new codes are WARNING, not ERROR, because a stated `default` means the house still gets a decision.
@@ -1024,7 +1026,7 @@ git commit -m "Warn when a computed slat angle cannot apply to the blinds that w
 
 **Files:**
 - Modify: `custom_components/cover_logic/subentry_flow.py` (the `value` flow and the `blind` flow)
-- Modify: `custom_components/cover_logic/config_store.py`
+- Read only (needs no change, see Step 3): `custom_components/cover_logic/config_store.py`
 - Modify: `custom_components/cover_logic/strings.json`, `translations/*.json`
 - Test: `tests/test_config_store.py`, `tests/ha/test_options_flow.py`
 
@@ -1074,7 +1076,7 @@ Expected: FAIL — `config_store` drops the unknown keys or raises.
 
 - [ ] **Step 3: Write minimal implementation**
 
-In `config_store.py`, the `value` branch must dispatch on `type` exactly as `config_schema._parse_values` does — call into `config_schema` rather than re-implementing the dispatch, so there is one parser. The `blind` branch passes `slat_distance` / `slat_depth` through.
+**`config_store.py` needs NO change — verified, not assumed.** `_build_values` (`config_store.py:207`) strips `_ID_KEY` and hands the rest straight to `config_schema._parse_values`, which Task 2 taught to dispatch on `type`; and the `blind` branch already passes unknown keys through. Proven by direct call against a stand-in entry: a `value` subentry `{"id": "angle", "type": "slat_angle", "default": 50, "scale": "full"}` builds a correct `SlatAngle`, and `{"id": "poz", "entity": "input_number.x", "default": 34}` still builds a `Ref`. The export direction was already fixed in Task 2's fix round. **Read it, confirm it, add nothing, and say so in your report.**
 
 In `subentry_flow.py`:
 - The `value` add/edit form gains a `type` `SelectSelector` with options `entity` and `slat_angle`. When `slat_angle` is chosen, the form shows `default` (`NumberSelector` 0–100) and `scale` (`SelectSelector` `half`/`full`) and **not** `entity`; when `entity` is chosen it shows today's fields. Follow the file's existing two-step pattern if it already has one (read `_build_schema` / `_to_data` / `_to_form_values` first); if it does not, add a menu step that picks the type and then routes to the right form.

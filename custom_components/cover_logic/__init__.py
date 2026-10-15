@@ -396,14 +396,16 @@ async def _check_config_warnings(hass: "HomeAssistant", config: Config, problems
     """Every WARNING `validate()` reported, as one repair issue.
 
     Until 2026-09-03 a warning existed only as a log line at setup, and there
-    were seven kinds of them. Every one means something is quietly not being
+    are ten kinds of them. Every one means something is quietly not being
     decided: a zone with no rules, a rule shadowed by an earlier one, a guard
     that can never fire, a blind no zone claims, tilt asked of a blind that has
-    none. That is the same class of fault that cost the owner's house nine
-    blinds on 2026-09-02 -- not because nobody had written the check, but
-    because its output went somewhere nobody reads.
+    none, or a sun-tracked slat angle asked of a blind that never says which
+    way it faces or how its slats are built. That is the same class of fault
+    that cost the owner's house nine blinds on 2026-09-02 -- not because
+    nobody had written the check, but because its output went somewhere nobody
+    reads.
 
-    One issue for all of them rather than one per code, deliberately. Seven
+    One issue for all of them rather than one per code, deliberately. Ten
     checks each with its own issue, translation and test is a lot of surface
     for a list of strings, and the codes are not independent -- a single
     mis-ordered rule list produces several at once, and reading them together
