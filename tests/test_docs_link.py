@@ -48,3 +48,10 @@ def test_every_repair_issue_supplies_docs_url():
     assert len(calls) == 4
     missing = [c.lineno for c in calls if not _passes_docs(c, "translation_placeholders")]
     assert not missing, missing
+
+
+def test_manifest_documentation_is_the_site():
+    import json
+
+    manifest = json.loads((_COMPONENT / "manifest.json").read_text())
+    assert manifest["documentation"] == DOCS_URL

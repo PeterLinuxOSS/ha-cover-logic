@@ -5,7 +5,7 @@
     "@PeterLinuxOSS"
   ],
   "config_flow": true,
-  "documentation": "https://github.com/PeterLinuxOSS/ha-cover-logic",
+  "documentation": "https://peterlinuxoss.github.io/ha-cover-logic",
   "integration_type": "hub",
   "iot_class": "calculated",
   "issue_tracker": "https://github.com/PeterLinuxOSS/ha-cover-logic/issues",
