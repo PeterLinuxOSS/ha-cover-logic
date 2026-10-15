@@ -1,0 +1,57 @@
+site_name: Cover Logic
+site_url: https://peterlinuxoss.github.io/ha-cover-logic/
+repo_url: https://github.com/PeterLinuxOSS/ha-cover-logic
+edit_uri: edit/main/docs/site/
+docs_dir: docs/site
+strict: true
+exclude_docs: reference/fields.yaml
+theme:
+  name: material
+  features: [navigation.sections, navigation.top, content.code.copy, search.highlight]
+  palette:
+    - scheme: default
+      toggle: {icon: material/weather-night, name: Dark mode}
+    - scheme: slate
+      toggle: {icon: material/weather-sunny, name: Light mode}
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - toc: {permalink: true}
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+nav:
+  - Home: index.md
+  - Getting started:
+      - getting-started/install.md
+      - getting-started/first-setup.md
+      - getting-started/shadow-mode.md
+  - Concepts:
+      - concepts/blinds.md
+      - concepts/zones.md
+      - concepts/modes.md
+      - concepts/rules.md
+      - concepts/values.md
+      - concepts/guards.md
+      - concepts/manual-moves.md
+  - How-to:
+      - how-to/shade-by-sun.md
+      - how-to/dusk-by-lux.md
+      - how-to/door-interlock.md
+      - how-to/heatwave.md
+      - how-to/migrate.md
+  - Reference:
+      - reference/configuration.md
+      - reference/conditions.md
+      - reference/services.md
+      - reference/sensor.md
+      - reference/repairs.md
+  - Troubleshooting: troubleshooting.md
+  - For developers:
+      - Architecture (MODELS.md): https://github.com/PeterLinuxOSS/ha-cover-logic/blob/main/MODELS.md
+      - Rationale: https://github.com/PeterLinuxOSS/ha-cover-logic/blob/main/docs/rationale.md
+      - Contributing: https://github.com/PeterLinuxOSS/ha-cover-logic/blob/main/CONTRIBUTING.md

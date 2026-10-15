@@ -1,0 +1,1111 @@
+"""Tests for `coordinator.CoverLogicCoordinator`.
+
+Imports Home Assistant, so this module only collects under the Python 3.14
+venv (`.venv/bin/python -m pytest`) -- see `test_ha_world.py`'s own note.
+
+Uses `hass_factory` (a real, minimal `HomeAssistant`) rather than `FakeHass`:
+`async_track_state_change_event` and `async_track_point_in_utc_time` both need
+genuine bus dispatch and a genuine event loop timer, not a re-implementation of
+either -- see `hass_factory`'s own docstring in `tests/ha/conftest.py` for the
+full reasoning.
+
+The settle window these tests wait out is `const.EVAL_SETTLE_SECONDS`, and
+`tests/ha/test_settle.py` is where its length and its restart-on-change shape
+are actually asserted; here it is only a delay to wait past, so it is shrunk to
+`conftest.SHORT_SETTLE_SECONDS` for every test in this module.
+"""
+
+import asyncio
+
+import pytest
+
+pytest.importorskip("homeassistant")
+
+from homeassistant.core import EVENT_STATE_CHANGED, Context
+
+from cover_logic.config_schema import load_config
+from cover_logic.const import COMMAND_WOULD_CALL
+from cover_logic.coordinator import (
+    CoverLogicCoordinator,
+    _manual_move_blinds,
+    build_world as real_build_world,
+    evaluate as real_evaluate,
+)
+from cover_logic.engine import EngineError
+from cover_logic.model import KEEP, Action
+
+from .conftest import SHORT_SETTLE_SECONDS
+
+# Every test here is about what the coordinator does, not how long it waits
+# first; the real 8 s window belongs to `test_settle.py`.
+pytestmark = pytest.mark.usefixtures("short_settle_window")
+
+# Comfortably more than one settle window: enough for a pending evaluation to
+# have fired if it was going to, or -- in the negative tests -- long enough
+# that its *absence* is a real assertion, not a race against the clock.
+_WAIT = SHORT_SETTLE_SECONDS + 0.2
+
+
+def _counting_evaluate(monkeypatch):
+    """Wrap `coordinator.evaluate` to record every call while still running the real engine."""
+    calls = []
+    original = real_evaluate
+
+    def _wrapped(config, world):
+        calls.append(world)
+        return original(config, world)
+
+    monkeypatch.setattr("cover_logic.coordinator.evaluate", _wrapped)
+    return calls
+
+
+def test_initial_evaluation_happens_at_startup(config, hass_factory, runtime_entry, monkeypatch):
+    """`decision` is populated one settle window after `async_setup`, with no state change.
+
+    Startup used to be exempt from the window and is not any more (see
+    `coordinator.async_setup`), so the wait is the change here -- the property
+    that matters is unchanged: the first evaluation happens on its own, without
+    anything having to move.
+    """
+    calls = _counting_evaluate(monkeypatch)
+
+    async def _run():
+        hass = hass_factory()
+        try:
+            coordinator = CoverLogicCoordinator(hass, config, runtime_entry())
+            await coordinator.async_setup()
+            await asyncio.sleep(_WAIT)
+
+            assert len(calls) == 1
+            assert coordinator.decision is not None
+            assert coordinator.decision.mode == "bezny_den"
+            assert coordinator.last_error is None
+            assert coordinator.last_success is not None
+
+            await coordinator.async_unload()
+        finally:
+            await hass.async_stop(force=True)
+
+    asyncio.run(_run())
+
+
+def test_unrelated_entity_triggers_no_evaluation(config, hass_factory, runtime_entry, monkeypatch):
+    """Only `referenced_entities(config)` is subscribed -- everything else is silent."""
+    calls = _counting_evaluate(monkeypatch)
+
+    async def _run():
+        hass = hass_factory()
+        try:
+            coordinator = CoverLogicCoordinator(hass, config, runtime_entry())
+            await coordinator.async_setup()
+            await asyncio.sleep(_WAIT)
+            calls.clear()  # drop the startup evaluation counted above
+
+            hass.states.async_set("sensor.unrelated", "should_not_trigger_anything")
+            await asyncio.sleep(_WAIT)
+
+            assert calls == []
+
+            await coordinator.async_unload()
+        finally:
+            await hass.async_stop(force=True)
+
+    asyncio.run(_run())
+
+
+def test_burst_of_changes_produces_one_evaluation(config, hass_factory, runtime_entry, monkeypatch):
+    """A rapid burst on a referenced entity coalesces into exactly one evaluation."""
+    calls = _counting_evaluate(monkeypatch)
+
+    async def _run():
+        hass = hass_factory()
+        try:
+            coordinator = CoverLogicCoordinator(hass, config, runtime_entry())
+            await coordinator.async_setup()
+            calls.clear()
+
+            hass.states.async_set("input_boolean.a", "on")
+            hass.states.async_set("input_boolean.a", "off")
+            hass.states.async_set("input_boolean.a", "on")
+            await asyncio.sleep(_WAIT)
+
+            assert len(calls) == 1
+
+            await coordinator.async_unload()
+        finally:
+            await hass.async_stop(force=True)
+
+    asyncio.run(_run())
+
+
+def test_evaluation_error_keeps_previous_decision_and_is_recorded(
+    config, hass_factory, runtime_entry, monkeypatch, caplog
+):
+    """A raising `evaluate` is logged and recorded, but never blanks `decision`."""
+
+    async def _run():
+        hass = hass_factory()
+        try:
+            coordinator = CoverLogicCoordinator(hass, config, runtime_entry())
+            await coordinator.async_setup()
+            await asyncio.sleep(_WAIT)
+            previous = coordinator.decision
+            assert previous is not None
+
+            def _raise(_config, _world):
+                msg = "boom"
+                raise EngineError(msg)
+
+            monkeypatch.setattr("cover_logic.coordinator.evaluate", _raise)
+
+            with caplog.at_level("ERROR", logger="cover_logic.coordinator"):
+                hass.states.async_set("input_boolean.a", "on")
+                await asyncio.sleep(_WAIT)
+
+            assert coordinator.decision is previous
+            assert coordinator.last_error == "EngineError: boom"
+            assert any(
+                record.levelname == "ERROR" and record.exc_info is not None
+                for record in caplog.records
+            )
+
+            await coordinator.async_unload()
+        finally:
+            await hass.async_stop(force=True)
+
+    asyncio.run(_run())
+
+
+def test_non_engine_error_is_also_caught_and_recorded(
+    config, hass_factory, runtime_entry, monkeypatch, caplog
+):
+    """The realistic failures are not `EngineError`.
+
+    A typo'd condition type raises `ValueError` from the evaluator, and a broken
+    user template raises out of Jinja on purpose. Catching only `EngineError`
+    would let those escape into the settle timer's callback: `last_error` would
+    stay unset and the sensor would keep showing a stale answer with nothing
+    indicating a problem.
+    """
+
+    async def _run():
+        hass = hass_factory()
+        try:
+            coordinator = CoverLogicCoordinator(hass, config, runtime_entry())
+            await coordinator.async_setup()
+            await asyncio.sleep(_WAIT)
+            previous = coordinator.decision
+            assert previous is not None
+
+            def _raise(_config, _world):
+                msg = "unknown condition type: 'sate'"
+                raise ValueError(msg)
+
+            monkeypatch.setattr("cover_logic.coordinator.evaluate", _raise)
+
+            with caplog.at_level("ERROR", logger="cover_logic.coordinator"):
+                hass.states.async_set("input_boolean.a", "on")
+                await asyncio.sleep(_WAIT)
+
+            assert coordinator.decision is previous
+            assert coordinator.last_error == "ValueError: unknown condition type: 'sate'"
+
+            await coordinator.async_unload()
+        finally:
+            await hass.async_stop(force=True)
+
+    asyncio.run(_run())
+
+
+def test_a_failing_settle_evaluation_arms_a_fresh_recheck_timer(
+    config, hass_factory, runtime_entry, monkeypatch
+):
+    """The error path must re-arm the timer that guarantees a next evaluation.
+
+    `_reschedule` was reachable only after the `try`, so a raising evaluation
+    left whatever timer happened to be armed already and never replaced it --
+    and that stale one clears itself before awaiting, so the next failure was
+    terminal. Identity, not `is not None`: the previous timer is still armed at
+    this point (the floor is five minutes), so only a *different* unsub proves
+    the error path armed one of its own.
+    """
+
+    async def _run():
+        hass = hass_factory()
+        try:
+            coordinator = CoverLogicCoordinator(hass, config, runtime_entry())
+            await coordinator.async_setup()
+            await asyncio.sleep(_WAIT)
+            armed = coordinator._unsub_recheck  # noqa: SLF001
+            assert armed is not None  # counter: the good path arms it
+
+            def _raise(_config, _world):
+                msg = "boom"
+                raise ValueError(msg)
+
+            monkeypatch.setattr("cover_logic.coordinator.evaluate", _raise)
+            hass.states.async_set("input_boolean.a", "on")
+            await asyncio.sleep(_WAIT)
+
+            assert coordinator.last_error == "ValueError: boom"
+            assert coordinator._unsub_recheck is not None  # noqa: SLF001
+            assert coordinator._unsub_recheck is not armed  # noqa: SLF001
+
+            await coordinator.async_unload()
+        finally:
+            await hass.async_stop(force=True)
+
+    asyncio.run(_run())
+
+
+def _raise_no_snapshot(*_args, **_kwargs):
+    """Stand in for `build_world` when the house cannot be read at all."""
+    msg = "no snapshot"
+    raise RuntimeError(msg)
+
+
+def test_a_failing_snapshot_is_recorded_and_arms_a_fresh_recheck_timer(
+    config, hass_factory, runtime_entry, monkeypatch
+):
+    """The snapshot belongs inside the guarded section, not one line above it.
+
+    `build_world` sat above the `try`, so a failure to read the house escaped
+    with no `last_error`, no listener notification and no re-armed timer --
+    exactly the defect the `finally` was added to prevent, just earlier in the
+    same method.
+    """
+
+    async def _run():
+        hass = hass_factory()
+        try:
+            coordinator = CoverLogicCoordinator(hass, config, runtime_entry())
+            notified = []
+            coordinator.add_listener(lambda: notified.append(1))
+            await coordinator.async_setup()
+            await asyncio.sleep(_WAIT)
+            armed = coordinator._unsub_recheck  # noqa: SLF001
+            assert armed is not None  # counter: the good path arms it
+            notified.clear()
+
+            monkeypatch.setattr("cover_logic.coordinator.build_world", _raise_no_snapshot)
+            hass.states.async_set("input_boolean.a", "on")
+            await asyncio.sleep(_WAIT)
+
+            assert coordinator.last_error == "RuntimeError: no snapshot"
+            assert notified, "a failure nobody is told about leaves a stale answer on screen"
+            assert coordinator._unsub_recheck is not None  # noqa: SLF001
+            assert coordinator._unsub_recheck is not armed  # noqa: SLF001
+
+            await coordinator.async_unload()
+        finally:
+            await hass.async_stop(force=True)
+
+    asyncio.run(_run())
+
+
+def test_a_failing_recheck_evaluation_keeps_the_recheck_timer_going(
+    config, hass_factory, runtime_entry, monkeypatch
+):
+    """`_handle_recheck` clears its unsub before awaiting, so one error killed it.
+
+    From then on the integration evaluated only when a referenced entity
+    changed -- which is exactly the guarantee `RECONCILE_FLOOR_SECONDS` exists
+    to give (docs/rationale.md, "Why evaluation has a floor"), and a pending
+    `defer` would never reach its `max_wait` either.
+
+    The floor is shortened here so several of its periods fit in a test; its
+    real length belongs to `test_settle.py`.
+    """
+    monkeypatch.setattr("cover_logic.coordinator.RECONCILE_FLOOR_SECONDS", 0.3)
+    failures = []
+
+    def _raise(_config, _world):
+        failures.append(1)
+        msg = "boom"
+        raise ValueError(msg)
+
+    async def _run():
+        hass = hass_factory()
+        try:
+            coordinator = CoverLogicCoordinator(hass, config, runtime_entry())
+            await coordinator.async_setup()
+            await asyncio.sleep(_WAIT)
+            assert coordinator.last_success is not None  # counter: the first one worked
+
+            monkeypatch.setattr("cover_logic.coordinator.evaluate", _raise)
+            # Four floors' worth: nothing changes state, so every one of these
+            # can only have come from the previous failure re-arming the timer.
+            await asyncio.sleep(1.2)
+            assert len(failures) >= 3, failures
+            assert coordinator._unsub_recheck is not None  # noqa: SLF001
+
+            # And the re-armed timer really does evaluate, not just exist.
+            monkeypatch.setattr("cover_logic.coordinator.evaluate", real_evaluate)
+            await asyncio.sleep(0.6)
+            assert coordinator.last_error is None
+
+            await coordinator.async_unload()
+        finally:
+            await hass.async_stop(force=True)
+
+    asyncio.run(_run())
+
+
+# A zone whose condition raises at runtime, next to one that decides normally.
+# The offset spelling is Home Assistant's own (`"-00:20:00"`); this dialect
+# takes seconds, and nothing type-checks the difference, so `int()` raises
+# while the sun condition is being evaluated.
+_BROKEN_ZONE_CONFIG = """
+blinds:
+  - {entity: cover.a}
+  - {entity: cover.b}
+zones:
+  broken: {members: [cover.a]}
+  fine: {members: [cover.b]}
+modes: [{id: noc}]
+rules:
+  noc.broken:
+    - {if: {condition: sun, after: sunset, after_offset: "-00:20:00"}, then: {position: 0}}
+  noc.fine:
+    - {then: {position: 42}}
+"""
+
+
+def test_a_zone_whose_condition_raises_is_reported_and_not_counted_as_a_success(
+    hass_factory, runtime_entry, caplog
+):
+    """A contained zone failure must reach the entity, and must not read as success.
+
+    Before this, the only trace of it was the substring `#error` inside
+    `Decision.trace`, which nothing outside the engine reads: `last_error`
+    stayed `None`, `last_success` was stamped as if the whole house had been
+    decided, and nothing was logged. In mode `noc` this integration is the only
+    thing that closes the house, so those blinds stay open all night while the
+    sensor reports a clean evaluation.
+    """
+
+    async def _run():
+        hass = hass_factory()
+        try:
+            coordinator = CoverLogicCoordinator(
+                hass, load_config(_BROKEN_ZONE_CONFIG), runtime_entry()
+            )
+            with caplog.at_level("ERROR", logger="cover_logic.coordinator"):
+                await coordinator.async_setup()
+                await asyncio.sleep(_WAIT)
+
+            # Containment is unchanged: the healthy zone is still decided.
+            assert coordinator.decision is not None
+            assert coordinator.decision.targets["cover.b"] == Action(position=42, tilt=KEEP)
+            assert coordinator.decision.targets["cover.a"] == Action()
+
+            # Decided is not enough: the healthy zone must also have been
+            # dispatched. The same broken offset breaks `next_boundary`, which
+            # is read past the engine and used to raise straight over
+            # `_execute`, so nothing at all was commanded.
+            await coordinator.runner.async_wait_idle()
+            assert [
+                entry
+                for entry in coordinator.commands.recent
+                if entry["kind"] == COMMAND_WOULD_CALL and entry["blind"] == "cover.b"
+            ], coordinator.commands.recent
+
+            assert coordinator.last_error is not None
+            assert "noc.broken" in coordinator.last_error
+            assert "ValueError" in coordinator.last_error
+            # Never fully decided, so there is no moment it last worked.
+            assert coordinator.last_success is None
+            assert any(
+                record.levelname == "ERROR" and "noc.broken" in record.getMessage()
+                for record in caplog.records
+            ), [record.getMessage() for record in caplog.records]
+
+            await coordinator.async_unload()
+        finally:
+            await hass.async_stop(force=True)
+
+    asyncio.run(_run())
+
+
+def test_unload_removes_subscription_and_cancels_pending_settle(
+    config, hass_factory, runtime_entry, monkeypatch
+):
+    """Unload drops the bus listener and a call already scheduled never fires."""
+    calls = _counting_evaluate(monkeypatch)
+
+    async def _run():
+        hass = hass_factory()
+        try:
+            before = hass.bus.async_listeners().get(EVENT_STATE_CHANGED, 0)
+
+            coordinator = CoverLogicCoordinator(hass, config, runtime_entry())
+            await coordinator.async_setup()
+            calls.clear()
+
+            during = hass.bus.async_listeners().get(EVENT_STATE_CHANGED, 0)
+            assert during > before
+
+            # Start a settle window, then unload before it elapses --
+            # requirement: a pending settle must not survive unload.
+            hass.states.async_set("input_boolean.a", "on")
+            await coordinator.async_unload()
+            await asyncio.sleep(_WAIT)
+
+            assert calls == []
+
+            after = hass.bus.async_listeners().get(EVENT_STATE_CHANGED, 0)
+            assert after == before
+
+            # A further change on a referenced entity, after unload, is
+            # silent too -- the subscription itself is gone, not just the
+            # one pending call.
+            hass.states.async_set("input_boolean.a", "off")
+            await asyncio.sleep(_WAIT)
+            assert calls == []
+        finally:
+            await hass.async_stop(force=True)
+
+    asyncio.run(_run())
+
+
+# ---------------------------------------------------------------------------
+# Own-context attribution, end to end. `CommandLog.is_own`'s unit tests pin
+# the bookkeeping; this pins the half only a real Home Assistant can show --
+# that the context this coordinator issues is the one the service call
+# actually arrives under, so a state change stamped with it is recognisably
+# ours. Without this, `is_own` could be perfectly correct about ids that never
+# reach Home Assistant.
+# ---------------------------------------------------------------------------
+
+# The module-wide `config` fixture's only rule is `position: keep, tilt: keep`,
+# so it commands nothing and could never show a context. This one opens a shut
+# blind, which is a real movement rather than a dead band.
+_MOVING_CONFIG = """
+blinds:
+  - entity: cover.a
+    travel_time: 0.2
+zones:
+  za:
+    members: [cover.a]
+modes:
+  - {id: bezny_den}
+rules:
+  bezny_den.za:
+    - {then: {position: 100, tilt: keep}}
+"""
+
+
+def test_the_context_a_command_is_issued_under_is_recognised_as_our_own(
+    hass_factory, runtime_entry
+):
+    """The step manual-intervention detection is built on (spec, step 1).
+
+    Registers a real `cover.*` handler, lets the coordinator dispatch through
+    it, and asks the log about the context **the handler actually saw** -- not
+    the one the coordinator says it sent.
+    """
+    seen = []
+
+    async def _run():
+        hass = hass_factory()
+        try:
+
+            async def _handler(call):
+                seen.append(call.context)
+
+            for service in ("open_cover", "set_cover_position", "set_cover_tilt_position"):
+                hass.services.async_register("cover", service, _handler)
+            hass.states.async_set(
+                "cover.a", "closed", {"current_position": 0, "current_tilt_position": 0}
+            )
+
+            coordinator = CoverLogicCoordinator(
+                hass, load_config(_MOVING_CONFIG), runtime_entry({"dry_run": False})
+            )
+            await coordinator.async_setup()
+            await asyncio.sleep(_WAIT)
+            await coordinator.runner.async_wait_idle()
+
+            assert coordinator.dry_run is False
+            assert seen, "the coordinator dispatched nothing, so there is nothing to attribute"
+            for context in seen:
+                assert coordinator.commands.is_own(context.id) is True
+            # The counter: a context we did not issue must not be ours, or the
+            # loop above would pass for an `is_own` that returns True for
+            # anything at all.
+            assert coordinator.commands.is_own("not-a-context-we-issued") is False
+            # And the premise the whole design rests on: our own calls carry no
+            # `user_id`, which is why "look for a user_id" happens to work
+            # today and why it is the wrong thing to rely on -- see
+            # `CommandLog.is_own`.
+            assert all(context.user_id is None for context in seen)
+
+            await coordinator.async_unload()
+        finally:
+            await hass.async_stop(force=True)
+
+    asyncio.run(_run())
+
+
+# ---------------------------------------------------------------------------
+# Manual-move detection, through the public path: fire a real state change and
+# read the `Event` that reached the evaluation. Every rejection below is a
+# measured failure mode, not a hypothetical -- 14 days of this house's logbook
+# says 53 of 92 movements of the bedroom blinds carried no `user_id`, and 8 of
+# the 39 that did happened during one of its own script runs. See the spec in
+# the operator's config repo.
+# ---------------------------------------------------------------------------
+
+_DETECT_CONFIG = """
+blinds:
+  - entity: cover.a
+zones:
+  za:
+    members: [cover.a]
+modes:
+  - {id: bezny_den}
+rules:
+  bezny_den.za:
+    # Asking about manual moves is what subscribes the coordinator to the
+    # blind at all -- see `coordinator._manual_move_blinds`. Without it this
+    # config watches nothing and no evaluation ever happens.
+    - {if: {condition: manual_move}, then: {position: keep, tilt: keep}}
+    - {then: {position: keep, tilt: keep}}
+manual_detection:
+  ignore_while_on: [script.mover]
+"""
+
+
+def _moved(hass, *, context, position=100, tilt=0, entity="cover.a"):
+    """One cover movement, attributed to `context` the way Home Assistant does."""
+    hass.states.async_set(
+        entity,
+        "open" if position else "closed",
+        {"current_position": position, "current_tilt_position": tilt},
+        context=context,
+    )
+
+
+async def _event_after(hass, coordinator, worlds):
+    """The `Event` the next evaluation saw, once the settle window has run."""
+    await asyncio.sleep(_WAIT)
+    assert worlds, "no evaluation happened, so there is no event to inspect"
+    return worlds[-1].event
+
+
+def _detect_case(hass_factory, runtime_entry, monkeypatch, body):
+    """Shared harness: a coordinator on `_DETECT_CONFIG`, with evaluations captured."""
+    worlds = _counting_evaluate(monkeypatch)
+
+    async def _run():
+        hass = hass_factory()
+        try:
+            hass.states.async_set(
+                "cover.a", "closed", {"current_position": 0, "current_tilt_position": 0}
+            )
+            coordinator = CoverLogicCoordinator(hass, load_config(_DETECT_CONFIG), runtime_entry())
+            await coordinator.async_setup()
+            await asyncio.sleep(_WAIT)
+            worlds.clear()
+            await body(hass, coordinator, worlds)
+            await coordinator.async_unload()
+        finally:
+            await hass.async_stop(force=True)
+
+    asyncio.run(_run())
+
+
+def test_a_persons_move_on_our_blind_reaches_the_evaluation(
+    hass_factory, runtime_entry, monkeypatch
+):
+
+    async def _body(hass, coordinator, worlds):
+        _moved(hass, context=Context(user_id="u1"))
+        event = await _event_after(hass, coordinator, worlds)
+        assert event.kind == "manual_move"
+        assert event.blind == "cover.a"
+        assert event.direction == "opening"
+
+    _detect_case(hass_factory, runtime_entry, monkeypatch, _body)
+
+
+def test_a_move_with_no_user_context_is_not_a_person(hass_factory, runtime_entry, monkeypatch):
+    """The measured majority: 53 of 92 movements carried no `user_id` at all.
+
+    Accepting these is what would misread roughly four movements a day as
+    somebody's hand, which is why "not our own command" cannot stand alone.
+    """
+
+    async def _body(hass, coordinator, worlds):
+        _moved(hass, context=Context())
+        event = await _event_after(hass, coordinator, worlds)
+        assert event.kind == "state_change"
+        assert event.blind is None
+
+    _detect_case(hass_factory, runtime_entry, monkeypatch, _body)
+
+
+def test_our_own_command_is_not_a_person_even_with_a_user_context(
+    hass_factory, runtime_entry, monkeypatch
+):
+    """What `CommandLog.is_own` buys: it holds even when a user context is attached."""
+
+    async def _body(hass, coordinator, worlds):
+        ours = Context(user_id="u1")
+        coordinator.commands.dispatched("open_cover", {"entity_id": "cover.a"}, context_id=ours.id)
+        _moved(hass, context=ours)
+        assert (await _event_after(hass, coordinator, worlds)).kind == "state_change"
+
+        # One hop below ours is still ours -- Home Assistant chains contexts.
+        worlds.clear()
+        _moved(hass, context=Context(user_id="u1", parent_id=ours.id), position=50)
+        assert (await _event_after(hass, coordinator, worlds)).kind == "state_change"
+
+    _detect_case(hass_factory, runtime_entry, monkeypatch, _body)
+
+
+def test_a_move_while_a_declared_mover_runs_is_not_a_person(
+    hass_factory, runtime_entry, monkeypatch
+):
+    """8 of the 39 user-context movements happened during a script run.
+
+    A Home Assistant script inherits the caller's context, `user_id` and all,
+    so without this a script a person started is indistinguishable from that
+    person still pressing buttons. The second half is the counter: with the
+    mover off, the very same movement *is* detected.
+    """
+
+    async def _body(hass, coordinator, worlds):
+        hass.states.async_set("script.mover", "on")
+        _moved(hass, context=Context(user_id="u1"))
+        assert (await _event_after(hass, coordinator, worlds)).kind == "state_change"
+
+        hass.states.async_set("script.mover", "off")
+        worlds.clear()
+        _moved(hass, context=Context(user_id="u1"), position=50)
+        assert (await _event_after(hass, coordinator, worlds)).kind == "manual_move"
+
+    _detect_case(hass_factory, runtime_entry, monkeypatch, _body)
+
+
+def test_a_tilt_only_move_is_still_a_movement(hass_factory, runtime_entry, monkeypatch):
+    """A blind already at the top can only be moved by its slats."""
+
+    async def _body(hass, coordinator, worlds):
+        _moved(hass, context=Context(user_id="u1"), position=100, tilt=0)
+        worlds.clear()
+        _moved(hass, context=Context(user_id="u1"), position=100, tilt=100)
+        event = await _event_after(hass, coordinator, worlds)
+        assert event.kind == "manual_move"
+        assert event.direction == "opening"
+
+    _detect_case(hass_factory, runtime_entry, monkeypatch, _body)
+
+
+def test_the_event_does_not_survive_into_the_next_evaluation(
+    hass_factory, runtime_entry, monkeypatch
+):
+    """An event describes one moment; reporting it twice would be a second movement."""
+
+    async def _body(hass, coordinator, worlds):
+        _moved(hass, context=Context(user_id="u1"))
+        assert (await _event_after(hass, coordinator, worlds)).kind == "manual_move"
+
+        # A second movement of the same blind, this time with no user context:
+        # it triggers an evaluation (the blind is watched) but is not a manual
+        # move -- so the previous one must not still be being reported.
+        # `script.mover` would not do here: `ignore_while_on` entities are read
+        # on demand, never subscribed, so changing one triggers nothing.
+        worlds.clear()
+        _moved(hass, context=Context(), position=50)
+        assert (await _event_after(hass, coordinator, worlds)).kind == "state_change"
+
+    _detect_case(hass_factory, runtime_entry, monkeypatch, _body)
+
+
+def test_a_manual_move_survives_a_failed_snapshot(hass_factory, runtime_entry, monkeypatch):
+    """The event is consumed by the snapshot that used it, never by one that raised.
+
+    A movement is a single moment and nothing re-fires it, so a snapshot
+    failure that swallowed the pending event would lose that movement for
+    good -- and the rules asking `condition: manual_move` would never see it.
+    """
+
+    async def _body(hass, coordinator, worlds):
+        monkeypatch.setattr("cover_logic.coordinator.build_world", _raise_no_snapshot)
+        _moved(hass, context=Context(user_id="u1"))
+        await asyncio.sleep(_WAIT)
+        assert not worlds, "the snapshot raised, so no evaluation can have run"
+        assert coordinator.last_error == "RuntimeError: no snapshot"
+
+        # Readable again, and a second movement with no user context: it
+        # triggers an evaluation but is not itself a manual move, so a
+        # `manual_move` here can only be the retried one.
+        monkeypatch.setattr("cover_logic.coordinator.build_world", real_build_world)
+        _moved(hass, context=Context(), position=50)
+        event = await _event_after(hass, coordinator, worlds)
+        assert event.kind == "manual_move"
+        assert event.blind == "cover.a"
+
+    _detect_case(hass_factory, runtime_entry, monkeypatch, _body)
+
+
+def test_blinds_are_only_watched_when_the_config_asks_about_manual_moves(config):
+    """The subscription follows the question -- see `_manual_move_blinds`.
+
+    Subscribing to every cover unconditionally would make the layer that
+    decides listen to the layer that moves, and a 55-second travel would feed
+    back as recomputes for its whole duration. So a config that never mentions
+    `manual_move` must watch no blind at all, and this house's own does not
+    mention it today.
+    """
+    assert _manual_move_blinds(config) == set()
+    assert _manual_move_blinds(load_config(_DETECT_CONFIG)) == {"cover.a"}
+
+
+# ---------------------------------------------------------------------------
+# Task 3: `_write_outputs` publishes the derived lighting flags after each
+# recompute, only where a helper's state must change -- and the write itself
+# must not retrigger evaluation, because the output helpers are not
+# referenced entities (see `coordinator._write_outputs` and Task 1's
+# `je_tma`/`je_noc_auto`).
+# ---------------------------------------------------------------------------
+
+# `je_tma`/`je_noc_auto` here are deliberately simpler than the house's own
+# (dusk window + lux + a 12:30 gate, see `fixtures/dom_peter.yaml`): this is
+# only about the coordinator calling `derive_outputs` and writing the two
+# `OUTPUT_CONDITIONS` helpers, not about re-proving the sun/lux logic
+# `tests/test_conditions.py` and `tests/test_outputs.py` already cover in the
+# pure suite. Bright midday (lux above threshold, sun elevation above zero)
+# derives both false, matching `tests/test_outputs.py`'s own bright-midday
+# case.
+_LIGHTING_OUTPUT_CONFIG = """
+blinds:
+  - {entity: cover.a}
+zones:
+  za: {members: [cover.a]}
+modes: [{id: bezny_den}]
+conditions:
+  je_tma:
+    condition: numeric_state
+    entity_id: sensor.lux_test
+    below: 500
+    default: 99999
+  je_noc_auto:
+    condition: numeric_state
+    entity_id: sun.sun
+    attribute: elevation
+    below: 0
+    default: 99
+rules:
+  bezny_den.za:
+    - {then: {position: keep, tilt: keep}}
+"""
+
+
+def _prime_lighting_world(hass, *, lux, elevation):
+    """Set the two entities `_LIGHTING_OUTPUT_CONFIG`'s `je_tma`/`je_noc_auto` read."""
+    hass.states.async_set("sensor.lux_test", str(lux))
+    hass.states.async_set("sun.sun", "above_horizon", {"elevation": elevation})
+
+
+def _output_entities(call):
+    """`call.data["entity_id"]`, tolerating either a bare string or a list."""
+    target = call.data.get("entity_id")
+    return [target] if isinstance(target, str) else list(target or [])
+
+
+def _register_input_boolean(hass):
+    """A minimal `input_boolean.turn_on`/`turn_off`, mutating state like the real one.
+
+    The bare `hass_factory` instance has no component set up at all, so
+    `_write_outputs`'s own service call would otherwise raise `ServiceNotFound`
+    -- the same reason `test_the_context_a_command_is_issued_under_is_recognised_
+    as_our_own` above registers its own `cover.*` handler. Two `async def`s, not
+    a lambda wrapping one: Home Assistant decides whether to await a registered
+    handler by asking whether *it* is a coroutine function, not by looking at
+    what it returns -- a lambda wrapping an `async def` fails that check and the
+    write is silently never awaited.
+    """
+
+    async def _turn_on(call):
+        for entity_id in _output_entities(call):
+            hass.states.async_set(entity_id, "on")
+
+    async def _turn_off(call):
+        for entity_id in _output_entities(call):
+            hass.states.async_set(entity_id, "off")
+
+    hass.services.async_register("input_boolean", "turn_on", _turn_on)
+    hass.services.async_register("input_boolean", "turn_off", _turn_off)
+
+
+def test_evaluation_writes_lighting_flags(hass_factory, runtime_entry):
+    """After a recompute the derived helpers reach their desired state.
+
+    Bright midday world -> both `je_tma` and `je_noc_auto` are false, so the
+    startup evaluation must turn both helpers off, starting from `on`.
+    """
+
+    async def _run():
+        hass = hass_factory()
+        try:
+            _register_input_boolean(hass)
+            _prime_lighting_world(hass, lux=3000, elevation=45)
+            hass.states.async_set("input_boolean.lighting_on", "on")
+            hass.states.async_set("input_boolean.je_noc_auto", "on")
+
+            coordinator = CoverLogicCoordinator(
+                hass, load_config(_LIGHTING_OUTPUT_CONFIG), runtime_entry()
+            )
+            await coordinator.async_setup()
+            await asyncio.sleep(_WAIT)  # the service call is fire-and-forget (blocking=False)
+
+            assert hass.states.get("input_boolean.lighting_on").state == "off"
+            assert hass.states.get("input_boolean.je_noc_auto").state == "off"
+
+            await coordinator.async_unload()
+        finally:
+            await hass.async_stop(force=True)
+
+    asyncio.run(_run())
+
+
+def test_writing_an_output_does_not_retrigger_evaluation(hass_factory, runtime_entry, monkeypatch):
+    """Outputs are not referenced entities, so writing them must not recompute.
+
+    The loop-guard is structural, not behavioural: `input_boolean.lighting_on`/
+    `je_noc_auto` are never read by any condition in `_LIGHTING_OUTPUT_CONFIG`,
+    so `_entity_ids` never subscribes to them and `_write_outputs`'s own
+    service calls cannot schedule a second evaluation.
+    """
+    calls = _counting_evaluate(monkeypatch)
+
+    async def _run():
+        hass = hass_factory()
+        try:
+            _register_input_boolean(hass)
+            _prime_lighting_world(hass, lux=3000, elevation=45)
+            hass.states.async_set("input_boolean.lighting_on", "on")
+            hass.states.async_set("input_boolean.je_noc_auto", "on")
+
+            coordinator = CoverLogicCoordinator(
+                hass, load_config(_LIGHTING_OUTPUT_CONFIG), runtime_entry()
+            )
+            await coordinator.async_setup()
+            await asyncio.sleep(_WAIT)
+            assert hass.states.get("input_boolean.lighting_on").state == "off"
+            first_count = len(calls)
+            assert first_count == 1
+
+            # A full extra settle window: long enough for a spurious
+            # re-subscription to have fired if the loop-guard were not
+            # structural.
+            await asyncio.sleep(_WAIT)
+            assert len(calls) == first_count, "writing the outputs recomputed the house"
+
+            await coordinator.async_unload()
+        finally:
+            await hass.async_stop(force=True)
+
+    asyncio.run(_run())
+
+
+# Same as `_MOVING_CONFIG` (a rule that actually moves a blind) but with the two
+# output conditions added, so one evaluation both writes the flags and commands
+# the blind -- the only shape that can prove the write and the move are
+# independent within a single cycle.
+_MOVING_WITH_OUTPUTS_CONFIG = """
+blinds:
+  - entity: cover.a
+    travel_time: 0.2
+zones:
+  za: {members: [cover.a]}
+modes: [{id: bezny_den}]
+conditions:
+  je_tma:
+    condition: numeric_state
+    entity_id: sensor.lux_test
+    below: 500
+    default: 99999
+  je_noc_auto:
+    condition: numeric_state
+    entity_id: sun.sun
+    attribute: elevation
+    below: 0
+    default: 99
+rules:
+  bezny_den.za:
+    - {then: {position: 100, tilt: keep}}
+"""
+
+
+def test_a_failing_output_write_does_not_block_the_blind(hass_factory, runtime_entry):
+    """A raising `input_boolean.turn_on` must not blank the blind decision.
+
+    `_write_outputs` runs inside `_async_evaluate`'s try, before `_execute`. If
+    a helper write escaped, the outer catch would log "evaluation failed" and
+    skip the executor -- so the blind would not move that cycle, which is
+    exactly the lighting-blocks-blinds coupling this split exists to remove.
+    The write is guarded per helper, so here the blind must still be commanded
+    even though every `input_boolean` service call raises.
+    """
+    moved = []
+
+    async def _run():
+        hass = hass_factory()
+        try:
+
+            async def _raise_input_boolean(call):
+                msg = "input_boolean service is down"
+                raise RuntimeError(msg)
+
+            async def _record_move(call):
+                moved.append(call)
+
+            hass.services.async_register("input_boolean", "turn_on", _raise_input_boolean)
+            hass.services.async_register("input_boolean", "turn_off", _raise_input_boolean)
+            for service in ("open_cover", "set_cover_position", "set_cover_tilt_position"):
+                hass.services.async_register("cover", service, _record_move)
+
+            _prime_lighting_world(hass, lux=3000, elevation=45)  # both flags want off
+            hass.states.async_set("input_boolean.lighting_on", "on")  # so a write is attempted
+            hass.states.async_set("input_boolean.je_noc_auto", "on")
+            hass.states.async_set(
+                "cover.a", "closed", {"current_position": 0, "current_tilt_position": 0}
+            )
+
+            coordinator = CoverLogicCoordinator(
+                hass, load_config(_MOVING_WITH_OUTPUTS_CONFIG), runtime_entry({"dry_run": False})
+            )
+            await coordinator.async_setup()
+            await asyncio.sleep(_WAIT)
+            await coordinator.runner.async_wait_idle()
+
+            assert coordinator.last_error is None, "a guarded write failure escaped into evaluate"
+            assert moved, "the failing flag write blocked the blind command"
+
+            await coordinator.async_unload()
+        finally:
+            await hass.async_stop(force=True)
+
+    asyncio.run(_run())
+
+
+_HOLD_CONFIG = """
+blinds:
+  - {entity: cover.a, travel_time: 1}
+zones:
+  za:
+    members: [cover.a]
+conditions:
+  night: {condition: state, entity_id: input_boolean.night, state: "on"}
+modes:
+  - {id: noc, when: !ref night}
+  - {id: bezny_den}
+rules:
+  bezny_den.za:
+    - {then: {position: 50, tilt: 50}}
+  noc.za:
+    - {then: {position: 0, tilt: 0}}
+manual_detection:
+  hold: true
+"""
+
+
+# Same house without `hold`; the manual_move rule only makes it watch the blind,
+# as terasa's directional guard does in the house.
+_NO_HOLD_CONFIG = _HOLD_CONFIG.replace("hold: true", "hold: false").replace(
+    "  noc.za:\n",
+    "  noc.za:\n    - {if: {condition: manual_move}, then: {position: keep, tilt: keep}}\n",
+)
+
+
+def _hold_case(hass_factory, runtime_entry, config_text, body):
+    """A coordinator in `noc` with cover.a already closed, as on 2026-10-01 19:00."""
+
+    async def _run():
+        hass = hass_factory()
+        try:
+            hass.states.async_set("input_boolean.night", "on")
+            hass.states.async_set(
+                "cover.a", "closed", {"current_position": 0, "current_tilt_position": 0}
+            )
+            coordinator = CoverLogicCoordinator(hass, load_config(config_text), runtime_entry())
+            await coordinator.async_setup()
+            await asyncio.sleep(_WAIT)
+            await coordinator.runner.async_wait_idle()
+            await body(hass, coordinator)
+            await coordinator.async_unload()
+        finally:
+            await hass.async_stop(force=True)
+
+    asyncio.run(_run())
+
+
+def _commanded(coordinator, since):
+    """Commands for cover.a issued after `since` entries existed (`recent` is newest first)."""
+    new = list(coordinator.commands.recent)[: len(coordinator.commands.recent) - since]
+    return [e for e in new if e["kind"] == COMMAND_WOULD_CALL and e["blind"] == "cover.a"]
+
+
+def test_without_hold_a_person_opening_at_night_is_closed_again(hass_factory, runtime_entry):
+    """The 2026-10-01 incident: the open from the app was undone 8 s later, 12 times over."""
+
+    async def _body(hass, coordinator):
+        since = len(coordinator.commands.recent)
+        _moved(hass, context=Context(user_id="u1"), position=100, tilt=0)
+        await asyncio.sleep(_WAIT)
+        _moved(hass, context=Context(), position=60, tilt=0)
+        await asyncio.sleep(_WAIT)
+        await coordinator.runner.async_wait_idle()
+        assert _commanded(coordinator, since)
+
+    _hold_case(hass_factory, runtime_entry, _NO_HOLD_CONFIG, _body)
+
+
+def test_a_person_opening_at_night_is_left_alone(hass_factory, runtime_entry):
+    async def _body(hass, coordinator):
+        since = len(coordinator.commands.recent)
+        _moved(hass, context=Context(user_id="u1"), position=100, tilt=0)
+        await asyncio.sleep(_WAIT)
+        await coordinator.runner.async_wait_idle()
+        # The blind keeps reporting while it travels; none of that may wake the old target.
+        _moved(hass, context=Context(), position=60, tilt=0)
+        await asyncio.sleep(_WAIT)
+        await coordinator.runner.async_wait_idle()
+        assert _commanded(coordinator, since) == []
+        assert "cover.a" in coordinator.manual_holds
+
+    _hold_case(hass_factory, runtime_entry, _HOLD_CONFIG, _body)
+
+
+def test_the_hold_ends_when_the_target_changes(hass_factory, runtime_entry):
+    """Morning switches the mode, the target changes, and the blind is ours again."""
+
+    async def _body(hass, coordinator):
+        _moved(hass, context=Context(user_id="u1"), position=100, tilt=0)
+        await asyncio.sleep(_WAIT)
+        await coordinator.runner.async_wait_idle()
+        since = len(coordinator.commands.recent)
+        hass.states.async_set("input_boolean.night", "off")
+        await asyncio.sleep(_WAIT)
+        await coordinator.runner.async_wait_idle()
+        assert _commanded(coordinator, since), [dict(e) for e in coordinator.commands.recent]
+        assert "cover.a" not in coordinator.manual_holds
+
+    _hold_case(hass_factory, runtime_entry, _HOLD_CONFIG, _body)
+
+
+def test_our_own_move_never_starts_a_hold(hass_factory, runtime_entry):
+    async def _body(hass, coordinator):
+        _moved(hass, context=Context(), position=100, tilt=0)
+        await asyncio.sleep(_WAIT)
+        await coordinator.runner.async_wait_idle()
+        assert coordinator.manual_holds == {}
+
+    _hold_case(hass_factory, runtime_entry, _HOLD_CONFIG, _body)
+
+
+def test_hold_subscribes_every_blind():
+    assert _manual_move_blinds(load_config(_HOLD_CONFIG)) == {"cover.a"}
