@@ -14,3 +14,10 @@ __pycache__/
 # fixture. Swept into a commit once by a careless `git add -A`; ignored so
 # that cannot happen again.
 .review-tmp/
+
+# Docs build output and venv
+/site/
+.venv-docs/
+
+# Packaging metadata from an editable install
+*.egg-info/

@@ -21,33 +21,9 @@ Home Assistant instance and nothing leaves it.
 The decision engine, the configuration UI, validation, the diagnostic sensor,
 the command planner, the safety interlocks and the execution queue are all
 built and tested, and the executor is now wired to real `cover.*` services.
-
-One option stands between the two: **`dry_run`, which is on by default.** While
-it is on, every command is decided, planned, queued and logged — and nothing is
-sent. So a fresh install still moves nothing. You install it alongside whatever
-already controls your blinds, watch what it *would* do, compare, and turn
-`dry_run` off (Configure → **Execution**) when the log stops surprising you.
-That is the intended way to start. The same **Execution** screen also holds
-`dead_band` (default 5): how many points a position may be off target before
-a command is sent, and how close a `WaitForPosition` counts as arrived — one
-number, both meanings, deliberately.
-
-The engine can also compute a value instead of just reading one: `slat_angle`
-derives a venetian blind's tilt from solar geometry (see "How it decides"
-below). It ships **unused** — nothing references one until you write a rule
-that does, so upgrading changes nothing on its own.
-
-The author's own house has been running it in that shadow mode since August 2026,
-with 122 configuration entries, checked against the 367-line Jinja template it is
-replacing across 92,160 scenarios on every change.
-
-## Why it exists
-
-The author's blinds were run by a 367-line Jinja template plus roughly 1,500
-lines of YAML scripts. It worked — and none of it could move to a different
-house without being rewritten from scratch, because the house was baked into
-every line. This project turns the same logic into data: the same decisions, but
-as a configuration you can carry, diff, and hand to someone else.
+It starts in [shadow mode](https://peterlinuxoss.github.io/ha-cover-logic/getting-started/shadow-mode/):
+`dry_run` is on by default, so a fresh install decides, plans and logs
+everything, and moves nothing until you turn it off.
 
 ## Install
 
@@ -61,86 +37,23 @@ Not in the HACS default store yet, so add it as a custom repository:
 Or without HACS: copy `custom_components/cover_logic/` into your Home Assistant
 `custom_components/` directory, restart, then step 4.
 
-Setup then asks how you want to start:
-
-| | |
-|---|---|
-| **Set up blinds now** *(recommended)* | Pick your cover entities, say which way each window faces, and it builds a working configuration: shade toward the sun during the day, leave everything alone at night. It shows you what it is about to create before creating it. |
-| **Load a configuration from a YAML file** | You already have a file. |
-| **Start from the example** | Imports `docs/example-config.yaml`, a complete worked example for an invented house — a plausible starting point rather than an empty one. |
-| **Start empty** | Nothing at all. You build it by clicking. |
-
-## Configuring it
-
-Two routes to the same place. Neither is second-class.
-
-**By clicking.** Every part of the configuration — blinds, zones, named values,
-named conditions, modes and rules — is a subentry you add and edit in the
-integration's own UI. No YAML required, and the UI refuses to save a
-configuration it cannot explain.
-
-**By writing YAML.** Write the file, then call the `cover_logic.import_config`
-service with its path. `dry_run: true` reports what would change without
-changing it; `overwrite: true` replaces the current configuration instead of
-merging. `cover_logic.export_config` writes the current configuration back out,
-so you can move between the two routes freely.
-
-**Or have a model write it for you.** The YAML format is documented for exactly
-this: point an LLM at [`MODELS.md`](MODELS.md) §4 and
-[`docs/example-config.yaml`](docs/example-config.yaml), describe your house in
-plain language, and import the result with `dry_run: true` first. `MODELS.md` is
-written to be read by a model, not just by a person — that is why it states the
-traps and the deliberate decisions rather than only the syntax.
-
-## How it decides
-
-Four ideas, and that is the whole model:
-
-- **Blind** — one cover, plus what it can do (tilt or not, how long a full run takes) and which way its window faces.
-- **Zone** — a group of blinds that should behave alike.
-- **Mode** — a state the whole house can be in (a normal day, night, a heatwave, away). Exactly one is active; the first mode whose condition holds wins, and the last one has no condition so there is always an answer.
-- **Rule** — within a mode and zone, the first rule whose condition holds sets the position and tilt. Rule order is meaning, not presentation.
-
-A rule can leave an axis alone rather than setting it, and a zone can inherit a
-mode's default rules instead of repeating them. Both exist because the author's
-own configuration had 86 rules with only 44 distinct bodies before they did.
-
-- **Value** — a named quantity a rule's `position`/`tilt` can reference with
-  `!ref name`: either a helper entity you read, or, with `type: slat_angle`,
-  a tilt computed live from solar geometry and the blind's own facade and
-  slat measurements — one entry works for every facade in the house.
-
-```yaml
-values:
-  slats: {type: slat_angle, default: 50}
-then: {tilt: !ref slats}
-```
-
-**Interlocks** (`guards:`) sit outside that: they can drop a blind from
-consideration before the engine is asked, or override the decision afterwards.
-They express the things that are not really decisions — do not lower this blind
-onto an open terrace door, open everything when the wind gets up, wait until the
-sauna is finished. Like rules, the first matching interlock wins.
-
-## What you get to look at
-
-One diagnostic sensor, `sensor.cover_logic_mode`. Its state is the active mode;
-its attributes carry the decided action for every blind, which rule produced it,
-what is queued or waiting on an interlock, what the last command was — and, while
-you are still running an old system alongside, a direct comparison against it.
+See [install](https://peterlinuxoss.github.io/ha-cover-logic/getting-started/install/)
+and [first setup](https://peterlinuxoss.github.io/ha-cover-logic/getting-started/first-setup/)
+for the four ways to start and a walkthrough of the recommended one.
 
 ## Documentation
 
-| | |
-|---|---|
-| [`MODELS.md`](MODELS.md) | The full technical brief: architecture, the decision model, the configuration format, the deliberate decisions that look like bugs, and the rules for changing this code. **Read this before any nontrivial change.** |
-| [`docs/example-config.yaml`](docs/example-config.yaml) | A complete, commented configuration for an invented house. |
-| [`docs/rationale.md`](docs/rationale.md) | Why the pure core is the way it is, module by module — and the debugging traps. |
-| [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to run the tests and the parity-first rule. |
+**https://peterlinuxoss.github.io/ha-cover-logic**
 
-`fixtures/dom_peter.yaml` is not an example. It is the real configuration of the
-house this was built for, and it doubles as the fixture the migration check
-compares against. Do not copy from it.
+Concepts, how-to guides, the configuration reference and troubleshooting all
+live there. [`MODELS.md`](MODELS.md) and [`docs/rationale.md`](docs/rationale.md)
+are the technical brief and the design-decision ledger for anyone changing
+this code — the site links both under "For developers".
+
+`fixtures/dom_peter.yaml` is not an example — [`docs/example-config.yaml`](docs/example-config.yaml)
+is that. `fixtures/dom_peter.yaml` is the real configuration of the house this
+was built for, and it doubles as the fixture the migration check compares
+against. Do not copy from it.
 
 ## Running the tests
 

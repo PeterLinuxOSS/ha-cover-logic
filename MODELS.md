@@ -304,8 +304,9 @@ all, or if a fallback exists but is not last (anything after it can never
 match). Choosing no mode at all is not a valid outcome — `evaluate` raises
 `EngineError` if it happens.
 
-**Zones.** Every blind belongs to exactly one zone (`resolve_ownership`
-raises `EngineError` on a blind owned by two zones, or by none). A zone,
+**Zones.** Every blind belongs to at most one zone (`resolve_ownership`
+raises `EngineError` on a blind owned by two zones; a blind owned by none is
+skipped and reported as the `blind_without_zone` warning). A zone,
 not an individual blind, is the unit rules are written against.
 
 **Rules.** For the resolved mode and each zone, the rule list is looked up
