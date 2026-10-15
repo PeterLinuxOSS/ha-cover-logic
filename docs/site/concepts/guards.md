@@ -77,6 +77,13 @@ moving are never by themselves the hazard a guard like this exists for.
 `opening` is the increasing case; `any` (the default) does not care which
 way.
 
+## A numeric threshold needs a named condition
+
+When editing from the UI, a guard's own inline condition selector cannot
+carry the `default` a `numeric_state` needs — Home Assistant's selector
+rejects that key — so a guard gated on a numeric threshold must reference a
+named [condition](modes.md) instead.
+
 ## `max_wait`, `on_timeout`, `recheck_every`
 
 These three only apply to `defer`. `recheck_every` (seconds, default 900)

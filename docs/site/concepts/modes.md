@@ -60,6 +60,11 @@ into one segment, the rest into another.
 
 ![A sun condition dividing one day into segments, evaluated in order](../assets/sun-day.svg)
 
+A top-level `numeric_state` also takes a `default`, used when the compared
+entity is unavailable or not a number — pick one that fails on the safe
+side, since the condition is evaluated exactly as if that were the entity's
+real reading.
+
 ## Common mistakes
 
 - Putting the fallback mode anywhere but last.

@@ -99,9 +99,11 @@ every later recompute while they stay home.
 ## Where to edit this
 
 **Settings → Devices & services → Cover Logic → Add rule** (or **Edit
-rule**), after choosing the mode and zone it belongs to. The options menu's
-"rules in real evaluation order" report shows the full first-match-wins
-sequence, own rules before defaults, without reading YAML.
+rule**), after choosing the mode and zone it belongs to. Its `order` field
+stands in for YAML list position — lower runs first, suggested ten past the
+last rule in that list so there is room to insert one later. The options
+menu's "rules in real evaluation order" report shows the full
+first-match-wins sequence, own rules before defaults, without reading YAML.
 
 See the [reference: rules](../reference/configuration.md#rules) and
 [reference: rule `then`](../reference/configuration.md#rule-then) for the
