@@ -774,7 +774,7 @@ def test_blinds_are_only_watched_when_the_config_asks_about_manual_moves(config)
 # `je_tma`/`je_noc_auto` here are deliberately simpler than the house's own
 # (dusk window + lux + a 12:30 gate, see `fixtures/dom_peter.yaml`): this is
 # only about the coordinator calling `derive_outputs` and writing the two
-# `OUTPUT_CONDITIONS` helpers, not about re-proving the sun/lux logic
+# helpers `_OUTPUT_OPTIONS` maps, not about re-proving the sun/lux logic
 # `tests/test_conditions.py` and `tests/test_outputs.py` already cover in the
 # pure suite. Bright midday (lux above threshold, sun elevation above zero)
 # derives both false, matching `tests/test_outputs.py`'s own bright-midday
@@ -801,6 +801,17 @@ rules:
   bezny_den.za:
     - {then: {position: keep, tilt: keep}}
 """
+
+
+# Live executor plus the condition->helper mapping the house configures in its
+# options; empty by default, so these tests must opt in to see any write.
+_OUTPUT_OPTIONS = {
+    "dry_run": False,
+    "output_helpers": {
+        "je_tma": "input_boolean.lighting_on",
+        "je_noc_auto": "input_boolean.je_noc_auto",
+    },
+}
 
 
 def _prime_lighting_world(hass, *, lux, elevation):
@@ -856,7 +867,7 @@ def test_evaluation_writes_lighting_flags(hass_factory, runtime_entry):
             hass.states.async_set("input_boolean.je_noc_auto", "on")
 
             coordinator = CoverLogicCoordinator(
-                hass, load_config(_LIGHTING_OUTPUT_CONFIG), runtime_entry()
+                hass, load_config(_LIGHTING_OUTPUT_CONFIG), runtime_entry(_OUTPUT_OPTIONS)
             )
             await coordinator.async_setup()
             await asyncio.sleep(_WAIT)  # the service call is fire-and-forget (blocking=False)
@@ -890,7 +901,7 @@ def test_writing_an_output_does_not_retrigger_evaluation(hass_factory, runtime_e
             hass.states.async_set("input_boolean.je_noc_auto", "on")
 
             coordinator = CoverLogicCoordinator(
-                hass, load_config(_LIGHTING_OUTPUT_CONFIG), runtime_entry()
+                hass, load_config(_LIGHTING_OUTPUT_CONFIG), runtime_entry(_OUTPUT_OPTIONS)
             )
             await coordinator.async_setup()
             await asyncio.sleep(_WAIT)
@@ -976,7 +987,7 @@ def test_a_failing_output_write_does_not_block_the_blind(hass_factory, runtime_e
             )
 
             coordinator = CoverLogicCoordinator(
-                hass, load_config(_MOVING_WITH_OUTPUTS_CONFIG), runtime_entry({"dry_run": False})
+                hass, load_config(_MOVING_WITH_OUTPUTS_CONFIG), runtime_entry(_OUTPUT_OPTIONS)
             )
             await coordinator.async_setup()
             await asyncio.sleep(_WAIT)
@@ -984,6 +995,65 @@ def test_a_failing_output_write_does_not_block_the_blind(hass_factory, runtime_e
 
             assert coordinator.last_error is None, "a guarded write failure escaped into evaluate"
             assert moved, "the failing flag write blocked the blind command"
+
+            await coordinator.async_unload()
+        finally:
+            await hass.async_stop(force=True)
+
+    asyncio.run(_run())
+
+
+def test_dry_run_writes_no_outputs(hass_factory, runtime_entry):
+    """Shadow mode moves nothing, the published helpers included (HACS review).
+
+    Same bright-midday world as `test_evaluation_writes_lighting_flags`, with the
+    mapping configured, but `dry_run` on: the helpers must stay exactly as set.
+    """
+
+    async def _run():
+        hass = hass_factory()
+        try:
+            _register_input_boolean(hass)
+            _prime_lighting_world(hass, lux=3000, elevation=45)
+            hass.states.async_set("input_boolean.lighting_on", "on")
+            hass.states.async_set("input_boolean.je_noc_auto", "on")
+
+            options = {"dry_run": True, "output_helpers": _OUTPUT_OPTIONS["output_helpers"]}
+            coordinator = CoverLogicCoordinator(
+                hass, load_config(_LIGHTING_OUTPUT_CONFIG), runtime_entry(options)
+            )
+            await coordinator.async_setup()
+            await asyncio.sleep(_WAIT)
+
+            assert hass.states.get("input_boolean.lighting_on").state == "on"
+            assert hass.states.get("input_boolean.je_noc_auto").state == "on"
+
+            await coordinator.async_unload()
+        finally:
+            await hass.async_stop(force=True)
+
+    asyncio.run(_run())
+
+
+def test_no_output_mapping_writes_nothing(hass_factory, runtime_entry):
+    """A live install with no helpers configured (the shipped default) writes nothing."""
+
+    async def _run():
+        hass = hass_factory()
+        try:
+            _register_input_boolean(hass)
+            _prime_lighting_world(hass, lux=3000, elevation=45)
+            hass.states.async_set("input_boolean.lighting_on", "on")
+            hass.states.async_set("input_boolean.je_noc_auto", "on")
+
+            coordinator = CoverLogicCoordinator(
+                hass, load_config(_LIGHTING_OUTPUT_CONFIG), runtime_entry({"dry_run": False})
+            )
+            await coordinator.async_setup()
+            await asyncio.sleep(_WAIT)
+
+            assert hass.states.get("input_boolean.lighting_on").state == "on"
+            assert hass.states.get("input_boolean.je_noc_auto").state == "on"
 
             await coordinator.async_unload()
         finally:

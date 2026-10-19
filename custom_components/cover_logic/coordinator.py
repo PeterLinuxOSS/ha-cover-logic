@@ -66,6 +66,7 @@ from .const import (
     GUARD_CLOSING,
     GUARD_OPENING,
     OPT_DRY_RUN,
+    OPT_OUTPUT_HELPERS,
     RECONCILE_FLOOR_SECONDS,
 )
 from .deferrals import DeferralRegistry, Elapsed
@@ -256,6 +257,17 @@ class CoverLogicCoordinator:
         to notice.
         """
         return bool(self.entry.options.get(OPT_DRY_RUN, DEFAULT_DRY_RUN))
+
+    @property
+    def output_helpers(self) -> dict[str, str]:
+        """`{condition_name: entity_id}` the user asked this entry to publish.
+
+        Read live off `entry.options` (same reason as `dry_run`); empty -- the
+        shipped default -- means publish nothing, so no house's entity ids are
+        baked into the integration.
+        """
+        configured = self.entry.options.get(OPT_OUTPUT_HELPERS) or {}
+        return {str(cond): str(entity) for cond, entity in configured.items()}
 
     @property
     def last_command(self) -> dict[str, Any] | None:
@@ -640,7 +652,13 @@ class CoverLogicCoordinator:
         )
 
     async def _write_outputs(self, world: World) -> None:
-        """Publish the derived lighting flags, only where the helper must change.
+        """Publish the configured output helpers, only where one must change.
+
+        Skipped entirely in `dry_run`: shadow mode moves nothing, the published
+        helpers included (README promise, and the HACS review's request). The
+        target entity_ids are the installation's own, configured on the
+        Execution screen (`const.OPT_OUTPUT_HELPERS`) and empty by default, so a
+        fresh install writes nothing.
 
         Own `Context` so a later manual-move detector could tell these apart; but
         the real loop-guard is structural -- these helpers are not referenced by
@@ -648,8 +666,13 @@ class CoverLogicCoordinator:
         raised: a flag we could not write must not blank a blind decision. See
         docs/rationale.md -- "Why the integration writes the lighting flags".
         """
+        if self.dry_run:
+            return
+        output_helpers = self.output_helpers
+        if not output_helpers:
+            return
         try:
-            desired = derive_outputs(self.config, world)
+            desired = derive_outputs(self.config, world, output_helpers)
         except Exception:
             _LOGGER.exception("cover_logic: output derivation failed, leaving flags as-is")
             return

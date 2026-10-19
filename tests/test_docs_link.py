@@ -52,7 +52,7 @@ def test_every_repair_issue_supplies_docs_url():
 
 
 def test_every_service_supplies_docs_url():
-    calls = list(_calls(_COMPONENT / "services.py", {"async_register"}))
+    calls = list(_calls(_COMPONENT / "services.py", {"async_register_admin_service"}))
     assert len(calls) == 2
     missing = [c.lineno for c in calls if not _passes_docs(c, "description_placeholders")]
     assert not missing, missing

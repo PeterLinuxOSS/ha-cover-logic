@@ -704,7 +704,7 @@
       },
       "execution": {
         "title": "Vykonávanie",
-        "description": "Či integrácia žalúziami naozaj hýbe, alebo len zapisuje do logu, čím by pohla; suchý beh je bezpečný východiskový stav. [Viac]({docs_url}/getting-started/shadow-mode/)",
+        "description": "Či integrácia žalúziami naozaj hýbe, alebo len zapisuje do logu, čím by pohla; suchý beh je bezpečný východiskový stav. Ktorákoľvek podmienka môže nižšie publikovať svoje zap/vyp do jedného z tvojich input_boolean helperov (prázdne = nepublikuje nič); pri suchom behu sa nepublikuje vôbec. [Viac]({docs_url}/getting-started/shadow-mode/)",
         "data": {
           "dry_run": "Suchý beh (príkazy len zapisovať, nehýbať ničím)",
           "fixture_path": "Fixture na porovnanie",
@@ -817,6 +817,9 @@
     },
     "cannot_write_file": {
       "message": "Súbor {path} sa nedá zapísať: {error_detail}"
+    },
+    "path_not_allowed": {
+      "message": "Cesta {path} nie je povolená. Pridaj jej priečinok do allowlist_external_dirs, alebo použi už povolenú cestu."
     }
   }
 }

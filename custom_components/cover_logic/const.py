@@ -287,10 +287,9 @@ COMMAND_DISPATCHED = "dispatched"
 # (`time_pattern: /15`), chosen over inventing a number.
 GUARD_DEFAULT_RECHECK = 900
 
-# Output helper entity_id -> named condition that drives it. See
-# `outputs.py` and docs/rationale.md -- "Why the integration writes the
-# lighting flags".
-OUTPUT_CONDITIONS = {
-    "input_boolean.lighting_on": "je_tma",
-    "input_boolean.je_noc_auto": "je_noc_auto",
-}
+# Output helpers to publish, as {condition_name: entity_id}, from the entry's
+# options. Empty by default: a fresh install writes nothing, and the target
+# entity_ids are the installation's own helpers (configured on the Execution
+# screen), never shipped. See `outputs.py` and docs/rationale.md -- "Why the
+# integration writes the lighting flags".
+OPT_OUTPUT_HELPERS = "output_helpers"

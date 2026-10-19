@@ -120,6 +120,7 @@ from .const import (
     OPT_DEAD_BAND,
     OPT_DRY_RUN,
     OPT_FIXTURE_PATH,
+    OPT_OUTPUT_HELPERS,
     RULE_DEFAULT_ZONE,
 )
 from .docs_link import docs_placeholders
@@ -174,6 +175,12 @@ _ACTION_FIELD = "action"
 _ACTION_IMPORT = "import"
 _ACTION_EXPORT = "export"
 
+# Execution-screen fields that map a named condition to the helper the
+# integration should publish its truthiness to (`const.OPT_OUTPUT_HELPERS`).
+# Prefixed so a condition named like a built-in option (`dry_run`, ...) cannot
+# collide with one.
+_OUTPUT_FIELD_PREFIX = "output_"
+
 
 def _counts(entry: Any) -> dict[str, int]:
     """How many subentries of each type `entry` currently has.
@@ -188,6 +195,19 @@ def _counts(entry: Any) -> dict[str, int]:
         if subentry.subentry_type in counts:
             counts[subentry.subentry_type] += 1
     return counts
+
+
+def _condition_names(entry: Any) -> list[str]:
+    """Condition ids defined in `entry`, for the output-helper picker.
+
+    Returns `[]` when the current subentries do not parse, so a house mid-edit
+    shows no picker rather than raising -- `async_step_execution` then leaves any
+    existing mapping untouched instead of clearing it off a transient parse error.
+    """
+    try:
+        return list(config_from_subentries(entry).conditions)
+    except ConfigError:
+        return []
 
 
 def _items(entry: Any, subentry_type: str) -> list[tuple[str, str]]:
@@ -1109,6 +1129,8 @@ class CoverLogicOptionsFlow(OptionsFlow):
         `fixture_path`, one field down.
         """
         entry = self.config_entry
+        condition_names = _condition_names(entry)
+        current_outputs = entry.options.get(OPT_OUTPUT_HELPERS) or {}
         if user_input is not None:
             options = {**dict(entry.options), OPT_DRY_RUN: bool(user_input[OPT_DRY_RUN])}
             # An absent key means "left alone", not "cleared": `vol.Optional`
@@ -1126,29 +1148,51 @@ class CoverLogicOptionsFlow(OptionsFlow):
                     options.pop(OPT_FIXTURE_PATH, None)
             if OPT_DEAD_BAND in user_input:
                 options[OPT_DEAD_BAND] = int(user_input[OPT_DEAD_BAND])
+            # Output helpers: {condition: entity}. Only rebuilt when the config
+            # parses (the picker was shown); a blank field clears that
+            # condition's mapping, no fields set clears the lot. A transient
+            # parse error leaves the stored mapping untouched -- see
+            # `_condition_names`.
+            if condition_names:
+                outputs = {
+                    cond: entity
+                    for cond in condition_names
+                    if (entity := (user_input.get(f"{_OUTPUT_FIELD_PREFIX}{cond}") or "").strip())
+                }
+                if outputs:
+                    options[OPT_OUTPUT_HELPERS] = outputs
+                else:
+                    options.pop(OPT_OUTPUT_HELPERS, None)
             self.hass.config_entries.async_update_entry(entry, options=options)
             return await self._show_main_menu()
 
         current = entry.options.get(OPT_DRY_RUN, DEFAULT_DRY_RUN)
         current_dead_band = entry.options.get(OPT_DEAD_BAND, DEFAULT_DEAD_BAND)
+        schema: dict[Any, Any] = {
+            vol.Required(OPT_DRY_RUN, default=bool(current)): selector.BooleanSelector(),
+            vol.Optional(
+                OPT_FIXTURE_PATH,
+                description={"suggested_value": entry.options.get(OPT_FIXTURE_PATH, "")},
+            ): selector.TextSelector(),
+            vol.Optional(OPT_DEAD_BAND, default=int(current_dead_band)): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=1, max=50, step=1, mode=selector.NumberSelectorMode.BOX
+                )
+            ),
+        }
+        # One optional input_boolean picker per defined condition: the house's
+        # own helpers are configured here, never shipped (HACS review). Empty
+        # for every condition -- the default -- publishes nothing.
+        for cond in condition_names:
+            schema[
+                vol.Optional(
+                    f"{_OUTPUT_FIELD_PREFIX}{cond}",
+                    description={"suggested_value": current_outputs.get(cond, "")},
+                )
+            ] = selector.EntitySelector(selector.EntitySelectorConfig(domain="input_boolean"))
         return self.async_show_form(
             step_id="execution",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(OPT_DRY_RUN, default=bool(current)): selector.BooleanSelector(),
-                    vol.Optional(
-                        OPT_FIXTURE_PATH,
-                        description={"suggested_value": entry.options.get(OPT_FIXTURE_PATH, "")},
-                    ): selector.TextSelector(),
-                    vol.Optional(
-                        OPT_DEAD_BAND, default=int(current_dead_band)
-                    ): selector.NumberSelector(
-                        selector.NumberSelectorConfig(
-                            min=1, max=50, step=1, mode=selector.NumberSelectorMode.BOX
-                        )
-                    ),
-                }
-            ),
+            data_schema=vol.Schema(schema),
             description_placeholders=docs_placeholders(),
         )
 

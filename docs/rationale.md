@@ -2085,10 +2085,23 @@ boundary, whose instant the test itself sets.
 
 ### Why the integration writes the lighting flags
 
-`_write_outputs` runs after every recompute and turns `input_boolean.lighting_on`/
-`je_noc_auto` on or off from `derive_outputs` (Task 2's pure `je_tma`/
-`je_noc_auto` conditions), but only calls `input_boolean.turn_on`/`turn_off`
-when a helper's current state disagrees with the desired one.
+`_write_outputs` runs after every recompute and turns the configured output
+helpers on or off from `derive_outputs`, but only calls `input_boolean.turn_on`/
+`turn_off` when a helper's current state disagrees with the desired one.
+
+**Which helpers, and whose they are.** The mapping is `{condition_name:
+entity_id}`, set per installation on the Execution screen
+(`const.OPT_OUTPUT_HELPERS`) and **empty by default** -- a fresh install writes
+nothing, and no house's entity ids ship in the integration. This is the fix for
+the HACS review (frenck, 2026-10): the old `const.OUTPUT_CONDITIONS` hard-coded
+`input_boolean.lighting_on`/`je_noc_auto`, which belong to one installation, not
+to every user. The house that needs them configures `je_tma -> lighting_on` and
+`je_noc_auto -> je_noc_auto` there; everyone else leaves it empty.
+
+**Skipped entirely in `dry_run`.** Shadow mode moves nothing -- the README's
+promise -- and that now includes the published helpers, which the earlier
+version wrote even in dry run. `_write_outputs` returns before deriving anything
+while `dry_run` is on.
 
 **These are outputs, not inputs, and that is the whole loop-guard.** Neither
 helper is read by any condition this configuration defines -- Task 1
