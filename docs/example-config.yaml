@@ -1,0 +1,249 @@
+# Example Cover Logic configuration.
+#
+# A different, invented house from the one this repository actually drives
+# (fixtures/dom_peter.yaml) -- see MODELS.md, "The configuration format", for
+# the field-by-field reference this file is a worked example of. This file is
+# loaded and validated by tests/test_example_config.py, so it is guaranteed to
+# stay parseable and error-free; it is NOT wired into any parity check and is
+# never read by the integration itself.
+#
+# The house: a two-bedroom apartment with four windows, one per compass
+# direction, an away/night/home mode split, and a security panel and a
+# temperature sensor as the only two external inputs. Load it yourself with:
+#
+#   from cover_logic.config_schema import load_config_file
+#   config = load_config_file("docs/example-config.yaml")
+
+# --- Blinds -----------------------------------------------------------------
+# One entry per physical cover entity. `facade_azimuth` is the compass
+# bearing (0..360) the window faces; a blind with no fixed orientation can
+# omit it, at the cost of `sun_hits_target` never matching it. `tolerance` is
+# how many degrees either side of `facade_azimuth` count as "the sun is on
+# this facade" (defaults to 45.0 if omitted). `has_tilt: false` marks a
+# roller blind with no slats -- the kitchen's, below.
+blinds:
+  - entity: cover.living_room_balcony
+    facade_azimuth: 180 # south
+    tolerance: 40
+  - entity: cover.bedroom_window
+    facade_azimuth: 90 # east
+  - entity: cover.office_window
+    facade_azimuth: 270 # west
+  - entity: cover.kitchen_window
+    facade_azimuth: 0 # north
+    has_tilt: false # roller blind, no slats
+
+# --- Zones --------------------------------------------------------------
+# Every blind belongs to exactly one zone -- `validate()` reports an error if
+# a blind is in two zones or in none. A zone is the unit of decision (rules
+# are keyed by mode + zone, never by individual blind) and, through
+# `occupants`, the unit `event_targets_zone` checks an arrival against.
+zones:
+  living_room:
+    members: [cover.living_room_balcony]
+  bedroom:
+    members: [cover.bedroom_window]
+    occupants: [alex]
+  office:
+    members: [cover.office_window]
+  kitchen:
+    members: [cover.kitchen_window]
+
+# --- Named conditions ---------------------------------------------------
+# Reusable condition bodies, pulled in elsewhere with `!ref <name>`. The
+# dialect is a subset of Home Assistant's own condition schema (`state`,
+# `numeric_state`, `time`, `template`, `and`/`or`/`not`) plus two
+# target-relative extensions this project adds: `sun_hits_target` (true when
+# the sun is currently inside the blind being decided's own facade sector)
+# and `event_targets_zone` (true when the arrival event names an occupant of
+# the zone being decided). Neither extension exists in stock Home Assistant.
+conditions:
+  house_armed_away:
+    condition: state
+    entity_id: alarm_control_panel.home_alarm
+    state: armed_away
+
+  house_dark:
+    condition: state
+    entity_id: input_boolean.house_dark
+    state: "on"
+
+  sun_up:
+    condition: state
+    entity_id: sun.sun
+    state: above_horizon
+
+  # `default` is mandatory and is what a dead sensor falls back to -- 20 is
+  # deliberately "not a heatwave", so a dead sensor never fakes one.
+  heatwave:
+    condition: numeric_state
+    entity_id: sensor.outdoor_temperature
+    default: 20
+    above: 28
+
+  someone_arrived_here:
+    condition: event_targets_zone
+
+  sun_on_this_facade:
+    condition: sun_hits_target
+
+  # The three inputs the guards at the end of this file read. A guard's
+  # `when` is an ordinary condition body, so it can be a `!ref` to a named
+  # one exactly like a mode's `when` or a rule's `if`.
+  balcony_door_open:
+    condition: state
+    entity_id: binary_sensor.balcony_door
+    state: "on"
+
+  # `default: 0` is "no wind" -- a dead anemometer must not fake a gale and
+  # throw every blind open, which is what this guard does when it matches.
+  high_wind:
+    condition: numeric_state
+    entity_id: sensor.wind_speed
+    default: 0
+    above: 60
+
+  airing_the_plants:
+    condition: state
+    entity_id: input_boolean.airing_the_plants
+    state: "on"
+
+# --- Helper-backed values ------------------------------------------------
+# A `!ref` in an action's `position`/`tilt` reads a Home Assistant helper at
+# decision time -- truncated to an int, and NOT clamped to 0..100 (see
+# MODELS.md, "Deliberate decisions that look like bugs"). `default` is the
+# fallback used when the helper is missing or unparsable, and is itself
+# checked to be 0..100 at config-parse time, same as a literal axis value.
+values:
+  heatwave_tilt:
+    entity: input_number.heatwave_tilt_target
+    default: 40
+
+# --- Modes ----------------------------------------------------------------
+# Evaluated top to bottom; the first mode whose `when` matches wins. The
+# last mode MUST have no `when` -- it is the fallback, and `validate()`
+# flags a config that gets this wrong (`no_fallback_mode` if none exists at
+# all, `fallback_mode_not_last` if one exists but something follows it).
+modes:
+  - id: away
+    when: !ref house_armed_away
+  - id: night
+    when: !ref house_dark
+  - id: home # fallback: no `when`
+
+# --- Rules ------------------------------------------------------------------
+# Keyed "<mode id>.<zone id>". Within one list, first-match-wins; a rule
+# with no `if` matches everything and so must be last if it is present at
+# all (`validate()` warns about a rule placed after one -- it can never
+# fire). `then` is an action: `position`/`tilt`, each either an integer
+# 0..100, `keep` (touch nothing), or `!ref <value>`. An axis left out of
+# `then` entirely also means `keep` -- the kitchen's rules below never
+# mention `tilt` because the kitchen blind has no tilt axis at all.
+rules:
+  away.living_room:
+    - then: { position: 20, tilt: 0 } # keep the apartment inconspicuous
+  away.bedroom:
+    - then: { position: 20, tilt: 0 }
+  away.office:
+    - then: { position: 20, tilt: 0 }
+  away.kitchen:
+    - then: { position: 20 }
+
+  night.living_room:
+    - then: { position: 0, tilt: 0 }
+  night.bedroom:
+    - then: { position: 0, tilt: 0 }
+  night.office:
+    - then: { position: 0, tilt: 0 }
+  night.kitchen:
+    - then: { position: 0 }
+
+  home.living_room:
+    - if: !ref heatwave
+      then: { position: keep, tilt: !ref heatwave_tilt }
+      name: heatwave shading, leave height alone
+    - if: { condition: and, conditions: [!ref sun_up, !ref sun_on_this_facade] }
+      then: { position: keep, tilt: 20 }
+      name: sun on the balcony door, angle the slats
+    - then: { position: keep, tilt: keep } # otherwise leave it alone
+
+  home.bedroom:
+    - if: !ref someone_arrived_here
+      events: [arrival]
+      then: { position: 100, tilt: 100 }
+      name: open up when its occupant gets home
+    - if: !ref heatwave
+      then: { position: keep, tilt: 40 }
+    - then: { position: keep, tilt: keep }
+
+  home.office:
+    - if: { condition: and, conditions: [!ref sun_up, !ref sun_on_this_facade] }
+      then: { position: keep, tilt: 15 }
+      name: afternoon sun, west-facing
+    - then: { position: keep, tilt: keep }
+
+  home.kitchen:
+    - then: { position: keep }
+
+# --- Guards -----------------------------------------------------------------
+# Safety interlocks. A guard is a condition, a policy, and what it applies to
+# -- nothing more. It reuses the same condition dialect as everything above
+# (`when`, `!ref` included), because a second condition language inside guards
+# would be a second thing to keep correct.
+#
+# Guards resolve FIRST MATCH WINS, exactly like rules: the order they are
+# written in is the only referee between two that would contradict each other,
+# and there are deliberately no numeric priorities. Wind goes first here for
+# that reason -- it is the one interlock that has to hold even when everything
+# below it is misconfigured.
+#
+# Fields:
+#   policy      skip (do not move it) | defer (move it later) | force (move it
+#               now, whatever was decided)
+#   applies_to  closing | opening | any -- which movement the guard is about.
+#               `closing` means a DECREASING POSITION and nothing else: a
+#               blind's slats moving are never the hazard, being driven down
+#               onto an open door is.
+#   stage       output (judge the action the engine decided -- the default) |
+#               input (drop the target before the engine is even asked, so no
+#               decision is made for it at all)
+#   targets     blind entity ids and/or zone ids; absent means every blind
+#   when        condition body, or absent for "always"
+#   max_wait /  `defer` only, both required. `max_wait: null` means "wait
+#   on_timeout  indefinitely" and is a value, not an omission. `on_timeout`
+#               has no default on purpose: `proceed` (do it anyway) and
+#               `abandon` (drop the rest) are opposites, and both are in real
+#               use, so guessing would silently pick one of them.
+#   recheck_every  `defer` only; how often a pending wait is re-examined.
+#               Defaults to 900 s. This is what makes a deferred action
+#               survive a restart without a second, hand-written watchdog
+#               beside it -- restart resilience is a property of the guard.
+#   then        `force` only: the action to impose.
+guards:
+  - name: high wind throws everything open
+    policy: force
+    applies_to: any
+    when: !ref high_wind
+    then: { position: 100, tilt: 100 }
+
+  - name: never lower the balcony blind onto an open door
+    policy: skip
+    applies_to: closing # raising it is always safe
+    targets: [cover.living_room_balcony]
+    when: !ref balcony_door_open
+
+  - name: close the balcony blind once the door is shut, up to 90 minutes later
+    policy: defer
+    applies_to: closing
+    targets: [living_room]
+    when: !ref balcony_door_open
+    max_wait: 5400
+    on_timeout: abandon # still open after 90 minutes: leave it, do not force it
+    recheck_every: 300
+
+  - name: leave the kitchen out of it entirely while the plants are being aired
+    policy: skip
+    stage: input # the engine is never asked about this zone at all
+    applies_to: any
+    targets: [kitchen]
+    when: !ref airing_the_plants
