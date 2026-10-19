@@ -704,7 +704,7 @@
       },
       "execution": {
         "title": "Execution",
-        "description": "Whether this integration moves the covers for real, or only logs what it would have done; dry run is the safe starting setting. [Learn more]({docs_url}/getting-started/shadow-mode/)",
+        "description": "Whether this integration moves the covers for real, or only logs what it would have done; dry run is the safe starting setting. Any condition can also publish its on/off to one of your input_boolean helpers below (leave empty to publish nothing); publishing is skipped entirely in dry run. [Learn more]({docs_url}/getting-started/shadow-mode/)",
         "data": {
           "dry_run": "Dry run (log commands, move nothing)",
           "fixture_path": "Fixture to compare against",
@@ -817,6 +817,9 @@
     },
     "cannot_write_file": {
       "message": "Could not write {path}: {error_detail}"
+    },
+    "path_not_allowed": {
+      "message": "{path} is not an allowed path. Add its directory to allowlist_external_dirs, or use a path already allowed."
     }
   }
 }

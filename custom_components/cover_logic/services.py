@@ -73,6 +73,7 @@ from homeassistant.config_entries import ConfigSubentry
 from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.service import async_register_admin_service
 import voluptuous as vol
 
 from .config_schema import ConfigError, dump_config_file, load_config_file
@@ -157,6 +158,22 @@ def _get_entry(hass: HomeAssistant) -> Any:
     return entries[0]
 
 
+async def _async_raise_if_path_not_allowed(hass: HomeAssistant, path: str) -> None:
+    """Refuse a path Home Assistant is not configured to touch.
+
+    Both services are admin-only, but admin is not root: the same
+    `allowlist_external_dirs` gate every file-reading/writing service honours
+    applies here too, so neither can reach outside it. `is_allowed_path`
+    resolves the real path (a stat), so it runs off the event loop.
+    """
+    if not await hass.async_add_executor_job(hass.config.is_allowed_path, path):
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="path_not_allowed",
+            translation_placeholders={"path": path},
+        )
+
+
 def _raise_invalid_config(problems: list[Problem]) -> None:
     errors = [problem for problem in problems if problem.severity == ERROR]
     if errors:
@@ -209,6 +226,7 @@ async def _async_import_config(hass: HomeAssistant, call: ServiceCall) -> Servic
     overwrite = call.data[ATTR_OVERWRITE]
 
     entry = _get_entry(hass)
+    await _async_raise_if_path_not_allowed(hass, path)
     config, problems = await _async_load_and_validate(hass, path)
 
     if entry.subentries and not overwrite:
@@ -396,6 +414,7 @@ async def _async_export_config(hass: HomeAssistant, call: ServiceCall) -> Servic
         ) from err
 
     path = await hass.async_add_executor_job(_prepare_export_path, path_str)
+    await _async_raise_if_path_not_allowed(hass, str(path))
     await hass.async_add_executor_job(_check_export_target_has_no_comments, path)
 
     try:
@@ -426,6 +445,12 @@ def async_register_services(hass: HomeAssistant) -> None:
     against the way a multi-instance integration would need to); guarded by
     `has_service` so a config entry reload does not try to register the same
     service twice.
+
+    Both register through `async_register_admin_service`: reading an arbitrary
+    file into the config and writing YAML anywhere are admin-only powers, and
+    `_async_raise_if_path_not_allowed` keeps even an admin inside
+    `allowlist_external_dirs`. The options flow offers the same import/export to
+    admins, so nothing is lost.
     """
     # Home Assistant decides how to dispatch a registered handler by asking
     # `inspect.iscoroutinefunction` (see `HassJob`/`get_hassjob_callable_job_type`
@@ -449,7 +474,8 @@ def async_register_services(hass: HomeAssistant) -> None:
         async def _import_config(call: ServiceCall) -> ServiceResponse:
             return await _async_import_config(hass, call)
 
-        hass.services.async_register(
+        async_register_admin_service(
+            hass,
             DOMAIN,
             SERVICE_IMPORT_CONFIG,
             _import_config,
@@ -462,7 +488,8 @@ def async_register_services(hass: HomeAssistant) -> None:
         async def _export_config(call: ServiceCall) -> ServiceResponse:
             return await _async_export_config(hass, call)
 
-        hass.services.async_register(
+        async_register_admin_service(
+            hass,
             DOMAIN,
             SERVICE_EXPORT_CONFIG,
             _export_config,

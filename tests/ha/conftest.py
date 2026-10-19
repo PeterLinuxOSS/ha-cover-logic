@@ -298,8 +298,14 @@ class FakeServiceRegistry:
         """Whether `(domain, service)` was registered and not yet removed."""
         return (domain, service) in self._services
 
-    def async_register(self, domain, service, handler, **_kwargs):
-        """Record the handler, ignoring `schema`/`supports_response` (not exercised here)."""
+    def async_register(self, domain, service, handler, *_args, **_kwargs):
+        """Record the handler, ignoring `schema`/`supports_response` (not exercised here).
+
+        `*_args` tolerates the positional `schema`/`supports_response` that
+        `async_register_admin_service` forwards (it registers the admin wrapper,
+        not the handler directly -- but this registry only records *that* a
+        registration happened, so the wrapper is fine to store as the handler).
+        """
         self._services[(domain, service)] = handler
 
     def async_remove(self, domain, service):
@@ -707,14 +713,31 @@ def service_entry():
     return FakeServiceEntry
 
 
+class FakeHassConfig:
+    """Minimal `hass.config` for the services' path gate: just `is_allowed_path`.
+
+    Allows every path by default (so the tmp_path tests do not each have to opt
+    in); set `.allowed = False` to exercise `_async_raise_if_path_not_allowed`.
+    """
+
+    def __init__(self):
+        """Start permissive."""
+        self.allowed = True
+
+    def is_allowed_path(self, path):
+        """Mirror `homeassistant.core.Config.is_allowed_path`'s bool return."""
+        return self.allowed
+
+
 class FakeServiceHass:
     """Stands in for `hass` as seen from inside `services._async_import_config`/
     `_async_export_config`/`async_register_services`/`async_unregister_services`:
-    `.config_entries`, `.services` and `.async_add_executor_job`.
+    `.config`, `.config_entries`, `.services` and `.async_add_executor_job`.
     """
 
     def __init__(self, entries):
         """Wrap `entries`; start with a fresh `FakeServiceConfigEntries`/`FakeServiceRegistry`."""
+        self.config = FakeHassConfig()
         self.config_entries = FakeServiceConfigEntries(entries)
         self.services = FakeServiceRegistry()
 
@@ -835,6 +858,7 @@ class FakeOptionsHass:
 
     def __init__(self, entry):
         """Wrap `entry` behind a `FakeOptionsConfigEntries`."""
+        self.config = FakeHassConfig()
         self.config_entries = FakeOptionsConfigEntries(entry)
 
     async def async_add_executor_job(self, target, *args):

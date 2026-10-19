@@ -255,6 +255,26 @@ def test_import_of_a_missing_file_raises_cleanly(service_entry, service_hass, se
     assert excinfo.value.translation_key == "cannot_read_file"
 
 
+def test_import_refuses_a_path_outside_the_allowlist(
+    tmp_path, service_entry, service_hass, service_call
+):
+    """Admin is not root: a path `is_allowed_path` rejects is refused before any read."""
+    path = _write(tmp_path, VALID_TEXT)
+    entry = service_entry()
+    hass = service_hass([entry])
+    hass.config.allowed = False
+
+    async def run():
+        return await _async_import_config(
+            hass, service_call({"path": path, "dry_run": False, "overwrite": False})
+        )
+
+    with pytest.raises(ServiceValidationError) as excinfo:
+        asyncio.run(run())
+
+    assert excinfo.value.translation_key == "path_not_allowed"
+
+
 def test_import_without_a_configured_entry_raises_cleanly(tmp_path, service_hass, service_call):
     path = _write(tmp_path, VALID_TEXT)
     hass = service_hass([])  # nothing set up yet
@@ -351,6 +371,23 @@ def test_export_refuses_to_write_through_a_symlink(tmp_path, service_hass, servi
 
     assert excinfo.value.translation_key == "export_path_is_symlink"
     assert real_target.read_text(encoding="utf-8") == "untouched: true\n"
+
+
+def test_export_refuses_a_path_outside_the_allowlist(tmp_path, service_hass, service_call):
+    """A write target `is_allowed_path` rejects is refused, and no file appears."""
+    target = tmp_path / "out.yaml"
+    entry = _entry_with(VALID_TEXT)
+    hass = service_hass([entry])
+    hass.config.allowed = False
+
+    async def run():
+        return await _async_export_config(hass, service_call({"path": str(target)}))
+
+    with pytest.raises(ServiceValidationError) as excinfo:
+        asyncio.run(run())
+
+    assert excinfo.value.translation_key == "path_not_allowed"
+    assert not target.exists()
 
 
 def test_export_refuses_an_existing_target_that_has_comments(tmp_path, service_hass, service_call):
