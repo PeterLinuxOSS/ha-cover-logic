@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 180" fill="none" stroke="currentColor">
+  <title>A sun condition dividing one day into segments, evaluated in order</title>
+
+  <!-- horizon -->
+  <line x1="20" y1="140" x2="400" y2="140" stroke-width="2"/>
+  <text x="10" y="155" font-size="10" fill="currentColor" stroke="none">midnight</text>
+  <text x="380" y="155" font-size="10" fill="currentColor" stroke="none" text-anchor="end">midnight</text>
+
+  <!-- sun's arc across the day -->
+  <path d="M 20 140 A 190 120 0 0 1 400 140" stroke-width="1.5" stroke-dasharray="4 3"/>
+
+  <!-- dawn / dusk boundaries -->
+  <line x1="110" y1="140" x2="110" y2="40" stroke-width="1" stroke-dasharray="2 3"/>
+  <line x1="310" y1="140" x2="310" y2="40" stroke-width="1" stroke-dasharray="2 3"/>
+  <text x="90" y="30" font-size="10" fill="currentColor" stroke="none">dawn</text>
+  <text x="292" y="30" font-size="10" fill="currentColor" stroke="none">dusk</text>
+
+  <!-- the sun itself, somewhere in the "home" segment of the day -->
+  <circle cx="210" cy="55" r="10" fill="#f5a623" stroke="none"/>
+  <g stroke="#f5a623" stroke-width="1.5">
+    <line x1="210" y1="38" x2="210" y2="32"/>
+    <line x1="193" y1="55" x2="187" y2="55"/>
+    <line x1="227" y1="55" x2="233" y2="55"/>
+  </g>
+
+  <!-- the three segments a "first match wins" mode list could produce -->
+  <text x="40" y="170" font-size="12" fill="currentColor" stroke="none">night</text>
+  <text x="190" y="170" font-size="12" fill="currentColor" stroke="none">home</text>
+  <text x="335" y="170" font-size="12" fill="currentColor" stroke="none">night</text>
+</svg>
